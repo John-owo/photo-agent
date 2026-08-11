@@ -110,7 +110,13 @@ async function executePlan(
   let unlock: (() => Promise<void>) | undefined;
   let connected = false;
   try {
-    unlock = await acquireMutationLock(join(options.sessionRoot, "lightroom.mutation.lock"));
+    unlock = await acquireMutationLock(
+      join(options.sessionRoot, `${options.backend.name}.mutation.lock`),
+      {
+        backend: options.backend.name,
+        sessionId: session.currentManifest.session_id,
+      },
+    );
     await options.backend.connect();
     connected = true;
     await session.updateManifest({
@@ -280,5 +286,87 @@ export async function resumeCodexSession(options: ResumeCodexOptions): Promise<W
       await session.transition("FAILED", { error: message });
     }
     return resultFor(session, normalizedPlan);
+  }
+}
+
+export type RecoverSessionOptions = {
+  sessionDir: string;
+  backend: BackendAdapter;
+  photoId?: string;
+};
+
+/**
+ * Reconcile a session left behind by a process crash. This function never
+ * retries a mutation. If the backend may have been touched, it only reads
+ * the current state and moves the session to REVIEW_REQUIRED.
+ */
+export async function recoverSession(options: RecoverSessionOptions): Promise<WorkflowResult> {
+  const session = await SessionStore.open(options.sessionDir);
+  const normalizedPlan = await session
+    .readJson<NormalizedEditPlan>("normalized-edit-plan.json")
+    .catch(() => emptyPlan());
+  const state = session.currentState;
+
+  if (state === "REVIEW_REQUIRED" || state === "FAILED" || state === "CANCELLED") {
+    return resultFor(session, normalizedPlan);
+  }
+  if (state === "CODEX_INPUT_REQUIRED") {
+    return resultFor(session, normalizedPlan);
+  }
+  if (state === "PENDING" || state === "ANALYZING" || state === "PLAN_READY") {
+    await session.transition("REVIEW_REQUIRED", {
+      reason: "recovered_before_backend_mutation",
+      interrupted_state: state,
+    });
+    return resultFor(session, normalizedPlan);
+  }
+
+  const photoId = options.photoId ?? session.currentManifest.source.raw_path;
+  let unlock: (() => Promise<void>) | undefined;
+  let connected = false;
+  try {
+    unlock = await acquireMutationLock(
+      join(resolve(session.dir, ".."), `${options.backend.name}.mutation.lock`),
+      {
+        backend: options.backend.name,
+        sessionId: session.currentManifest.session_id,
+        staleAfterMs: 0,
+      },
+    );
+    await options.backend.connect();
+    connected = true;
+    const current = await options.backend.readCurrentEdit(photoId);
+    if (!samePath(current.path, session.currentManifest.source.raw_path)) {
+      throw new Error(
+        `Recovery photo path mismatch; refusing to trust read-back: ${current.path} <> ${session.currentManifest.source.raw_path}`,
+      );
+    }
+    await session.writeJson("recovery-readback.json", {
+      interrupted_state: state,
+      read_back: current,
+    });
+    await session.transition("REVIEW_REQUIRED", {
+      reason: "recovered_after_possible_backend_mutation",
+      interrupted_state: state,
+      readback: "recovery-readback.json",
+    });
+    return resultFor(session, normalizedPlan);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await session.writeJson("error.json", {
+      message,
+      side_effect_started: true,
+      recovery: true,
+    });
+    if (session.currentState !== "REVIEW_REQUIRED") {
+      await session.transition("REVIEW_REQUIRED", {
+        reason: "recovery_readback_failed",
+        error: message,
+      });
+    }
+    return resultFor(session, normalizedPlan);
+  } finally {
+    if (connected) await options.backend.close();
+    if (unlock) await unlock();
   }
 }

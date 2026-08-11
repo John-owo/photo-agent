@@ -2,11 +2,12 @@
 
 ## Current milestone
 
-Implement only `v0.1-alpha`: one explicit RAW/preview pair through
-`analyze -> plan -> apply -> render`, with durable session state. The default
-analysis route is a Codex-local handoff; the full
-direction is in [ROADMAP.md](ROADMAP.md); the active checklist and acceptance
-boundary are in [docs/implementation/v0.1-alpha.md](docs/implementation/v0.1-alpha.md).
+Implement and harden `v0.1`: one explicit RAW/preview pair through
+`analyze -> plan -> apply -> render`, with durable session state, safe recovery,
+and the constrained XMP fallback. The default analysis route is a Codex-local
+handoff; the full direction is in [ROADMAP.md](ROADMAP.md), the v0.1 status is
+in [docs/implementation/v0.1.md](docs/implementation/v0.1.md), and the next
+milestones are in [docs/implementation/v0.1-v0.3-direction.zh-TW.md](docs/implementation/v0.1-v0.3-direction.zh-TW.md).
 
 ## Non-negotiable safety
 
@@ -19,6 +20,10 @@ boundary are in [docs/implementation/v0.1-alpha.md](docs/implementation/v0.1-alp
   it the default or imply that it ran during a Codex-local review.
 - Never blindly retry a Lightroom mutation after a timeout; read back state
   first and escalate to `REVIEW_REQUIRED` when reconciliation is uncertain.
+- Use `recover` after an interrupted mutation; it only reads back state and
+  never retries the mutation automatically.
+- XMP fallback must create a new sidecar and refuse to overwrite an existing
+  sidecar or source file.
 - Keep the existing `D:\photo\lightroom-mcp-john` checkout untouched. Use its
   configured server entry as an external MCP backend.
 - Do not claim Lightroom connectivity or visual QA unless the current run

@@ -1,0 +1,21 @@
+{
+  "schema_version": "0.1.0",
+  "creative_goal": "neutral documentary correction",
+  "adjustments": [
+    {
+      "parameter": "exposure",
+      "direction": "increase",
+      "strength": "slight",
+      "rationale": "Lift a slightly underexposed subject.",
+      "confidence": 0.9
+    },
+    {
+      "parameter": "temperature",
+      "direction": "decrease",
+      "strength": "slight",
+      "rationale": "Reduce a warm cast while preserving skin tone.",
+      "confidence": 0.8
+    }
+  ],
+  "overall_confidence": 0.85
+}

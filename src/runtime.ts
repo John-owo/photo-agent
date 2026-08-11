@@ -17,6 +17,22 @@ const TRANSITIONS: Record<JobState, readonly JobState[]> = {
   CANCELLED: [],
 };
 
+export const DEFAULT_MUTATION_LOCK_STALE_MS = 30 * 60 * 1000;
+
+export type MutationLockOptions = {
+  staleAfterMs?: number;
+  now?: () => number;
+  sessionId?: string;
+  backend?: string;
+};
+
+type MutationLockRecord = {
+  pid: number;
+  created_at: string;
+  session_id?: string;
+  backend?: string;
+};
+
 const sha256 = (value: string): string => createHash("sha256").update(value).digest("hex");
 
 async function atomicJsonWrite(path: string, value: unknown): Promise<void> {
@@ -26,23 +42,92 @@ async function atomicJsonWrite(path: string, value: unknown): Promise<void> {
   await rename(temp, path);
 }
 
-export async function acquireMutationLock(lockPath: string): Promise<() => Promise<void>> {
-  await mkdir(dirname(lockPath), { recursive: true });
-  let handle;
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
-    handle = await open(lockPath, "wx");
-    await handle.writeFile(
-      `${JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() })}\n`,
-      "utf8",
-    );
+    process.kill(pid, 0);
+    return true;
   } catch (error) {
-    if (handle) await handle.close();
-    throw new Error(`Lightroom mutation lock is already held: ${lockPath}`, { cause: error });
+    return (error as NodeJS.ErrnoException).code === "EPERM";
   }
-  await handle.close();
-  return async () => {
-    await unlink(lockPath).catch(() => undefined);
+}
+
+async function readLockRecord(lockPath: string): Promise<MutationLockRecord | undefined> {
+  try {
+    const value: unknown = JSON.parse(await readFile(lockPath, "utf8"));
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const record = value as Partial<MutationLockRecord>;
+    if (
+      typeof record.pid !== "number" ||
+      !Number.isInteger(record.pid) ||
+      typeof record.created_at !== "string" ||
+      Number.isNaN(Date.parse(record.created_at))
+    ) {
+      return undefined;
+    }
+    return {
+      pid: record.pid,
+      created_at: record.created_at,
+      ...(record.session_id ? { session_id: record.session_id } : {}),
+      ...(record.backend ? { backend: record.backend } : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function canReclaimLock(
+  record: MutationLockRecord | undefined,
+  now: number,
+  staleAfterMs: number,
+): boolean {
+  if (!record || staleAfterMs < 0) return false;
+  const ageMs = now - Date.parse(record.created_at);
+  return ageMs >= staleAfterMs && !isProcessAlive(record.pid);
+}
+
+export async function acquireMutationLock(
+  lockPath: string,
+  options: MutationLockOptions = {},
+): Promise<() => Promise<void>> {
+  await mkdir(dirname(lockPath), { recursive: true });
+  const staleAfterMs = options.staleAfterMs ?? DEFAULT_MUTATION_LOCK_STALE_MS;
+  const now = options.now ?? Date.now;
+  const record: MutationLockRecord = {
+    pid: process.pid,
+    created_at: new Date(now()).toISOString(),
+    ...(options.sessionId ? { session_id: options.sessionId } : {}),
+    ...(options.backend ? { backend: options.backend } : {}),
   };
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let handle;
+    try {
+      handle = await open(lockPath, "wx");
+      await handle.writeFile(`${JSON.stringify(record)}\n`, "utf8");
+      await handle.sync();
+      await handle.close();
+      return async () => {
+        await unlink(lockPath).catch(() => undefined);
+      };
+    } catch (error) {
+      if (handle) await handle.close();
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw new Error(`Unable to create mutation lock: ${lockPath}`, { cause: error });
+      }
+      const existing = await readLockRecord(lockPath);
+      if (!canReclaimLock(existing, now(), staleAfterMs)) {
+        const owner = existing
+          ? `pid=${existing.pid}, created_at=${existing.created_at}`
+          : "unknown owner";
+        throw new Error(`Lightroom mutation lock is already held: ${lockPath} (${owner})`, {
+          cause: error,
+        });
+      }
+      await unlink(lockPath);
+    }
+  }
+  throw new Error(`Unable to reclaim mutation lock safely: ${lockPath}`);
 }
 
 export class SessionStore {

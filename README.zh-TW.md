@@ -1,6 +1,6 @@
 # photo-agent（繁體中文）
 
-與後端無關的 AI 攝影工作流程代理，現為 `v0.1-alpha`。
+與後端無關的 AI 攝影工作流程代理，現為 `v0.1` 實作階段。
 
 這個版本先處理一組明確配對的 RAW 與預覽圖，用來驗證執行環境、標準化調色契約，以及 Lightroom adapter 邊界；選片、批次處理與 Style Memory 會留到後續版本。
 
@@ -67,4 +67,28 @@ node dist/src/cli.js edit-one `
 
 若 MCP entry 不在預設位置，請設定 `PHOTO_AGENT_LIGHTROOM_MCP_ENTRY`。所有產生的狀態與 render 都會寫在 session 根目錄；程式不會寫入交付資料夾或來源照片。
 
-更多背景與限制請參閱：[AGENTS.md](AGENTS.md)、[ROADMAP.md](ROADMAP.md)、[v0.1-alpha 實作紀錄](docs/implementation/v0.1-alpha.zh-TW.md)、[Codex 交接契約](docs/codex-provider.zh-TW.md)。英文版請見 [README.md](README.md)。
+## 恢復中斷的 session
+
+如果程式在 backend 操作期間中斷，請先 reconcile session，再重新執行任何操作。
+`recover` 只會讀回目前 backend 狀態並將 session 移到 `REVIEW_REQUIRED`，不會自動重試 mutation：
+
+```powershell
+node dist/src/cli.js recover `
+  --session 'C:\path\to\.photo-agent\sessions\<session-id>' `
+  --backend lightroom
+```
+
+## XMP fallback
+
+對支援的全域調色參數，可以用已驗證的 intent 與目前設定快照輸出新的 XMP sidecar。
+既有檔案不會被覆寫：
+
+```powershell
+node dist/src/cli.js export-xmp `
+  --raw 'C:\path\photo.NEF' `
+  --intent-file examples\sample-intent.json `
+  --current-settings examples\current-settings.json `
+  --output .photo-agent\exports\photo.xmp
+```
+
+更多背景與限制請參閱：[AGENTS.md](AGENTS.md)、[ROADMAP.md](ROADMAP.md)、[v0.1 實作紀錄](docs/implementation/v0.1.md)、[v0.1–v0.3 後續方向](docs/implementation/v0.1-v0.3-direction.zh-TW.md)、[Codex 交接契約](docs/codex-provider.zh-TW.md)。英文版請見 [README.md](README.md)。
