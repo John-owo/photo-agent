@@ -1,5 +1,7 @@
 # photo-agent
 
+繁體中文文件：[README.zh-TW.md](README.zh-TW.md)。
+
 Backend-agnostic AI photography workflow agent — v0.1-alpha.
 
 This first version processes one explicit RAW/preview pair. It is designed to
