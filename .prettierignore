@@ -1,0 +1,5 @@
+ROADMAP.md
+node_modules/
+dist/
+.photo-agent/
+coverage/

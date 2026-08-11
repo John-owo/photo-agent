@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+.photo-agent/
+.env
+.env.*
+!.env.example
+*.log
+*.tmp
