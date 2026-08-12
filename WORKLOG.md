@@ -419,3 +419,15 @@ Cloud-analyzer checkpoint:
   `origin/codex/v0.1-alpha` both resolve to
   `8751a580e06385ad38ef55552b37965d504c92ec`, and no existing `v0.3*` tag was
   present before release.
+- Exact-path staging included only `CHANGELOG.md`, the synchronized English and
+  Traditional Chinese READMEs, this work log, v0.2/v0.3 implementation records,
+  package/lock versions, and the Lightroom adapter client version.
+  `git diff --cached --check` passed.
+- Release commit `d4a8d309e0fc3c89934f36e6e23c7fd9fee15724`
+  (`release: prepare v0.3 alpha`) was created, and annotated tag
+  `v0.3.0-alpha.0` was created at that commit.
+- Approved `git push origin codex/v0.1-alpha v0.3.0-alpha.0` succeeded: the
+  branch advanced from `8751a58` to `d4a8d30`, and GitHub accepted the new tag.
+- A GitHub `ls-remote` read-back confirmed the branch at
+  `d4a8d309e0fc3c89934f36e6e23c7fd9fee15724` and the annotated tag object at
+  `dbb0e7da63f2d952da5da55ccdd3cb245e5bc23d`.
