@@ -327,3 +327,5 @@ Cloud-analyzer checkpoint:
   commit `f6bb3ef` and its publish record.
 - The only post-publish local change was this append-only work-log update; no
   source or photo files were changed.
+- Final ref/status check: local `HEAD` and `origin/codex/v0.1-alpha` both equal
+  `58a56a4`; the photo-agent worktree is clean.
