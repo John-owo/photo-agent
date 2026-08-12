@@ -301,3 +301,29 @@ Cloud-analyzer checkpoint:
 - `node dist/src/cli.js --help`: passed and exposed the v0.2 edit/resume/recover/
   export-xmp commands plus the v0.3 shoot/resume commands, including explicit
   cloud-preview and analyzer options.
+- Read-only preflight resolved the bounded folder `D:\photo\2026\2026.6.19
+  畢業典禮`; no new RAW was requested or copied.
+- `node dist/src/cli.js shoot --root "D:\photo\2026\2026.6.19 畢業典禮"
+  --session-root "D:\photo\_agent_workspace\photo-jobs\photo-agent-v0.3-validation-current"`:
+  passed on 153 existing RAW assets; 153 jobs completed, 0 failures, all 153
+  remained `review`, 1 conservative cluster, 0 exact duplicate groups, and 10
+  filename-sequence burst groups. The command wrote only the generated report
+  under `_agent_workspace` and made no photo/sidecar/Lightroom mutation.
+- `node dist/src/cli.js shoot --resume
+  "D:\photo\_agent_workspace\photo-jobs\photo-agent-v0.3-validation-current\2026-08-12T13-56-22.643Z-97e20520"`:
+  passed; all 153 jobs were reused, 0 jobs were re-analyzed, with the same
+  conservative summary and report path.
+- Scope/status audit after verification: `photo-agent` is clean at `d71d1ff`
+  with `origin/codex/v0.1-alpha` at the same commit; the v0.2/v0.3 implementation
+  is contained in the preceding `f6bb3ef` commit. `lightroom-mcp-john` retains
+  pre-existing local modifications and was not changed by this task.
+- The generated real-shoot validation session contains only `shoot-plan.json`,
+  `manifest.json`, `culling.csv`, and `clusters.json` under `_agent_workspace`.
+
+## 2026-08-12 - final publish verification
+
+- Verified `HEAD` and `origin/codex/v0.1-alpha` both point to the published
+  `d71d1ff` work-log commit. The branch contains the v0.2/v0.3 implementation
+  commit `f6bb3ef` and its publish record.
+- The only post-publish local change was this append-only work-log update; no
+  source or photo files were changed.
