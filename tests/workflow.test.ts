@@ -8,9 +8,10 @@ import { MockBackend } from "../src/backends.js";
 import { ingestPair } from "../src/ingest.js";
 import { writeFixtureJpeg } from "../src/preview.js";
 import { CodexProvider, MockProvider } from "../src/providers.js";
-import { SessionStore } from "../src/runtime.js";
+import { acquireMutationLock, SessionStore } from "../src/runtime.js";
 import { translateIntent } from "../src/translator.js";
-import { resumeCodexSession, runSinglePhoto } from "../src/workflow.js";
+import { recoverSession, resumeCodexSession, runSinglePhoto } from "../src/workflow.js";
+import { createXmpSidecar, writeXmpSidecar } from "../src/xmp.js";
 
 async function fixturePair(): Promise<{ root: string; raw: string; preview: string }> {
   const root = await mkdtemp(join(tmpdir(), "photo-agent-test-"));
@@ -197,5 +198,59 @@ describe("v0.1-alpha contracts", () => {
     const source = await ingestPair(raw, preview);
     const store = await SessionStore.create(join(root, "sessions"), source, "mock");
     await expect(store.transition("RENDERING")).rejects.toThrow("PENDING -> RENDERING");
+  });
+
+  it("reclaims a lock only when the recorded owner is dead and stale", async () => {
+    const { root } = await fixturePair();
+    const lockPath = join(root, "mutation.lock");
+    await writeFile(
+      lockPath,
+      JSON.stringify({
+        pid: 999999,
+        created_at: new Date(Date.now() - 60_000).toISOString(),
+        session_id: "old-session",
+      }),
+      "utf8",
+    );
+    const unlock = await acquireMutationLock(lockPath, { staleAfterMs: 1_000 });
+    expect(await readFile(lockPath, "utf8")).toContain('"pid"');
+    await unlock();
+  });
+
+  it("does not reclaim a live lock", async () => {
+    const { root } = await fixturePair();
+    const lockPath = join(root, "mutation.lock");
+    const unlock = await acquireMutationLock(lockPath);
+    await expect(acquireMutationLock(lockPath, { staleAfterMs: 0 })).rejects.toThrow(
+      "already held",
+    );
+    await unlock();
+  });
+
+  it("recovers an interrupted backend mutation without retrying it", async () => {
+    const { root, raw, preview } = await fixturePair();
+    const source = await ingestPair(raw, preview);
+    const session = await SessionStore.create(join(root, "sessions"), source, "mock");
+    await session.transition("ANALYZING");
+    await session.transition("PLAN_READY");
+    await session.transition("APPLYING");
+    const backend = new MockBackend(raw);
+    const result = await recoverSession({ sessionDir: session.dir, backend });
+    expect(result.state).toBe("REVIEW_REQUIRED");
+    expect(backend.calls).toEqual(["connect", "read_current_edit", "close"]);
+    expect(await readFile(join(session.dir, "recovery-readback.json"), "utf8")).toContain(
+      "interrupted_state",
+    );
+  });
+
+  it("writes a deterministic XMP sidecar and refuses overwrite", async () => {
+    const { root } = await fixturePair();
+    const destination = join(root, "exports", "sample.xmp");
+    const settings = { Exposure2012: 0.4, Temperature: 4950, WhiteBalance: "Custom" };
+    const content = createXmpSidecar(settings);
+    expect(content).toContain('crs:Exposure2012="0.4"');
+    expect(content).toContain('crs:Temperature="4950"');
+    await expect(writeXmpSidecar(destination, settings)).resolves.toBe(destination);
+    await expect(writeXmpSidecar(destination, settings)).rejects.toThrow();
   });
 });

@@ -2,7 +2,7 @@
 
 繁體中文文件：[README.zh-TW.md](README.zh-TW.md)。
 
-Backend-agnostic AI photography workflow agent — v0.1-alpha.
+Backend-agnostic AI photography workflow agent — v0.1 implementation.
 
 This first version processes one explicit RAW/preview pair. It is designed to
 prove the runtime, normalized edit contract, and Lightroom adapter boundary
@@ -82,6 +82,32 @@ Set `PHOTO_AGENT_LIGHTROOM_MCP_ENTRY` when the MCP entry is not at the local
 default. The command writes all generated state and renders under the session
 root; it never writes to the delivery folder or source photo.
 
-See [AGENTS.md](AGENTS.md), [ROADMAP.md](ROADMAP.md), the active
-[v0.1-alpha implementation record](docs/implementation/v0.1-alpha.md), and
-[the Codex handoff contract](docs/codex-provider.md).
+## Recover an interrupted session
+
+If the process stops during a backend operation, reconcile the session before
+running anything again. Recovery reads the current backend state and moves the
+session to `REVIEW_REQUIRED`; it never retries a mutation automatically:
+
+```powershell
+node dist/src/cli.js recover `
+  --session 'C:\path\to\.photo-agent\sessions\<session-id>' `
+  --backend lightroom
+```
+
+## XMP fallback
+
+For the supported global develop settings, export a new XMP sidecar from a
+validated intent and an explicit current-settings snapshot. Existing files are
+never overwritten:
+
+```powershell
+node dist/src/cli.js export-xmp `
+  --raw 'C:\path\photo.NEF' `
+  --intent-file examples\sample-intent.json `
+  --current-settings examples\current-settings.json `
+  --output .photo-agent\exports\photo.xmp
+```
+
+See [AGENTS.md](AGENTS.md), [ROADMAP.md](ROADMAP.md), the [v0.1 implementation
+record](docs/implementation/v0.1.md), the [v0.1–v0.3 direction](docs/implementation/v0.1-v0.3-direction.zh-TW.md),
+and [the Codex handoff contract](docs/codex-provider.md).

@@ -7,3 +7,4 @@ export * from "./schemas.js";
 export * from "./translator.js";
 export * from "./types.js";
 export * from "./workflow.js";
+export * from "./xmp.js";
