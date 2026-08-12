@@ -2,7 +2,7 @@
 
 ## 這是什麼？
 
-`photo-agent` 是一個與後端無關的 AI 攝影工作流程代理，將一組明確配對的 RAW／預覽圖轉成可追蹤的 `analyze → plan → apply → render` 工作階段。它負責工作流程以及安全、恢復邊界；`lightroom-mcp-john` 是用來套用調整並讀回／產生 render 狀態的外部 Lightroom MCP backend，不是定義整個 agent 的核心。現行 `0.1` 里程碑先解決單張照片 AI 輔助編輯的可重現、非破壞與可恢復問題，再擴展到選片、批次處理與 Style Memory。
+`photo-agent` 是一個與後端無關的 AI 攝影工作流程代理，將一組明確配對的 RAW／預覽圖轉成可追蹤的 `analyze → plan → apply → render` 工作階段。它負責工作流程以及安全、恢復邊界；`lightroom-mcp-john` 是用來套用調整並讀回／產生 render 狀態的外部 Lightroom MCP backend，不是定義整個 agent 的核心。現行 `0.3` alpha 在可恢復的 v0.1 流程上，加入有界 closed loop 編輯、shoot indexing、選片與光線 review、代表照片編排，以及受保護的 propagation。
 
 ### 與 `lightroom-mcp` 的關係
 
@@ -17,12 +17,13 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
 內的 `raw-photo-lightroom-preset` 是歷史工作流程指引；新的 workflow engine
 功能在本 repository 開發。
 
-## 狀態：v0.3 開發中（package version 仍為 `0.1.0-alpha`）
+## 狀態：v0.3 alpha（package version 為 `0.3.0-alpha.0`）
 
-> **Alpha／僅供測試。** v0.2 mock closed loop 與 v0.3 唯讀 shoot orchestration
-> 仍在開發，package 尚未以 v0.2／v0.3 發布。請勿將此 checkout 直接指向
-> 正式照片或無法取代的照片庫。在確認符合你的環境前，請使用 Mock 路徑、
-> fixtures，或可丟棄的非關鍵測試照片。
+> **Alpha／僅供測試。** v0.2 與 v0.3 的自動化 gate 已通過，且一張非關鍵
+> RAW 已完成 Lightroom adapter 的實際讀取、匯出與人工視覺檢查，全程沒有
+> 修改 Develop 設定。主觀批次 culling、實際代表照片編輯／propagation，
+> 以及 evaluator 與人工判斷的一致性仍未驗證。請勿在尚未確認環境適配前，
+> 將此版本直接用於正式照片或無法取代的照片庫。
 
 ## 平台假設
 
@@ -61,7 +62,7 @@ npm.cmd run build
 | `PHOTO_AGENT_LIGHTROOM_MCP_ENTRY` | 本機 `lightroom-mcp-john` MCP server 的 executable entry。                                 | `D:\photo\lightroom-mcp-john\server\dist\index.js` |
 | `PHOTO_AGENT_SESSION_ROOT`        | 產生 session 狀態與 render 的根目錄。                                                      | `.photo-agent\sessions`                            |
 
-## v0.2／v0.3 開發指令
+## v0.2／v0.3 指令
 
 使用 fixtures 或非關鍵測試配對執行 deterministic closed loop：
 

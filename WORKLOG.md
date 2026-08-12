@@ -319,6 +319,44 @@ Cloud-analyzer checkpoint:
   pre-existing local modifications and was not changed by this task.
 - The generated real-shoot validation session contains only `shoot-plan.json`,
   `manifest.json`, `culling.csv`, and `clusters.json` under `_agent_workspace`.
+- A Windows PowerShell `ConvertFrom-Json` audit of the generated plan reported
+  `Unrecognized escape sequence` while reading the Unicode/path-heavy JSON.
+  This parser failure was reproduced only in that PowerShell audit; it did not
+  indicate a CLI failure.
+- Node's native `JSON.parse` audit passed for both `shoot-plan.json` and
+  `manifest.json`: each contains 153 assets. A follow-up audit parsed all 153
+  durable job files with 0 invalid files and 153 `completed` states; the final
+  manifest summary records 153 `review`, 0 failed, 153 resumed, and 0 analyzed.
+- Final post-publish-tree `npm.cmd test`: passed again; 2 files and 22 tests
+  passed at the current `d71d1ff` tree.
+- Final post-publish-tree `npm.cmd run check`: passed.
+- Final post-publish-tree `npm.cmd run lint`: passed.
+- Final post-publish-tree `npm.cmd run build`: passed.
+- Final post-publish-tree `git diff --check`: passed; Git reported only the
+  existing LF-to-CRLF normalization warning for `WORKLOG.md`.
+
+## 2026-08-12 - v0.3 live Lightroom verification attempt
+
+- User supplied the non-critical candidate RAW
+  `E:\Lr\2026\2026-07-25\DSC_5346.NEF`. Read-only preflight confirmed the file
+  exists (18,981,888 bytes); the adjacent folder has no same-stem JPEG or XMP.
+  No RAW, sidecar, or preview was copied, renamed, overwritten, or modified.
+- Read-only process inspection confirmed Lightroom Classic is running and two
+  existing `lightroom-mcp-john` bridge processes are running. A direct MCP
+  `listTools` probe failed with `Connection closed`; the bridge stderr identified
+  an existing instance lock for ports 58763/58764. No second bridge was forced.
+- Direct bridge startup without the existing lock failed first at the sandboxed
+  config directory; the approved retry confirmed the existing bridge lock rather
+  than a code or photo failure. A read-only netstat check found no active
+  Lightroom plugin connection on the expected 58763/58764 ports.
+- The bundled Computer Use initialization failed before any UI action with
+  `EPERM` while accessing the local Codex runtime. No Lightroom UI click, plugin
+  install, mutation, render, or visual claim was made.
+- The live Lightroom gate remains blocked on reconnecting the Lightroom MCP
+  plugin/server. Package version remains `0.1.0-alpha.0`; no v0.3 release commit
+  or tag was created before the live gate can be completed.
+- Read-only GitHub remote inspection was attempted but the restricted network
+  could not reach `github.com:443`; no GitHub write was attempted.
 
 ## 2026-08-12 - final publish verification
 
@@ -329,3 +367,55 @@ Cloud-analyzer checkpoint:
   source or photo files were changed.
 - Final ref/status check: local `HEAD` and `origin/codex/v0.1-alpha` both equal
   `58a56a4`; the photo-agent worktree is clean.
+
+## 2026-08-13 - v0.3 alpha live proof and release preparation
+
+- After the user reloaded the Lightroom plug-in, the live status panel reported
+  `Running: true` and successful binds on request/response ports 58763/58764.
+- A rebuilt bridge `list_collections` probe succeeded with six collections, and
+  `search_photos` resolved exactly one catalog item for the user-supplied
+  `E:\Lr\2026\2026-07-25\DSC_5346.NEF` (catalog id 976313).
+- Read-only metadata identified a Nikon Z5 II capture at 600 mm, f/6.3,
+  1/800 s, ISO 7200, 6048 x 4032, with neutral global develop settings.
+- A direct Lightroom baseline export was written only under
+  `D:\photo\_agent_workspace\lightroom\verification\photo-agent-v0.3-dsc-5346-20260813-0040-baseline`.
+  The JPEG was visually inspected as a valid, uncropped/corruption-free squirrel
+  render; SHA-256 is
+  `D312666B7AF5B166F088C915345147FFF1061C0406C735919B24E910FB125762`.
+- PhotoAgent's own `LightroomMcpAdapter` then connected to the rebuilt external
+  MCP entry, read the same catalog item and 14 neutral settings, and rendered
+  `D:\photo\_agent_workspace\photo-jobs\photo-agent-v0.3-live-adapter-20260813-0045\DSC_5346.jpg`.
+  The 2,050,279-byte JPEG was visually inspected for expected subject, framing,
+  backlight, color, and absence of corruption; SHA-256 is
+  `B3F3312F5BF81212C4FE48E58B245EB2314ED6DE900BE58D92CE22DC1697A24F`.
+- This proof used no checkpoint, develop mutation, XMP write, rating, label, or
+  source-file change. It verifies the live adapter read/render path and a human
+  visual sanity check, not live closed-loop mutation, evaluator agreement,
+  subjective batch culling, or propagation quality.
+- A first combined release-file patch was rejected atomically because its
+  Traditional Chinese README context did not match; no file changed from that
+  failed attempt. Smaller exact patches then updated both READMEs, the v0.2/v0.3
+  implementation records, package/client versions, and the changelog for
+  `0.3.0-alpha.0`.
+- `npm.cmd run check`: passed for `0.3.0-alpha.0`.
+- `npm.cmd run lint`: passed for `0.3.0-alpha.0`; a parallel first invocation
+  outlived the 30-second tool yield, and the completed standalone rerun passed.
+- `npm.cmd test`: passed; 2 files and 22 tests passed.
+- `npm.cmd run build`: passed.
+- Targeted `npx.cmd prettier --check` reported eight changed files as needing
+  formatting. A control check also reported unchanged `AGENTS.md`, establishing
+  that this checkout's Prettier check has a pre-existing line-ending/style
+  baseline rather than a release-only regression; no repository-wide formatting
+  rewrite was performed.
+- The first baseline-format control command also supplied PowerShell-invalid
+  wildcard path arguments to `rg`; that diagnostic subcommand failed with
+  Windows error 123 and made no file change.
+- `git diff --check`: passed with only Git's LF-to-CRLF working-copy warnings.
+- Package/lock audit confirmed `package.json`, the lockfile root, and the root
+  package entry all report `0.3.0-alpha.0`; the stale-version text search found
+  no remaining release-facing `0.1.0-alpha` or v0.3-development wording.
+- The first sandboxed `git fetch origin codex/v0.1-alpha --tags` could not reach
+  GitHub port 443. The approved network retry succeeded; local `HEAD` and
+  `origin/codex/v0.1-alpha` both resolve to
+  `8751a580e06385ad38ef55552b37965d504c92ec`, and no existing `v0.3*` tag was
+  present before release.

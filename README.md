@@ -9,9 +9,9 @@ explicit RAW/preview pair into a traceable `analyze → plan → apply → rende
 session. It owns the workflow plus its safety and recovery boundaries;
 `lightroom-mcp-john` is the external Lightroom MCP backend used to apply edits
 and read back/render state, not the definition of the whole agent. The current
-`0.1` milestone makes single-photo AI-assisted editing reproducible,
-non-destructive, and recoverable before adding culling, batch work, or Style
-Memory.
+`0.3` alpha adds bounded closed-loop editing, shoot indexing, culling and
+lighting review, representative orchestration, and guarded propagation on top
+of the recoverable v0.1 workflow.
 
 ### Relationship to `lightroom-mcp`
 
@@ -26,13 +26,14 @@ Lightroom MCP remains independently usable by any MCP client and does not depend
 on PhotoAgent. The bundled `raw-photo-lightroom-preset` in the older fork is
 historical workflow guidance; new workflow-engine development belongs here.
 
-## Status: v0.3 development (`0.1.0-alpha` package version)
+## Status: v0.3 alpha (`0.3.0-alpha.0` package version)
 
-> **Alpha/testing only.** The v0.2 mock closed loop and v0.3 read-only shoot
-> orchestration are under development; the package has not been released as
-> v0.2/v0.3. Do not point this checkout at production photos or an irreplaceable
-> photo library. Use the mock path, fixtures, or a disposable
-> non-critical test photo until the workflow has been reviewed for your setup.
+> **Alpha/testing only.** v0.2 and v0.3 automated gates pass, and one
+> non-critical RAW completed a live Lightroom adapter read/render plus human
+> visual check without a develop mutation. Subjective batch culling, live
+> representative edits/propagation, and evaluator-to-human agreement remain
+> unverified. Do not point this release at production photos or an
+> irreplaceable photo library before reviewing it for your setup.
 
 ## Platform assumptions
 
@@ -87,7 +88,7 @@ These four variables are the values documented by `.env.example`:
 | `PHOTO_AGENT_LIGHTROOM_MCP_ENTRY` | Executable entry for the local `lightroom-mcp-john` MCP server.                                                    | `D:\photo\lightroom-mcp-john\server\dist\index.js` |
 | `PHOTO_AGENT_SESSION_ROOT`        | Root directory for generated session state and renders.                                                            | `.photo-agent\sessions`                            |
 
-## v0.2/v0.3 development commands
+## v0.2/v0.3 commands
 
 Run the deterministic closed loop against fixtures or a non-critical test pair:
 
