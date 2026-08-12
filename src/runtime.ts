@@ -11,7 +11,10 @@ const TRANSITIONS: Record<JobState, readonly JobState[]> = {
   CODEX_INPUT_REQUIRED: ["PLAN_READY", "CANCELLED", "FAILED"],
   PLAN_READY: ["APPLYING", "REVIEW_REQUIRED", "CANCELLED", "FAILED"],
   APPLYING: ["RENDERING", "REVIEW_REQUIRED", "CANCELLED", "FAILED"],
-  RENDERING: ["REVIEW_REQUIRED", "FAILED", "CANCELLED"],
+  RENDERING: ["EVALUATING", "REVIEW_REQUIRED", "FAILED", "CANCELLED"],
+  EVALUATING: ["ACCEPTED", "REFINING", "REVIEW_REQUIRED", "FAILED", "CANCELLED"],
+  REFINING: ["APPLYING", "REVIEW_REQUIRED", "FAILED", "CANCELLED"],
+  ACCEPTED: [],
   REVIEW_REQUIRED: [],
   FAILED: [],
   CANCELLED: [],
@@ -166,6 +169,7 @@ export class SessionStore {
     const store = new SessionStore(dir, manifest);
     await mkdir(join(dir, "inputs"), { recursive: true });
     await mkdir(join(dir, "renders"), { recursive: true });
+    await mkdir(join(dir, "evaluations"), { recursive: true });
     await mkdir(join(dir, "checkpoints"), { recursive: true });
     await atomicJsonWrite(join(dir, "manifest.json"), manifest);
     await atomicJsonWrite(join(dir, "state.json"), { state: store.state });

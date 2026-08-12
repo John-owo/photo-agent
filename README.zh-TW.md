@@ -1,8 +1,42 @@
 # photo-agent（繁體中文）
 
-與後端無關的 AI 攝影工作流程代理，現為 `v0.1` 實作階段。
+## 這是什麼？
 
-這個版本先處理一組明確配對的 RAW 與預覽圖，用來驗證執行環境、標準化調色契約，以及 Lightroom adapter 邊界；選片、批次處理與 Style Memory 會留到後續版本。
+`photo-agent` 是一個與後端無關的 AI 攝影工作流程代理，將一組明確配對的 RAW／預覽圖轉成可追蹤的 `analyze → plan → apply → render` 工作階段。它負責工作流程以及安全、恢復邊界；`lightroom-mcp-john` 是用來套用調整並讀回／產生 render 狀態的外部 Lightroom MCP backend，不是定義整個 agent 的核心。現行 `0.1` 里程碑先解決單張照片 AI 輔助編輯的可重現、非破壞與可恢復問題，再擴展到選片、批次處理與 Style Memory。
+
+### 與 `lightroom-mcp` 的關係
+
+| Repository                                                            | 負責                                                                                                                | 不負責                                                     |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| [`John-owo/photo-agent`](https://github.com/John-owo/photo-agent)     | 工作流程狀態、安全／恢復政策、語意調色計畫、closed-loop 評估、選片、分群與整場拍攝編排。                            | Lightroom catalog 傳輸與 Lightroom Classic 外掛。          |
+| [`John-owo/lightroom-mcp`](https://github.com/John-owo/lightroom-mcp) | 可獨立使用的 MCP server 與 Lightroom Classic Lua 外掛：catalog 讀寫、Develop settings、checkpoint、render／export。 | PhotoAgent 的迭代政策、選片判斷、場景分群或批次 job 狀態。 |
+
+v0.1 工作把 PhotoAgent 從原本合併在 Lightroom fork 的流程程式抽成獨立
+repository。依賴是單向的：PhotoAgent 可以把 Lightroom MCP 當成其中一個
+backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAgent。舊 fork
+內的 `raw-photo-lightroom-preset` 是歷史工作流程指引；新的 workflow engine
+功能在本 repository 開發。
+
+## 狀態：v0.3 開發中（package version 仍為 `0.1.0-alpha`）
+
+> **Alpha／僅供測試。** v0.2 mock closed loop 與 v0.3 唯讀 shoot orchestration
+> 仍在開發，package 尚未以 v0.2／v0.3 發布。請勿將此 checkout 直接指向
+> 正式照片或無法取代的照片庫。在確認符合你的環境前，請使用 Mock 路徑、
+> fixtures，或可丟棄的非關鍵測試照片。
+
+## 平台假設
+
+以下所有指令範例均以 Windows PowerShell 撰寫；`npm.cmd`、反斜線路徑、PowerShell 環境變數語法，以及以反引號換行都是刻意採用的寫法。Node.js CLI 本身沒有刻意限制為 Windows，但本 alpha 尚未驗證非 Windows 的 Lightroom 整合，因此目前以 Windows + PowerShell 為支援設定。若只在其他平台執行 CLI／Mock，可將 `npm.cmd` 改為 `npm`、改用該平台的環境變數語法與路徑分隔符，並將 `PHOTO_AGENT_LIGHTROOM_MCP_ENTRY` 設為對應平台的 executable；其他平台的 Lightroom 使用仍視為未驗證。
+
+## 安全保證
+
+- 絕不刪除、重新命名或覆寫任何來源照片、RAW、sidecar、預覽圖或匯出檔。
+- RAW 檔案與 EXIF/GPS metadata 絕不上傳。除非明確提供 `--allow-cloud-preview`，否則不會傳送雲端預覽；即使允許，也只有本機清理過的預覽圖可傳送。
+- 預設的 `--provider codex` 路徑只建立本機交接資料，不會呼叫視覺模型 API；OpenAI provider 必須明確選取才會啟用。
+- Lightroom mutation 發生 timeout 後絕不盲目重試；會先讀回 backend 狀態，若無法確定是否已套用，就停在 `REVIEW_REQUIRED`。
+- 中斷後使用 `recover` 只會讀回狀態並 reconcile session，不會自動重試 mutation。
+- XMP fallback 只會建立新的 sidecar，並拒絕覆寫既有 sidecar 或來源檔案。
+- `lightroom-mcp-john` 是外部 backend checkout；照片工作流程不會修改該 checkout。實際執行 Lightroom 時仍應使用非關鍵測試照片。
 
 ## 安裝與驗證
 
@@ -15,6 +49,45 @@ npm.cmd run lint
 npm.cmd test
 npm.cmd run build
 ```
+
+## 環境變數
+
+以下四個變數對應 `.env.example` 的說明：
+
+| 變數                              | 用途                                                                                       | 預設值                                             |
+| --------------------------------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------- |
+| `OPENAI_API_KEY`                  | 明確選用 OpenAI provider、evaluator 或 shoot analyzer，且允許雲端預覽時使用的 credential。 | 未設定（空值）                                     |
+| `PHOTO_AGENT_OPENAI_MODEL`        | OpenAI 分析與評估路徑使用的模型名稱。                                                      | `gpt-5.6-terra`                                    |
+| `PHOTO_AGENT_LIGHTROOM_MCP_ENTRY` | 本機 `lightroom-mcp-john` MCP server 的 executable entry。                                 | `D:\photo\lightroom-mcp-john\server\dist\index.js` |
+| `PHOTO_AGENT_SESSION_ROOT`        | 產生 session 狀態與 render 的根目錄。                                                      | `.photo-agent\sessions`                            |
+
+## v0.2／v0.3 開發指令
+
+使用 fixtures 或非關鍵測試配對執行 deterministic closed loop：
+
+```powershell
+node dist\src\cli.js edit-one --raw <RAW> --preview <JPEG> --backend mock --provider mock --apply --evaluator mock --max-iterations 3
+```
+
+使用 `--evaluator openai --allow-cloud-preview` 可將 mock evaluator 換成需明確
+選用、回傳結構化結果的視覺 evaluator；在 `resume` 選用 OpenAI evaluator 時也
+必須提供相同同意旗標。只有新建立、已清理的 session JPEG 可傳送；預設與 mock
+路徑都不會呼叫 OpenAI。
+
+建立保守、唯讀的整場報告，並從同一組 durable jobs 繼續：
+
+```powershell
+node dist\src\cli.js shoot --root <SHOOT_DIR> --session-root .photo-agent\shoots --analysis-file <REVIEW_JSON>
+node dist\src\cli.js shoot --resume <SESSION_DIR> --analysis-file <REVIEW_JSON>
+node dist\src\cli.js shoot --root <SHOOT_DIR> --session-root .photo-agent\shoots --analyzer openai --allow-cloud-preview
+```
+
+選填的 review file 保存通過 schema 驗證、由使用者或 Codex 提供的選片與光線
+判斷，且不能與 `--analyzer openai` 同時使用。兩者都未明確選用時，所有照片
+都保持 `review`。OpenAI analyzer 每個有預覽的 asset 只送出一次結構化請求，
+而且只使用清理過的 session 副本。shoot 指令不會寫入星等、色標、調色或來源
+檔。詳見 [v0.2 實作紀錄](docs/implementation/v0.2.md)與
+[v0.3 實作紀錄](docs/implementation/v0.3.md)。
 
 ## Codex 本機流程（預設）
 
@@ -91,4 +164,14 @@ node dist/src/cli.js export-xmp `
   --output .photo-agent\exports\photo.xmp
 ```
 
-更多背景與限制請參閱：[AGENTS.md](AGENTS.md)、[ROADMAP.md](ROADMAP.md)、[v0.1 實作紀錄](docs/implementation/v0.1.md)、[v0.1–v0.3 後續方向](docs/implementation/v0.1-v0.3-direction.zh-TW.md)、[Codex 交接契約](docs/codex-provider.zh-TW.md)。英文版請見 [README.md](README.md)。
+## 參考連結
+
+- [AGENTS.md](AGENTS.md) — repository 安全與開發規範。
+- [ROADMAP.md](ROADMAP.md) — 專案目標與里程碑。
+- [v0.1 實作紀錄](docs/implementation/v0.1.md)。
+- [v0.1–v0.3 後續方向](docs/implementation/v0.1-v0.3-direction.zh-TW.md)。
+- [Codex 交接契約](docs/codex-provider.zh-TW.md)。
+- [Examples](examples/README.md) — 可重現的 fixture 指令。
+- [MIT License](LICENSE)。
+- [NOTICE.md](NOTICE.md) — `lightroom-mcp-john` 第三方 provenance 說明。
+- 英文版：[README.md](README.md)。

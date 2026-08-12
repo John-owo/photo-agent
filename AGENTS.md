@@ -1,13 +1,25 @@
 # photo-agent agent instructions
 
+## Required first read and search discipline
+
+- Read [WORKLOG.md](WORKLOG.md) before inspecting or changing code. It records the
+  last completed work, exact verification, known failures, and unverified
+  boundaries.
+- Start with targeted `rg` queries and the files named by the work log or current
+  milestone. Do not recursively scan the repository unless a narrower query
+  cannot answer the question.
+- After every material code or documentation update, and after every verification
+  command, append the result to `WORKLOG.md`. Record failures as well as passes;
+  never turn an unrun Lightroom, visual, or manual check into a pass.
+
 ## Current milestone
 
-Implement and harden `v0.1`: one explicit RAW/preview pair through
-`analyze -> plan -> apply -> render`, with durable session state, safe recovery,
-and the constrained XMP fallback. The default analysis route is a Codex-local
-handoff; the full direction is in [ROADMAP.md](ROADMAP.md), the v0.1 status is
-in [docs/implementation/v0.1.md](docs/implementation/v0.1.md), and the next
-milestones are in [docs/implementation/v0.1-v0.3-direction.zh-TW.md](docs/implementation/v0.1-v0.3-direction.zh-TW.md).
+Implement `v0.2` closed-loop editing, verify it, then implement `v0.3` culling,
+clustering, and resumable full-shoot orchestration. Preserve the hardened `v0.1`
+single-photo baseline and its safety rules. The full direction is in
+[ROADMAP.md](ROADMAP.md), status and exact checks are in [WORKLOG.md](WORKLOG.md),
+and the milestone sequence is in
+[docs/implementation/v0.1-v0.3-direction.zh-TW.md](docs/implementation/v0.1-v0.3-direction.zh-TW.md).
 
 ## Non-negotiable safety
 

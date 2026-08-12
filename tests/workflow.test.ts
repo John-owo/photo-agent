@@ -122,7 +122,7 @@ describe("v0.1-alpha contracts", () => {
     expect(await readFile(result.handoffPath!, "utf8")).toContain("raw-photo-lightroom-preset");
   });
 
-  it("resumes a Codex handoff from a validated intent file", async () => {
+  it("resumes a Codex handoff and guards a cloud evaluator", async () => {
     const { root, raw, preview } = await fixturePair();
     const initial = await runSinglePhoto({
       rawPath: raw,
@@ -153,11 +153,33 @@ describe("v0.1-alpha contracts", () => {
       "utf8",
     );
     const backend = new MockBackend(raw);
+    let cloudCalls = 0;
+    const cloudEvaluator = {
+      name: "cloud-resume-fixture",
+      requiresCloudPreview: true,
+      evaluate: async () => {
+        cloudCalls += 1;
+        throw new Error("cloud evaluator should not be called without opt-in");
+      },
+    };
+    await expect(
+      resumeCodexSession({
+        sessionDir: initial.sessionDir,
+        intentFile,
+        backend,
+        apply: true,
+        allowCloudPreview: false,
+        evaluator: cloudEvaluator,
+      }),
+    ).rejects.toThrow("evaluator requires --allow-cloud-preview");
+    expect(cloudCalls).toBe(0);
+    expect(backend.calls).toEqual([]);
     const result = await resumeCodexSession({
       sessionDir: initial.sessionDir,
       intentFile,
       backend,
       apply: true,
+      allowCloudPreview: false,
     });
     expect(result.state).toBe("REVIEW_REQUIRED");
     expect(result.renderPath).toMatch(/mock-render\.jpg$/);
