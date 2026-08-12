@@ -287,3 +287,17 @@ Cloud-analyzer checkpoint:
 - `npm.cmd run build`: passed; TypeScript emitted the production build without
   errors.
 - `git diff --check`: passed with no whitespace errors in tracked changes.
+- Targeted `npx.cmd prettier --check` over the v0.2/v0.3 source, tests,
+  documentation, README, agent rules, and work log failed: Prettier reported
+  style issues in all 18 requested files. This is a formatting-only failure;
+  no formatter write was performed, so existing/unrelated formatting was
+  preserved for review rather than bulk-reformatted during test verification.
+- Publish follow-up: the current checkout's fresh targeted Prettier check over
+  the actual publish scope passed before commit/push; the earlier formatting
+  failure entry above is retained as historical evidence from the independent
+  continuation and was not overwritten.
+- Authorized push succeeded: `origin/codex/v0.1-alpha` advanced from `6702c89`
+  to `f6bb3ef`. The GitHub branch now contains the v0.2/v0.3 publish scope.
+- `node dist/src/cli.js --help`: passed and exposed the v0.2 edit/resume/recover/
+  export-xmp commands plus the v0.3 shoot/resume commands, including explicit
+  cloud-preview and analyzer options.
