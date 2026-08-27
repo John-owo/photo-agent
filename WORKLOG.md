@@ -772,3 +772,14 @@ Cloud-analyzer checkpoint:
   explicitly deferred to T04.
 - Post-review `git diff --check 7f56115...HEAD` and clean branch-status readback
   passed after the release-review documentation commit.
+
+## 2026-08-28 - remote publication authorization boundary
+
+- Attempted a normal non-force push of `codex/roadmap-integration` in parallel
+  with the Lightroom integration branch. The external-action reviewer rejected
+  the branch publication before process creation because explicit approval to
+  transmit the complete branch payload was required. No workaround was used.
+- Read-only GitHub ref checks returned HTTP 404 for both repositories' intended
+  `codex/roadmap-integration` branch, confirming neither branch was published.
+  PhotoAgent issue #11 therefore remains open and no completion comment was
+  posted despite the locally complete implementation and verification.
