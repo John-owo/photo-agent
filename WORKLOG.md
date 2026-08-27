@@ -770,3 +770,5 @@ Cloud-analyzer checkpoint:
 - Review decision: T06 has no blocking Standards or Spec finding and is ready
   for a traced branch publication. Live Lightroom handshake acceptance remains
   explicitly deferred to T04.
+- Post-review `git diff --check 7f56115...HEAD` and clean branch-status readback
+  passed after the release-review documentation commit.
