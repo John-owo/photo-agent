@@ -680,3 +680,5 @@ Cloud-analyzer checkpoint:
 - Post-commit `git status --short; git log --oneline -4` passed: the T06
   worktree is clean and the hardening commit is immediately above the original
   T06 implementation commit.
+- Final status/log readback after the work-log commit was clean; the top commits
+  are `516d624`, `66b1621`, and `076cd4e`.
