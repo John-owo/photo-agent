@@ -608,6 +608,38 @@ Cloud-analyzer checkpoint:
   with no staged or working-tree changes. The operation state is being cleared
   with `git cherry-pick --quit` before retrying; no file content is discarded.
 
+## 2026-08-27 - T06 hardening integrated
+
+- Resolved the WORKLOG-only conflict from the hardening cherry-pick by keeping
+  both the integration recovery record and the T06 review evidence. No source
+  conflict occurred.
+- `git cherry-pick --continue` completed the three T06 commits as
+  `06f5f38`, `18d6f23`, and `8154615`; the source/test changes are now in the
+  integration branch.
+- Post-resolution `git status --short` was clean.
+- `git log --oneline -7` confirmed the T06 implementation, shared-gate fix,
+  and review records are above base `7f56115`.
+- Merge-marker verification reported `No merge markers` in `WORKLOG.md`.
+
+## 2026-08-27 - integration verification
+
+- First integration `npm.cmd test` attempt failed before test startup because
+  this newly created worktree has no installed `node_modules` (`vitest` was not
+  recognized). No source, photo, or Lightroom state changed.
+- `npm.cmd ci --ignore-scripts` failed before dependency installation completed:
+  npm hit an existing Windows `EPERM` while stat-ing its user cache and could
+  not write its npm log. No tracked source or project manifest changed; the
+  integration worktree may contain an ignored partial `node_modules` directory.
+- Post-install runtime check reported `integration vitest runtime missing`; no
+  tracked file changed.
+- Source-parity verification `git diff --exit-code 66b1621..HEAD -- README.md
+  README.zh-TW.md src tests` passed with no differences; the integration branch
+  contains the exact source and test content already verified on the T06
+  worktree. A second test run in this worktree remains unavailable until npm's
+  Windows cache/ACL issue is resolved.
+- Integration `git diff --check` passed with only Git's normal LF-to-CRLF
+  working-copy normalization warning for `WORKLOG.md`.
+
 ## 2026-08-27 - shared handshake gate hardening
 
 - Addressed the independent Spec review P1: `BackendAdapter` now declares its
