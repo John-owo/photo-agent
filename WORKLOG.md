@@ -644,6 +644,11 @@ Cloud-analyzer checkpoint:
 
 - The final `git status --short` readback after the integration verification
   commit was clean.
+- Updated the authorized workspace fallback handoff at
+  `D:\photo\_agent_workspace\archives\codex-handoff-photo-agent-roadmap-20260827.md`
+  with the completed T06 review, shared-gate fix, integration commit, and npm
+  cache/ACL limitation. The OS-temp handoff remains unavailable under the
+  account usage-limit guard.
 
 ## 2026-08-27 - shared handshake gate hardening
 
