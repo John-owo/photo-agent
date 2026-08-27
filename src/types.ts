@@ -1,5 +1,6 @@
 import type { z } from "zod";
 
+import type { BackendHandshakeRequirements } from "./backend-handshake.js";
 import type {
   BackendCapabilityManifestSchema,
   BackendPhotoStateSchema,
@@ -84,6 +85,7 @@ export type RenderResult = {
 
 export type BackendAdapter = {
   readonly name: string;
+  readonly handshakeRequirements: BackendHandshakeRequirements;
   readonly capabilities: BackendCapabilityManifest;
   connect(): Promise<void>;
   handshake(): Promise<BackendCapabilityManifest>;

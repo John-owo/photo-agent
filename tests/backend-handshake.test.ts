@@ -15,7 +15,7 @@ import {
   LightroomMcpAdapter,
   MockBackend,
 } from "../src/backends.js";
-import { assertBackendOperations } from "../src/backend-handshake.js";
+import { assertBackendOperations, requireBackendHandshake } from "../src/backend-handshake.js";
 import { BackendCapabilityManifestSchema } from "../src/schemas.js";
 import { writeFixtureJpeg } from "../src/preview.js";
 import { MockProvider } from "../src/providers.js";
@@ -214,6 +214,25 @@ describe("versioned backend handshake", () => {
       /unsupported operation/i,
     );
     expect(backend.calls).toEqual(["connect", "handshake"]);
+  });
+
+  it.each([
+    ["incompatible major", manifest({ version: "1.0.0" })],
+    [
+      "unexpected trust boundary",
+      manifest({
+        trust_boundary: { transport: "in-process", authentication: "none", cloud: true },
+      }),
+    ],
+  ])("revalidates %s at the shared backend gate", async (_name, advertised) => {
+    const backend = new MockBackend(await fixturePath());
+    await backend.connect();
+    backend.handshake = async () => advertised;
+
+    await expect(requireBackendHandshake(backend, ["read_current_edit"])).rejects.toThrow(
+      /incompatible major|unexpected trust boundary/i,
+    );
+    expect(backend.calls).toEqual(["connect"]);
   });
 
   it.each([

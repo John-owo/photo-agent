@@ -220,6 +220,7 @@ function parseToolResult<T>(value: unknown): T {
 
 export class MockBackend implements BackendAdapter {
   readonly name = "mock";
+  readonly handshakeRequirements = MOCK_HANDSHAKE_REQUIREMENTS;
   readonly calls: string[] = [];
   private readonly advertisedManifest: unknown;
   private negotiatedManifest: BackendCapabilityManifest | undefined;
@@ -328,6 +329,7 @@ export class MockBackend implements BackendAdapter {
 
 export class LightroomMcpAdapter implements BackendAdapter {
   readonly name = "lightroom-mcp";
+  readonly handshakeRequirements = LIGHTROOM_HANDSHAKE_REQUIREMENTS;
   private transport: Transport | undefined;
   private client: Client | undefined;
   private negotiatedManifest: BackendCapabilityManifest | undefined;

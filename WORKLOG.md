@@ -607,3 +607,68 @@ Cloud-analyzer checkpoint:
   though `git status --short; git status --branch --short` showed a clean branch
   with no staged or working-tree changes. The operation state is being cleared
   with `git cherry-pick --quit` before retrying; no file content is discarded.
+
+## 2026-08-27 - shared handshake gate hardening
+
+- Addressed the independent Spec review P1: `BackendAdapter` now declares its
+  expected backend version/trust contract, and `requireBackendHandshake()`
+  revalidates the returned manifest against that contract before applying the
+  path-specific operation gate. This prevents an adapter that merely returns a
+  schema-valid manifest from bypassing major-version or trust-boundary checks.
+- Added Mock/Lightroom adapter handshake requirement declarations and tests for
+  incompatible major and unexpected trust at the shared gate.
+- `npm.cmd run check`: passed with no TypeScript errors.
+- `npm.cmd test`: passed 3 Vitest files and 37 tests, including the new shared
+  gate rejection cases.
+- `npm.cmd run lint`: passed with no ESLint diagnostics.
+- `npm.cmd run build`: passed with no TypeScript errors.
+- `npx.cmd prettier --check src/backend-handshake.ts
+  tests/backend-handshake.test.ts`: passed.
+- `git diff --check`: passed; Git reported only the repository's normal
+  LF-to-CRLF working-copy normalization warnings.
+- Fixed-point/status verification passed: `git rev-parse --verify 7f56115`
+  resolved to `7f56115dfc1ad159574c02075dcf1aca8a2e3de4`; the branch contains
+  the original T06 commit plus the shared-gate hardening, and only the owned
+  source/test files and append-only WORKLOG are modified.
+
+## 2026-08-27 - takeover and independent T06 verification
+
+- T04 live-gate preflight in the Lightroom backend was blocked because
+  Lightroom was not running, both plugin sockets were closed, and the
+  configured checkout did not contain T03. The exact boundary is recorded in
+  the Lightroom integration worktree; no Lightroom or photo state changed.
+- GitHub connector readback confirmed PhotoAgent issue #11 is `[T06] Enforce a
+  versioned backend handshake before work`; it requires incompatible major
+  versions, unsupported operations, or wrong backend contracts to fail before
+  mutation, with compatible/incompatible mock and Lightroom handshake coverage.
+- Existing `codex/roadmap-t06` is clean at `076cd4e` on top of
+  `7f56115` and contains the T06 implementation, tests, documentation, and
+  work-log evidence. A Luna Max reviewer was dispatched for an independent
+  review but hit the account usage limit before producing findings.
+- Independent `npm.cmd test` rerun passed 3 Vitest files and 35 tests. No
+  Lightroom, photo, or external provider operation ran.
+- Independent `npm.cmd run check` rerun passed with no TypeScript errors.
+- Independent `npm.cmd run lint` rerun passed with no ESLint diagnostics.
+- Independent `npm.cmd run build` rerun passed with no TypeScript errors and
+  emitted the production build.
+- Review fixed-point verification passed: `git rev-parse --verify 7f56115`
+  resolved to `7f56115dfc1ad159574c02075dcf1aca8a2e3de4`, and
+  `git diff --stat 7f56115...HEAD` showed the one T06 commit changing 13
+  scoped files. No source or photo files were changed by this check.
+- Independent targeted `npx.cmd prettier --check
+  src/backend-handshake.ts tests/backend-handshake.test.ts` passed. The prior
+  broader changed-file formatting baseline remains documented and was not
+  rewritten.
+
+## 2026-08-27 - independent T06 review follow-up
+
+- Standards review found no hard-rule violations. It noted only duplicated
+  guard/parsing code and a speculative `create_virtual_copy` mapping; neither
+  is required for T06 execution and no unrelated refactor was made.
+- Spec review identified that the shared gate did not independently enforce
+  version/trust for an adapter that returned a schema-valid manifest. This was
+  fixed in the shared-gate hardening entry above and covered by two new tests.
+- Spec review also confirmed the Lightroom integration limitation: the current
+  configured backend has not been updated to preserve operation-semantics
+  metadata, and live Lightroom acceptance remains blocked by T03/T04. No claim
+  of live handshake acceptance is made here.

@@ -87,12 +87,8 @@ export async function requireBackendHandshake(
   backend: BackendAdapter,
   requiredOperations: readonly string[],
 ): Promise<BackendCapabilityManifest> {
-  const manifest = BackendCapabilityManifestSchema.parse(await backend.handshake());
-  if (manifest.backend !== backend.name) {
-    throw new Error(
-      `Backend handshake rejected wrong backend: expected ${backend.name}, received ${manifest.backend}`,
-    );
-  }
-  assertBackendOperations(manifest, requiredOperations);
-  return manifest;
+  return validateBackendCapabilityManifest(await backend.handshake(), {
+    ...backend.handshakeRequirements,
+    requiredOperations,
+  });
 }
