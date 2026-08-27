@@ -431,3 +431,160 @@ Cloud-analyzer checkpoint:
 - A GitHub `ls-remote` read-back confirmed the branch at
   `d4a8d309e0fc3c89934f36e6e23c7fd9fee15724` and the annotated tag object at
   `dbb0e7da63f2d952da5da55ccdd3cb245e5bc23d`.
+
+## 2026-08-27 - T06 versioned backend handshake setup
+
+- T06 setup re-read the full active `AGENTS.md`, `WORKLOG.md`, and accepted
+  sibling ADR 0006 (read-only); the worktree was clean on branch
+  `codex/roadmap-t06` at base `7f56115dfc1ad159574c02075dcf1aca8a2e3de4`.
+- Required baseline probe `npm.cmd test -- --runInBand` failed before tests as
+  expected: this repository uses Vitest, which rejects the Jest-only
+  `--runInBand` option (`CACError: Unknown option --runInBand`). No application
+  code ran during that failed probe.
+- Correct baseline `npm.cmd test` passed: 2 Vitest files / 22 tests.
+- Correct baseline `npm.cmd run check` passed TypeScript validation.
+- Correct baseline `npm.cmd run lint` passed ESLint.
+- Correct baseline `npm.cmd run build` passed TypeScript compilation.
+- Targeted read-only `gh issue view 11 --repo John-owo/photo-agent` was
+  blocked by the sandbox's GitHub API socket policy; implementation follows
+  the delegated acceptance criteria and accepted ADR instead. No live GitHub
+  issue evidence is claimed from this failed probe.
+- The preceding T06 setup lines were relocated here unchanged from an
+  accidental mid-history insertion; this EOF entry supersedes that placement.
+
+- Added the first T06 TDD red test at `tests/backend-handshake.test.ts` for
+  validated Mock manifests, incompatible major versions, wrong backend
+  identity, and unsupported required operations.
+- Targeted red command `npm.cmd test -- tests/backend-handshake.test.ts` failed
+  as intended: all 4 tests reached the current implementation and reported
+  `TypeError: backend.handshake is not a function`. No backend mutation or
+  photo operation ran.
+
+- Added `BackendAdapter.handshake()` plus a shared manifest compatibility and
+  required-operation gate. The gate compares strict semantic-version majors,
+  backend identity, exact trust boundary, and path-specific operation support;
+  adapters only negotiate shape/identity/version/trust and execution paths
+  supply their required operation list.
+- Extended operation semantics with the Lightroom MCP safety fields
+  `requires_active_selection` and `requires_editor_foreground`; static mock
+  and Lightroom reference manifests now include both fields.
+- Targeted red-to-green command `npm.cmd test -- tests/backend-handshake.test.ts`
+  passed: 4 tests covering valid negotiation, incompatible major, wrong
+  identity, and shared-gate rejection of an unsupported operation.
+- Targeted workflow command `npm.cmd test -- tests/backend-handshake.test.ts tests/workflow.test.ts`
+  passed: 2 files / 16 tests, including `connect -> handshake -> read` ordering
+  and updated session execution behavior.
+
+- Reviewer direction applied: adapter handshake validates manifest identity,
+  semantic-version major, trust boundary, and operation semantics shape without
+  hard-coding all operations; `requireBackendHandshake` applies the operation
+  list for single-photo, recovery, or propagation paths. Pre-handshake
+  capability getters now fail closed instead of exposing static claims.
+- Added an in-memory MCP integration fixture covering transport-only connect,
+  live `getServerVersion()`/`listTools()` derivation, trust and semantics
+  propagation, delayed plugin-ready read, incompatible major, and wrong server
+  identity. This fixture uses the official SDK's `Server`, `Client`, and
+  `InMemoryTransport`; it does not connect to Lightroom.
+- Added the two T02 operation-semantics booleans to the schema and static
+  manifests. The first integration test run had one assertion mistake: an
+  incompatible handshake correctly calls `list_tools` before rejecting. The
+  expectation was corrected to distinguish handshake discovery from catalog
+  reads.
+- Targeted green command `npm.cmd test -- tests/backend-handshake.test.ts`
+  passed: 1 file / 7 tests, including in-memory MCP compatible and incompatible
+  handshakes and no catalog call after rejected negotiation.
+- Expanded the Mock workflow tests to exercise incompatible major, wrong backend,
+  and unsupported required operation manifests through `runSinglePhoto`; each
+  now proves the sequence stops at `connect -> handshake -> close` with zero
+  read/checkpoint/apply calls.
+- Targeted command `npm.cmd test -- tests/backend-handshake.test.ts` passed:
+  1 file / 10 tests.
+- First post-change `npm.cmd run check` failed only in the new integration
+  fixture because its default read-only semantics type was too narrow for the
+  mutating/export tool variants (TS2322 at test lines 118-120); no runtime ran.
+- Typed the fixture against `OperationSemanticsSchema`; rerun
+  `npm.cmd run check` passed with no TypeScript errors.
+- Updated `README.md` and `README.zh-TW.md` with the versioned handshake
+  boundary, fail-closed compatibility/trust/operation checks, and the explicit
+  limitation that current handshake integration evidence is fake/mock only,
+  not live Lightroom acceptance.
+- Added workflow assertions that the session manifest records the negotiated
+  backend version and propagation assertions that each target performs
+  `connect -> handshake -> read/checkpoint/apply/read -> close`.
+- Targeted command `npm.cmd test -- tests/backend-handshake.test.ts tests/workflow.test.ts tests/milestones.test.ts`
+  passed: 3 files / 32 tests.
+- Hardened `BackendCapabilityManifestSchema` with strict semantic versions,
+  strict nested objects, duplicate-capability detection, and a requirement
+  that every advertised capability has supported operation semantics.
+- Post-schema `npm.cmd run check` passed with no TypeScript errors.
+- Correction: the schema hardening intentionally retains sparse capability
+  manifests so the shared path-specific gate, rather than handshake parsing,
+  rejects unsupported or missing operations. The preceding sentence's claims
+  about duplicate-capability and advertised-operation enforcement are superseded;
+  strict semantic-version/nested-object validation remains active.
+- Added a malformed-semantics in-memory MCP case; it verifies a known tool with
+  missing operation metadata is rejected before any catalog call.
+- `npm.cmd run check` passed after the fixture extension.
+- `npm.cmd test -- tests/backend-handshake.test.ts` passed: 1 file / 11 tests.
+- Reinstated sparse-manifest consistency checks in
+  `BackendCapabilityManifestSchema`: duplicate advertised capabilities and
+  advertised entries without supported `operations[name]` are rejected, while
+  missing capabilities remain available for the path-specific operation gate.
+- Added Mock workflow cases for missing operation semantics and duplicate
+  capabilities; both stop before catalog access and close the connected backend.
+- Post-consistency `npm.cmd run check` passed; targeted
+  `npm.cmd test -- tests/backend-handshake.test.ts` passed: 1 file / 13 tests.
+- Documented `lightroomCapabilities()` as a checked-in reference only; runtime
+  authorization uses the post-handshake negotiated manifest and the
+  pre-handshake capability getter remains fail closed.
+- The shared `requireBackendHandshake` now reparses the returned manifest and
+  verifies its backend identity matches the adapter before applying the
+  path-specific operation gate; semantic-version major comparison uses the
+  canonical major token rather than lossy numeric conversion.
+- Verification after the shared-gate hardening: `npm.cmd run check` passed;
+  targeted `npm.cmd test -- tests/backend-handshake.test.ts tests/workflow.test.ts tests/milestones.test.ts`
+  passed 3 files / 35 tests.
+- Backend operation methods now also enforce their individual negotiated
+  operation semantics, so a sparse manifest cannot be approximated by calling
+  an unadvertised MCP operation directly.
+- Recheck after per-operation guards: `npm.cmd run check` passed;
+  `npm.cmd test -- tests/backend-handshake.test.ts tests/workflow.test.ts tests/milestones.test.ts`
+  passed 3 files / 35 tests.
+- First `npm.cmd run lint` failed on the new test's schema import because the
+  symbol was type-only (`consistent-type-imports`); no runtime ran.
+- Replaced the test-only alias with the inferred manifest operation type;
+  rerun `npm.cmd run lint` passed with no diagnostics.
+- The Lightroom handshake now validates `get_selected_photos` semantics when
+  that readiness tool is advertised, while keeping it out of the adapter's
+  public edit-operation capability list.
+- Follow-up `npm.cmd run check` and targeted
+  `npm.cmd test -- tests/backend-handshake.test.ts` both passed (13 tests).
+- Targeted `npx.cmd prettier --check README.md README.zh-TW.md
+  src/backend-handshake.ts src/backends.ts src/batch-edit.ts src/index.ts
+  src/schemas.ts src/types.ts src/workflow.ts tests/backend-handshake.test.ts
+  tests/milestones.test.ts tests/workflow.test.ts` reported style issues in all
+  12 files. No formatter write was performed; the repository already has a
+  broad formatting/line-ending baseline, and code correctness is covered by
+  typecheck, lint, and tests.
+- Mechanically formatted only the two T06-owned new files with
+  `npx.cmd prettier --write src/backend-handshake.ts tests/backend-handshake.test.ts`;
+  no unrelated repository files were rewritten.
+- Full post-change verification: `npm.cmd test` passed 3 files / 35 tests;
+  `npm.cmd run check` passed; `npm.cmd run lint` passed.
+- `npm.cmd run build` passed and emitted the TypeScript build without errors.
+- Post-build `git status --short` showed only the T06 README, schema/type,
+  adapter/workflow/batch, tests, new handshake module, and append-only WORKLOG
+  changes; no generated build artifacts or unrelated worktree changes appeared.
+- `git diff --check` passed with only Git's normal LF-to-CRLF working-copy
+  normalization warnings.
+- Added fail-closed duplicate MCP tool-name rejection to the Lightroom
+  handshake so a malformed tool inventory cannot silently alter capability
+  derivation.
+- Final `npm.cmd test` passed 3 files / 35 tests (including the T06 handshake
+  suite).
+- Final `npm.cmd run build` passed with no TypeScript errors.
+- Final targeted `npx.cmd prettier --check src/backend-handshake.ts
+  tests/backend-handshake.test.ts` passed; the broader changed-file Prettier
+  check remains the previously recorded repository baseline failure.
+- Final `git diff --check` passed with only Git's normal LF-to-CRLF working-copy
+  normalization warnings.

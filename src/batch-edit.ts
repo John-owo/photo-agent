@@ -1,6 +1,7 @@
 import { join, resolve } from "node:path";
 
 import { acquireMutationLock } from "./runtime.js";
+import { PROPAGATION_OPERATIONS, requireBackendHandshake } from "./backend-handshake.js";
 import { LIGHTROOM_CHECKPOINT_KEYS, resolveLightroomSettings } from "./translator.js";
 import type {
   AnalysisProvider,
@@ -130,6 +131,7 @@ export async function applyPropagationPlan(options: {
       try {
         await backend.connect();
         connected = true;
+        await requireBackendHandshake(backend, PROPAGATION_OPERATIONS);
         const current = await backend.readCurrentEdit(asset.raw_path);
         if (!samePath(current.path, asset.raw_path)) {
           throw new Error("Propagation target path mismatch; refusing mutation");

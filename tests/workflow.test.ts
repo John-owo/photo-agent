@@ -183,6 +183,7 @@ describe("v0.1-alpha contracts", () => {
     });
     expect(result.state).toBe("REVIEW_REQUIRED");
     expect(result.renderPath).toMatch(/mock-render\.jpg$/);
+    expect(result.manifest.backend).toEqual({ name: "mock", version: "0.1.0" });
     expect(result.manifest.provider.name).toBe("codex");
     expect(backend.calls).toContain("apply_global_adjustment");
   });
@@ -203,6 +204,7 @@ describe("v0.1-alpha contracts", () => {
     expect(result.renderPath).toMatch(/mock-render\.jpg$/);
     expect(backend.calls).toEqual([
       "connect",
+      "handshake",
       "read_current_edit",
       "create_checkpoint",
       "apply_global_adjustment",
@@ -259,7 +261,8 @@ describe("v0.1-alpha contracts", () => {
     const backend = new MockBackend(raw);
     const result = await recoverSession({ sessionDir: session.dir, backend });
     expect(result.state).toBe("REVIEW_REQUIRED");
-    expect(backend.calls).toEqual(["connect", "read_current_edit", "close"]);
+    expect(result.manifest.backend).toEqual({ name: "mock", version: "0.1.0" });
+    expect(backend.calls).toEqual(["connect", "handshake", "read_current_edit", "close"]);
     expect(await readFile(join(session.dir, "recovery-readback.json"), "utf8")).toContain(
       "interrupted_state",
     );

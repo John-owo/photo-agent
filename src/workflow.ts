@@ -1,6 +1,11 @@
 import { join, resolve } from "node:path";
 
 import { MIN_EVALUATION_CONFIDENCE, planFingerprint, renderFingerprint } from "./evaluation.js";
+import {
+  RECOVERY_OPERATIONS,
+  requireBackendHandshake,
+  SINGLE_PHOTO_OPERATIONS,
+} from "./backend-handshake.js";
 import { ingestPair } from "./ingest.js";
 import { createSanitizedPreview } from "./preview.js";
 import {
@@ -125,8 +130,9 @@ async function executePlan(
     );
     await options.backend.connect();
     connected = true;
+    const backendManifest = await requireBackendHandshake(options.backend, SINGLE_PHOTO_OPERATIONS);
     await session.updateManifest({
-      backend: { name: options.backend.name, version: options.backend.capabilities.version },
+      backend: { name: backendManifest.backend, version: backendManifest.version },
     });
     let current = await options.backend.readCurrentEdit(photoId);
     if (!samePath(current.path, source.raw_path)) {
@@ -484,6 +490,10 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
     );
     await options.backend.connect();
     connected = true;
+    const backendManifest = await requireBackendHandshake(options.backend, RECOVERY_OPERATIONS);
+    await session.updateManifest({
+      backend: { name: backendManifest.backend, version: backendManifest.version },
+    });
     const current = await options.backend.readCurrentEdit(photoId);
     if (!samePath(current.path, session.currentManifest.source.raw_path)) {
       throw new Error(

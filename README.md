@@ -59,6 +59,13 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   state first; if reconciliation is uncertain, stop at `REVIEW_REQUIRED`.
 - After an interruption, `recover` only reads back state and reconciles the
   session; it never retries a mutation automatically.
+- Before any backend read, checkpoint, mutation, or render on an apply/recover/
+  propagation path, PhotoAgent performs a versioned MCP capability handshake.
+  It derives the server version, advertised tools, trust boundary, and
+  operation-semantics metadata from the connected server; incompatible majors,
+  unexpected identity/trust, malformed manifests, and unsupported required
+  operations fail closed. Automated coverage uses Mock and an in-memory fake
+  MCP server; live Lightroom handshake acceptance remains unverified.
 - XMP fallback writes a new sidecar and refuses to overwrite an existing
   sidecar or source file.
 - `lightroom-mcp-john` is an external backend checkout; a photo workflow does

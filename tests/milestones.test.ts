@@ -378,14 +378,31 @@ describe("v0.3 shoot workflow", () => {
         confirmApply: false,
       }),
     ).rejects.toThrow("confirmApply=true");
+    const propagationBackends: MockBackend[] = [];
     const applied = await applyPropagationPlan({
       manifest: result.manifest,
       plan: propagation,
       sessionDir: result.sessionDir,
-      backendFactory: (asset) => new MockBackend(asset.raw_path),
+      backendFactory: (asset) => {
+        const backend = new MockBackend(asset.raw_path);
+        propagationBackends.push(backend);
+        return backend;
+      },
       confirmApply: true,
     });
     expect(applied.map((item) => item.state)).toEqual(["APPLIED", "APPLIED"]);
+    expect(propagationBackends).toHaveLength(2);
+    for (const backend of propagationBackends) {
+      expect(backend.calls).toEqual([
+        "connect",
+        "handshake",
+        "read_current_edit",
+        "create_checkpoint",
+        "apply_global_adjustment",
+        "read_current_edit",
+        "close",
+      ]);
+    }
   });
 
   it("uses a schema-validated review file without inventing missing decisions", async () => {

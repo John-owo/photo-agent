@@ -86,6 +86,7 @@ export type BackendAdapter = {
   readonly name: string;
   readonly capabilities: BackendCapabilityManifest;
   connect(): Promise<void>;
+  handshake(): Promise<BackendCapabilityManifest>;
   close(): Promise<void>;
   readCurrentEdit(photoId: string): Promise<BackendPhotoState>;
   createCheckpoint(photoId: string, name: string, settings: string[]): Promise<CheckpointResult>;
