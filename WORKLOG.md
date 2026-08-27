@@ -726,3 +726,47 @@ Cloud-analyzer checkpoint:
   T06 implementation commit.
 - Final status/log readback after the work-log commit was clean; the top commits
   are `516d624`, `66b1621`, and `076cd4e`.
+
+## 2026-08-28 - roadmap orchestration resumption and T06 release gate
+
+- Re-read the workspace and repository instructions, current roadmap, accepted
+  ADRs, GitHub issue bodies, and native parent/dependency graph before choosing
+  work. GitHub still showed all roadmap issues open; local history supersedes
+  that stale tracker state for T06 implementation evidence only.
+- The first escalated `git fetch --prune origin` failed because the external
+  user rejected this worktree's sandbox-owned Git metadata as dubious. The
+  retry used a command-local `safe.directory` value, changed no global Git
+  configuration, and fetched successfully.
+- Remote comparison after fetch showed this integration branch is 10 commits
+  ahead of `origin/codex/v0.1-alpha` with no remote roadmap branch. Source/test
+  parity against clean `codex/roadmap-t06` passed for both READMEs, `src`, and
+  `tests`.
+- Fresh T06 verification on the clean issue worktree passed: `npm.cmd test`
+  reported 3 Vitest files / 37 tests; `npm.cmd run check`, `npm.cmd run lint`,
+  `npm.cmd run build`, and `git diff --check 7f56115...HEAD` passed.
+- An earlier combined verification exceeded the 30-second tool yield and
+  returned only startup output, so it was not counted. The test and remaining
+  checks were rerun with explicit completion and exit code 0 as recorded above.
+- T06 remains mock/in-memory-MCP verified. No live Lightroom connection,
+  catalog preparation, mutation, render, source change, or visual QA ran.
+
+### 2026-08-28 two-axis T06 review
+
+- Independent Standards review found no hard repository-rule violation. It
+  reported judgement-only duplication in adapter negotiation guards and bare
+  operation strings; both are existing bounded adapter/domain tradeoffs and no
+  speculative refactor was added to T06.
+- Independent Spec review questioned handshake timing because local analysis
+  and dry-run session creation happen without a backend handshake. This is not
+  a T06 blocker: `apply=false` performs no backend execution, catalog access,
+  or mutation, while every recovery/propagation/mutating backend path performs
+  the handshake before its first backend read as the acceptance criterion
+  requires.
+- The review also questioned the Lightroom trust value because it is declared
+  by the adapter rather than reported by the server. The adapter owns and can
+  observe its localhost stdio/TCP/token transport boundary; accepting a remote
+  self-report would not strengthen that boundary. Server identity, version,
+  tool inventory, and operation semantics remain negotiated and fail closed.
+- Review decision: T06 has no blocking Standards or Spec finding and is ready
+  for a traced branch publication. Live Lightroom handshake acceptance remains
+  explicitly deferred to T04.
