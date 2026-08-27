@@ -588,3 +588,18 @@ Cloud-analyzer checkpoint:
   check remains the previously recorded repository baseline failure.
 - Final `git diff --check` passed with only Git's normal LF-to-CRLF working-copy
   normalization warnings.
+
+## 2026-08-27 - takeover integration of T06
+
+- Verified the clean integration worktree was created from `7f56115` on branch
+  `codex/roadmap-integration`; the pre-existing dirty `codex/v0.1-alpha`
+  worktree was not modified.
+- Cherry-picked the existing T06 implementation commit `076cd4e` as
+  `76f76ef feat: add versioned backend handshake (#11)`. The cherry-pick
+  changed only the 13 files already scoped by T06; no photo or Lightroom
+  checkout was touched.
+- Integration status readback passed before the next cherry-pick: only the
+  append-only `WORKLOG.md` entry was dirty and `HEAD` was `76f76ef`.
+- First `git cherry-pick 66b1621 516d624 0cc1672` attempt was rejected before
+  applying any commit because the integration work-log append was uncommitted;
+  no source or photo file changed.
