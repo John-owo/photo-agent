@@ -603,3 +603,7 @@ Cloud-analyzer checkpoint:
 - First `git cherry-pick 66b1621 516d624 0cc1672` attempt was rejected before
   applying any commit because the integration work-log append was uncommitted;
   no source or photo file changed.
+- The immediate retry reported an existing cherry-pick operation state even
+  though `git status --short; git status --branch --short` showed a clean branch
+  with no staged or working-tree changes. The operation state is being cleared
+  with `git cherry-pick --quit` before retrying; no file content is discarded.
