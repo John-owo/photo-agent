@@ -640,6 +640,11 @@ Cloud-analyzer checkpoint:
 - Integration `git diff --check` passed with only Git's normal LF-to-CRLF
   working-copy normalization warning for `WORKLOG.md`.
 
+## 2026-08-27 - integration worktree final status
+
+- The final `git status --short` readback after the integration verification
+  commit was clean.
+
 ## 2026-08-27 - shared handshake gate hardening
 
 - Addressed the independent Spec review P1: `BackendAdapter` now declares its
