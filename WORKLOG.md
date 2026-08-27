@@ -649,6 +649,8 @@ Cloud-analyzer checkpoint:
   with the completed T06 review, shared-gate fix, integration commit, and npm
   cache/ACL limitation. The OS-temp handoff remains unavailable under the
   account usage-limit guard.
+- Final integration `git status --short` readback was clean after the handoff
+  refresh commit; no tracked source or test file remains modified.
 
 ## 2026-08-27 - shared handshake gate hardening
 
