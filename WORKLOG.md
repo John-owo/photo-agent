@@ -672,3 +672,11 @@ Cloud-analyzer checkpoint:
   configured backend has not been updated to preserve operation-semantics
   metadata, and live Lightroom acceptance remains blocked by T03/T04. No claim
   of live handshake acceptance is made here.
+
+## 2026-08-27 - T06 hardening commit verification
+
+- Committed the shared-gate fix and its tests as
+  `66b1621 fix: revalidate backend handshake contract`.
+- Post-commit `git status --short; git log --oneline -4` passed: the T06
+  worktree is clean and the hardening commit is immediately above the original
+  T06 implementation commit.
