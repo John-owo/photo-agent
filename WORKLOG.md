@@ -783,3 +783,44 @@ Cloud-analyzer checkpoint:
   `codex/roadmap-integration` branch, confirming neither branch was published.
   PhotoAgent issue #11 therefore remains open and no completion comment was
   posted despite the locally complete implementation and verification.
+
+## 2026-08-28 - next PhotoAgent roadmap ticket preflight
+
+- Re-read the workspace/project instructions and this work log before code
+  inspection. The configured implementation front is this
+  `photo-agent-roadmap-integration` worktree; the dirty `photo-agent-v0.1`
+  checkout was left untouched.
+- The first sandboxed `gh issue view 12` read failed because outbound GitHub
+  socket access was denied. The approved read-only retry succeeded and confirmed
+  that PhotoAgent #12 is T07, "Route single-photo mutation through a lazy
+  Workflow Copy".
+- GitHub currently reports T07 blocked by open Lightroom MCP #5 (T04 live
+  Workflow Copy acceptance) and open PhotoAgent #11 (T06). Local evidence shows
+  T06 is implemented and verified but unpublished; no issue state was changed.
+- Live-boundary preflight found the Lightroom process present, but neither MCP
+  plugin socket `127.0.0.1:58763` nor `127.0.0.1:58764` was listening. No
+  Lightroom catalog, photo, source, sidecar, or external provider operation ran.
+- A targeted `rg` over `src`/`tests` found the current single-photo handshake and
+  direct backend mutation seam in `src/workflow.ts`, with relevant contracts in
+  `src/types.ts`, `src/backends.ts`, and `tests/workflow.test.ts`. That command
+  also reported expected missing-path errors for `CONTEXT.md` and `docs/adr` in
+  this clean integration worktree; accepted ADR copies remain outside this
+  checkout and no file was changed by the failed paths.
+- Read the accepted Workflow Copy terminology and lazy-creation/identity-safe
+  decisions from the preserved `CONTEXT.md`, ADR 0005, and ADR 0006 in the
+  configured v0.1 checkout. T07's public test seams are therefore already fixed
+  by the approved ticket: dry-run/no-op non-creation, verified Copy-only
+  mutation, fail-closed Virtual Copy/uncertain identity handling, and unchanged
+  Master/source evidence.
+- A delegated read-only frontier audit found no alternative PhotoAgent ticket
+  that can be implemented without bypassing the approved graph. T08 and T09
+  depend on T07; T11, T13, and T16 remain behind the open v0.1 gate.
+- Final status/diff/log verification before the stop boundary passed:
+  `codex/roadmap-integration` remained at `cf4c88b`, only this append-only
+  `WORKLOG.md` was modified, `git diff --check` reported no whitespace error
+  (only the normal LF-to-CRLF warning), and the diff contained 23 added log
+  lines before this final record.
+- Stop boundary: do not implement T07 until the real T04 gate is completed on a
+  designated non-critical catalog photo and T06's locally verified branch is
+  explicitly authorized for publication. No runtime source, test, photo,
+  Lightroom catalog state, sidecar, preview, or remote issue/branch changed.
