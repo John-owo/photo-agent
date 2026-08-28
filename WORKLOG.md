@@ -824,3 +824,53 @@ Cloud-analyzer checkpoint:
   designated non-critical catalog photo and T06's locally verified branch is
   explicitly authorized for publication. No runtime source, test, photo,
   Lightroom catalog state, sidecar, preview, or remote issue/branch changed.
+
+## 2026-08-29 - Lightroom connection restored on the old backend contract
+
+- The user supplied the Lightroom MCP status panel showing the server running
+  with both request/response sockets connected on ports 58763/58764. A live
+  read-only MCP call succeeded and returned the currently selected catalog item
+  `D:\star\1\star_去星背景_缩星.tif` (photo id `1010116`).
+- A Windows TCP readback did not expose the connection despite the successful
+  MCP call. The status panel plus live tool result supersede that OS-level
+  absence for connectivity, but no mutation was attempted.
+- Runtime tool inspection confirmed the connected MCP server does not advertise
+  T03's `create_virtual_copy`. Targeted source inspection found that operation
+  only in the clean Lightroom roadmap integration worktree, not in the
+  configured `D:\photo\lightroom-mcp-john` checkout used by this Codex task.
+- T07 remains correctly blocked: Lightroom is reachable, but the verified
+  Workflow Copy backend contract required by T04 is not the active contract.
+  No PhotoAgent source/test, Lightroom catalog state, photo, sidecar, preview,
+  configured checkout, plug-in installation, or remote state changed.
+- `git diff --check` passed after this record with only the normal LF-to-CRLF
+  warning; status showed only this intended append-only `WORKLOG.md` change.
+
+## 2026-08-29 - T04 test target and backend switch preparation
+
+- The user designated `5343.NEF` as the non-critical T04 test photo and
+  authorized switching to the roadmap integration backend. Live Lightroom
+  search resolved one unique catalog photo:
+  `E:\Lr\2026\2026-07-25\DSC_5343.NEF`, id `976310`.
+- Read-only baseline metadata/develop readback succeeded before any mutation:
+  RAW, 6048x4032, Nikon Z5_2, ISO 7200, As Shot white balance, 4800 K,
+  Tint 31, Exposure 0, and zeroed exposed global/HSL adjustments. The active
+  old contract does not expose the stable UUID/Virtual Copy identity needed for
+  T04, so no mutation was attempted.
+- Official Codex configuration guidance confirmed trusted project
+  `.codex/config.toml` overrides and stdio MCP `command`/`args`. Following the
+  workspace safeguards, timestamped non-overwriting SHA-256-matching backups of
+  both user/project config files were created before the authorized change.
+- Changed only `D:\photo\.codex\config.toml` Lightroom `args` from the dirty
+  configured checkout to the clean roadmap integration server dist. The user
+  config remained byte-for-byte unchanged. Real TOML parsing confirmed both
+  files valid, project `default_permissions="photo-lightroom"` and its matching
+  profile preserved, and no project-only profile copied into user scope.
+- Fresh Lightroom integration server verification passed: Jest 15 suites / 172
+  tests, TypeScript source/test check, ESLint, and production build. T07 remains
+  paused until the matching integration plug-in is manually loaded/reloaded and
+  Codex is fully restarted so the live tool registry contains
+  `create_virtual_copy`.
+- `git diff --check` passed for this worktree with only the normal LF-to-CRLF
+  warning; only this append-only work-log file was modified. No PhotoAgent
+  runtime/test, Lightroom catalog, Master Develop State, source file, sidecar,
+  preview, GitHub issue, branch, or remote state changed.
