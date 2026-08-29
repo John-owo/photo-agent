@@ -59,6 +59,11 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   state first; if reconciliation is uncertain, stop at `REVIEW_REQUIRED`.
 - After an interruption, `recover` only reads back state and reconciles the
   session; it never retries a mutation automatically.
+- A single-photo apply reads and verifies the Master first, then lazily creates
+  one session-marked Workflow Copy only when apply is approved and the plan has
+  an executable adjustment. Checkpoints, Develop mutation, read-back, and render
+  target only the verified Copy. Dry runs and no-op plans create no Copy;
+  Virtual Copy input or uncertain identity stops at `REVIEW_REQUIRED`.
 - Before any backend read, checkpoint, mutation, or render on an apply/recover/
   propagation path, PhotoAgent performs a versioned MCP capability handshake.
   It derives the server version, advertised tools, trust boundary, and

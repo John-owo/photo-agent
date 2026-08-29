@@ -41,12 +41,25 @@ function manifest(overrides: Record<string, unknown> = {}) {
     trust_boundary: { transport: "in-process", authentication: "none", cloud: false },
     capabilities: [
       "read_current_edit",
+      "create_workflow_copy",
       "apply_global_adjustment",
       "render_preview",
       "create_checkpoint",
     ],
     operations: {
       read_current_edit: operation,
+      create_workflow_copy: {
+        ...operation,
+        side_effect: "mutating",
+        idempotent: false,
+        reversible: "irreversible",
+        scope: "selection",
+        requires_active_selection: true,
+        requires_editor_foreground: true,
+        concurrency: "exclusive_backend",
+        retry_policy: "readback_before_retry",
+        safe_to_resume: false,
+      },
       apply_global_adjustment: { ...operation, side_effect: "mutating", idempotent: false },
       render_preview: { ...operation, side_effect: "temporary" },
       create_checkpoint: { ...operation, side_effect: "mutating", idempotent: false },
@@ -123,6 +136,18 @@ async function inMemoryLightroom(
       tools: [
         listedTool("get_selected_photos"),
         listedTool("get_photo_metadata"),
+        listedTool("create_virtual_copy", {
+          ...readSemantics,
+          side_effect: "mutating",
+          idempotent: false,
+          reversible: "irreversible",
+          scope: "selection",
+          requires_active_selection: true,
+          requires_editor_foreground: true,
+          concurrency: "exclusive_backend",
+          retry_policy: "readback_before_retry",
+          safe_to_resume: false,
+        }),
         listedTool("set_develop_settings", {
           ...readSemantics,
           side_effect: "mutating",
@@ -144,13 +169,50 @@ async function inMemoryLightroom(
       return { content: [{ type: "text", text: JSON.stringify({ photos: [] }) }] };
     }
     if (name === "get_photo_metadata") {
+      const photoId = String(request.params.arguments?.photo_id ?? "100");
+      const isCopy = photoId === "101";
       return {
         content: [
           {
             type: "text",
             text: JSON.stringify({
+              catalog_id: photoId,
+              uuid: isCopy ? "uuid-copy" : "uuid-master",
+              master_id: "100",
+              master_uuid: "uuid-master",
+              is_virtual_copy: isCopy,
               path: "C:/照片/星空.NEF",
               developSettings: { Exposure2012: 0 },
+            }),
+          },
+        ],
+      };
+    }
+    if (name === "create_virtual_copy") {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              operation_id: "photoagent-vc-test-001",
+              result: "created",
+              partial: false,
+              source: {
+                catalog_id: "100",
+                uuid: "uuid-master",
+                is_virtual_copy: false,
+              },
+              master: {
+                catalog_id: "100",
+                uuid: "uuid-master",
+                is_virtual_copy: false,
+              },
+              copy: {
+                catalog_id: "101",
+                uuid: "uuid-copy",
+                is_virtual_copy: true,
+              },
+              selection_restoration: { status: "restored", verified: true },
             }),
           },
         ],
@@ -339,6 +401,51 @@ describe("versioned backend handshake", () => {
 
     await expect(fixture.adapter.handshake()).rejects.toThrow(/malformed operation semantics/i);
     expect(fixture.calls).toEqual(["list_tools"]);
+    await fixture.adapter.close();
+    await fixture.close();
+  });
+
+  it("maps an identity-verified Workflow Copy through the Lightroom MCP boundary", async () => {
+    const fixture = await inMemoryLightroom("0.10.7");
+    await fixture.adapter.connect();
+    await fixture.adapter.handshake();
+
+    const master = await fixture.adapter.readCurrentEdit("100");
+    expect(master.identity).toEqual({
+      catalog_id: "100",
+      uuid: "uuid-master",
+      master_id: "100",
+      master_uuid: "uuid-master",
+      is_virtual_copy: false,
+    });
+    const created = await fixture.adapter.createWorkflowCopy(
+      "100",
+      "uuid-master",
+      "photoagent-vc-test-001",
+    );
+    expect(created).toMatchObject({
+      result: "created",
+      partial: false,
+      copy: {
+        catalog_id: "101",
+        uuid: "uuid-copy",
+        master_id: "100",
+        master_uuid: "uuid-master",
+        is_virtual_copy: true,
+      },
+      selection_restoration: { status: "restored", verified: true },
+    });
+    const copy = await fixture.adapter.readCurrentEdit("101");
+    expect(copy.identity).toEqual(created.copy);
+    expect(copy.develop_settings).toEqual(master.develop_settings);
+    expect(fixture.calls).toEqual([
+      "list_tools",
+      "get_selected_photos",
+      "get_photo_metadata",
+      "create_virtual_copy",
+      "get_photo_metadata",
+    ]);
+
     await fixture.adapter.close();
     await fixture.close();
   });

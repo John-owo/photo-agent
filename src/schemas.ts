@@ -102,11 +102,40 @@ export const SourceAssetPairSchema = z.object({
   source_confidence: z.literal("high"),
 });
 
+export const BackendPhotoIdentitySchema = z
+  .object({
+    catalog_id: z.string().min(1),
+    uuid: z.string().min(1),
+    master_id: z.string().min(1),
+    master_uuid: z.string().min(1),
+    is_virtual_copy: z.boolean(),
+  })
+  .strict();
+
 export const BackendPhotoStateSchema = z.object({
   photo_id: z.string().min(1),
   path: z.string().min(1),
   develop_settings: z.record(z.string(), z.union([z.number(), z.string(), z.boolean()])),
+  identity: BackendPhotoIdentitySchema.optional(),
 });
+
+export const WorkflowCopyResultSchema = z
+  .object({
+    operation_id: z.string().min(1),
+    result: z.enum(["created", "reconciled", "REVIEW_REQUIRED"]),
+    partial: z.boolean(),
+    source: BackendPhotoIdentitySchema.optional(),
+    master: BackendPhotoIdentitySchema.optional(),
+    copy: BackendPhotoIdentitySchema.optional(),
+    selection_restoration: z
+      .object({
+        status: z.enum(["not_needed", "restored", "failed"]),
+        verified: z.boolean(),
+      })
+      .strict(),
+    reason: z.string().optional(),
+  })
+  .strict();
 
 export const OperationSemanticsSchema = z.object({
   supported: z.boolean(),

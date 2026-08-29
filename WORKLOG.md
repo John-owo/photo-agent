@@ -905,3 +905,244 @@ Cloud-analyzer checkpoint:
   was attempted.
 - Final `git diff --check` passed with only the normal LF-to-CRLF warning;
   status showed only this append-only `WORKLOG.md` update.
+
+## 2026-08-29 - T04 waits only for plug-in load in the new Lightroom process
+
+- The clean Codex reload now exposes the full integration tool contract,
+  including identity-safe `create_virtual_copy`; the tool-discovery blocker is
+  resolved.
+- A first live read-only search returned `Lightroom plugin not connected`.
+  Current Lightroom started at 23:30:58 but emitted no new integration
+  `PluginInit` or socket events, so this application instance has not loaded and
+  started the integration bundle.
+- T04 requires only that remaining manual plug-in action; Codex must stay open.
+  No Workflow Copy, Develop mutation, render, source/catalog/sidecar change, or
+  T07 code change occurred.
+
+## 2026-08-29 - T04 identity gate rejects the registered old plug-in
+
+- Live search succeeded for the unique test Master `DSC_5343.NEF`, id `976310`,
+  but metadata returned none of T04's required persistent identity fields.
+  Integration source requires those fields, so Workflow Copy creation failed
+  closed before any mutation.
+- Approved read-only Lightroom Preferences evidence identifies the active
+  registration as the old AppData Modules copy, not the roadmap integration
+  bundle. The remaining gate is a manual unregister/Add of the exact integration
+  path while Codex stays open; T07 remains unchanged.
+
+## 2026-08-29 - T04 manual switch requires moving the auto-loaded old bundle
+
+- Adobe's current documentation confirms the old plug-in cannot be removed in
+  Plug-in Manager because it lives in the automatically loaded Windows Modules
+  folder. This is expected product behavior.
+- The manual T04 prerequisite is now precise: quit Lightroom, retain the old
+  bundle outside Modules as a backup, install the integration bundle at the
+  canonical Modules path, reopen Lightroom, and keep Codex running. No T04
+  mutation or T07 source change occurred.
+
+## 2026-08-29 - T04 new plug-in active but duplicate instance blocks mutation
+
+- Live metadata for test Master `976310` returned the required integration
+  identity fields and UUID `5C9ABCF7-2CE5-4B6E-B55B-CD0315D8B784`, proving the
+  newly installed bundle is active.
+- The fixed-id Workflow Copy call `t04-976310-20260829-v1` failed at transport
+  before reaching Lightroom; the plug-in log has no create request and no
+  catalog mutation occurred.
+- Subsequent log evidence shows concurrent server startups and a token mismatch,
+  so the old auto-loaded Modules bundle is not merely a stale UI entry. T04 and
+  dependent T07 remain gated until Lightroom is closed and only one retained
+  bundle is active.
+
+## 2026-08-29 - duplicate Lightroom bundle removed from active load path
+
+- With Lightroom confirmed closed, the old AppData Modules bundle was moved
+  non-destructively to
+  `D:\photo\_agent_workspace\archives\lightroom-plugins\LightroomMCP-old-20260829-235453.lrplugin`.
+  All 18 files were retained, the old active-load path is absent, and the
+  integration worktree bundle remains present with distinct hashes.
+- The duplicate-instance root cause is removed from the next Lightroom launch.
+  Live reconnection, the fixed-id T04 Workflow Copy call, and T07 remain pending;
+  no catalog, photo, sidecar, or PhotoAgent source mutation occurred.
+- `git diff --check` passed with only the pre-existing LF-to-CRLF warning;
+  `git status --short` reports only this append-only `WORKLOG.md` modification.
+
+## 2026-08-30 - T04 awaits one manual server start
+
+- Lightroom reopened without another duplicate/token-mismatch log event, but
+  the integration plug-in emitted no new socket startup.
+- Live read-only metadata returned `Lightroom plugin not connected`; no Workflow
+  Copy call or catalog/photo mutation was attempted. T04 and T07 remain gated
+  only on one manual Start Server action for the integration bundle.
+
+## 2026-08-30 - T04 core Workflow Copy behavior passed live
+
+- Live integration metadata re-verified Master `976310` and its persistent UUID
+  before mutation. Fixed operation id `t04-976310-20260829-v1` created exactly
+  one Workflow Copy (`1011125`, UUID
+  `D36AFFEC-A7BC-4530-9DE5-10FFBAD415D8`) with verified selection restoration.
+- Master/copy readback proved the relationship and inherited exposed Develop
+  state. Reusing the same operation id reconciled to the same copy and final
+  Master readback still reported one sibling.
+- RAW SHA-256, size, timestamps, absent-sidecar state, and Master exposed Develop
+  state remained unchanged. T07 stays gated until the remaining T04 live ticket
+  clauses are inspected and completed honestly.
+
+## 2026-08-30 - T04 live dependency satisfied locally
+
+- Current GitHub issue #5 readback confirmed the acceptance body is unchanged.
+  Live wrong-UUID failure handling rejected before mutation, final Master
+  readback retained exactly one Workflow Copy, and selected-photo readback
+  confirmed the original selection was restored.
+- Lightroom exported copy `1011125` to
+  `D:\photo\_agent_workspace\lightroom\verification\t04-live-dsc-5343-20260830-0006\DSC_5343.jpg`;
+  the 608915-byte JPEG hash is
+  `69EB4B4331CA5C5203CFFF0D4B391AF11C6813522FEC831E4A9E1FC2B4F604D8`.
+  Direct inspection established a valid expected-photo render, not creative QA.
+- Final Master Develop readback and RAW hash/size/timestamps/absent-XMP evidence
+  remained identical. T04 is therefore locally accepted with the explicit
+  boundary that no real network response was forcibly dropped and no GitHub
+  issue/branch state was changed. T07 may proceed against this local gate once
+  its separate T06 code/dependency state is rechecked.
+
+## 2026-08-30 - T07 TDD setup and dependency runtime repair
+
+- Read the current #11/#12 issue bodies. T06 remains open remotely but its
+  reviewed implementation/hardening is present in this integration branch.
+  T07 requires lazy Workflow Copy creation only after apply approval plus an
+  executable plan; all automated mutation/readback/render must target the
+  verified Copy, while dry-run/no-op, Virtual Copy input, and uncertain identity
+  fail without Master/source mutation.
+- The agreed public TDD seam is `runSinglePhoto`/`resumeCodexSession` through the
+  `BackendAdapter` boundary, observing terminal state, session artifacts, and
+  backend operations. Tests will not reach private workflow helpers.
+- Baseline `npm.cmd test -- tests/workflow.test.ts` failed before Vitest startup
+  because the integration worktree's ignored partial `node_modules` lacked the
+  `vitest` executable. Invoking the T06 worktree's Vitest binary directly also
+  failed because ESM package resolution still searched the integration
+  worktree's partial dependency directory. Neither result is a test failure.
+- Preserved the partial directory at
+  `D:\photo\_agent_workspace\archives\photo-agent-deps\roadmap-integration-node_modules-partial-20260830-001152`
+  and created a junction from this worktree's `node_modules` to the already
+  verified T06 dependency tree. The junction target and Vitest executable were
+  confirmed; no tracked file or package manifest changed.
+- Re-run baseline `npm.cmd test -- tests/workflow.test.ts` passed 1 file / 12
+  tests. T07 red/green work may now start from a verified baseline.
+
+## 2026-08-30 - T07 red-green implementation
+
+- TDD red changed the public workflow test to require one verified Workflow
+  Copy before checkpoint/apply/readback/render. Targeted Vitest failed exactly
+  because the old call sequence mutated the Master path directly and emitted no
+  Copy operation or artifact.
+- Added strict backend photo-identity and Workflow-Copy result schemas, extended
+  the backend interface with `createWorkflowCopy`, and required the domain
+  operation `create_workflow_copy` in the single-photo handshake.
+- Added Mock Master/Copy state isolation and fixed-id reconciliation. The first
+  green attempt failed safely at handshake because Mock capabilities initially
+  omitted the new required operation; adding the exact capability made the
+  targeted workflow test pass.
+- The workflow now performs apply/no-op checks before any backend connection,
+  reads and validates a Master, writes a deterministic session operation intent,
+  creates one Workflow Copy, records the result, reads the Copy back, verifies
+  Copy/Master identity plus inherited Develop state, and targets only that Copy
+  for every checkpoint, Develop mutation, readback, and render. Uncertain or
+  Virtual Copy input transitions to `REVIEW_REQUIRED`; any uncertain create
+  error is not retried blindly.
+- Second TDD red added dry-run/no-op, Virtual Copy/uncertain identity, mutation
+  target, Master-state, and RAW-content assertions. It produced three expected
+  failures because Mock lacked source-identity fault modes and mutation target
+  evidence. The first patch attempt failed atomically on a stale exact context;
+  the narrower retry succeeded without a partial edit.
+- Added the bounded Mock fixture modes and target trace. Workflow tests reached
+  14/15 green; the remaining test expected exposure `0.4` but the independent
+  translator contract for `slight` is `0.2`. Correcting that test literal made
+  all 15 workflow tests pass.
+- Third TDD red added an in-memory Lightroom MCP identity/Create/Copy-readback
+  test. It first failed on missing identity, then on an unsupported operation,
+  exposing the stale T06 mapping from external `create_virtual_copy` to the
+  wrong domain name. The adapter now normalizes live identity/result envelopes
+  and correctly maps the external tool to `create_workflow_copy`; the targeted
+  adapter test passed.
+- Updated T06 fixture manifests/tool semantics to advertise the new required
+  operation without masking the existing rejection cases. The Workflow Copy
+  operation is declared irreversible, matching Lightroom MCP's current
+  operation-semantics source. Full `npm.cmd test` then passed 3 files / 41 tests.
+- Added narrow English/Traditional Chinese safety documentation and the v0.1
+  implementation record. The docs state the lazy creation boundary, Copy-only
+  targeting, and dry-run/no-op/uncertain-identity behavior without claiming a
+  live PhotoAgent mutation run.
+
+## 2026-08-30 - T07 initial verification and two-axis review
+
+- Full `npm.cmd test` passed 3 files / 41 tests. `npm.cmd run check`,
+  `npm.cmd run build`, `npm.cmd run lint`, and `git diff --check` also passed;
+  Git emitted only the repository's existing LF-to-CRLF warnings.
+- Targeted `npx.cmd prettier --check` reported all ten checked touched source,
+  test, and documentation files as not matching Prettier. This is a broad
+  pre-existing mixed-format/line-ending baseline, so no bulk formatter or line
+  ending normalization was applied. New hunks remain subject to narrow manual
+  style review.
+- Standards review against fixed base
+  `ff5aa26bca1291a1bff3aefb84841226b295385d` found no blocking or documented
+  standard violations. Its one low-severity naming finding is valid:
+  `mutationTargets` also records render operations and will be renamed to
+  `operationTargets`; used `_photoId` parameters will be renamed `photoId`.
+- Spec review found a blocking lazy-creation gap: a non-empty normalized plan
+  could clamp to the current Develop boundary or fail numeric resolution only
+  after a Copy was created. It also found that a path mismatch could mask an
+  uncertain/Virtual-Copy identity as `FAILED`. The reviewer ran 2 files / 31
+  tests successfully, but those tests did not cover these boundaries.
+- Main-agent self-review additionally found that invalid `maxIterations` was
+  validated after Copy creation and that the returned Copy envelope did not
+  verify the requested operation id and returned Master identity before later
+  operations. TDD regression tests are being added before each repair.
+
+## 2026-08-30 - T07 review repair red-green
+
+- Targeted red `npm.cmd test -- tests/workflow.test.ts` failed 7 of 21 tests at
+  the intended boundaries: clamped and unresolvable adjustments still created a
+  Copy, invalid iteration budget became post-Copy `REVIEW_REQUIRED`, unsafe
+  identity lost precedence to a path failure, the old target-trace name was
+  absent, and mismatched operation ids still reached Copy operations.
+- Moved iteration-budget validation ahead of backend connection. After verified
+  Master identity/path readback, the workflow now resolves the initial settings
+  and requires at least one effective non-White-Balance value change before it
+  creates a Copy. Resolution failure or a fully clamped plan stops at
+  `REVIEW_REQUIRED` without Copy creation.
+- Unsafe source identity now has precedence over path comparison, preserving
+  the required `REVIEW_REQUIRED` terminal state for uncertain and existing
+  Virtual-Copy inputs even when their reported path also mismatches.
+- The Workflow-Copy response envelope now verifies the exact operation id,
+  complete source/Master identity, distinct Copy identity and Master link, and
+  successful verified selection restoration before any checkpoint, Develop
+  mutation, readback, or render targets the Copy.
+- Renamed the Mock trace from `mutationTargets` to `operationTargets` because it
+  intentionally includes render, and renamed used `_photoId` parameters to
+  `photoId` without changing checkpoint artifact shape.
+- First green rerun passed 20/21; its only failure showed the clamped fixture had
+  not placed MockProvider's second Contrast adjustment at its upper boundary.
+  Correcting the fixture to Exposure +5 and Contrast +100 made the targeted
+  suite pass 21/21. A separate mismatched-Master-envelope regression brought
+  the final targeted result to 22/22, and `npm.cmd run check` passed.
+- Intermediate full verification after the initial review repairs passed 3
+  files / 47 tests, TypeScript check, ESLint, build, and `git diff --check`.
+  Final verification and second-round Standards/Spec review remain pending
+  after the strengthened Master-envelope assertion.
+
+## 2026-08-30 - T07 final verification and review closure
+
+- Final `npm.cmd test` passed 3 files / 48 tests: 16 backend-handshake,
+  22 workflow, and 10 milestone tests. `npm.cmd run check`, `npm.cmd run lint`,
+  and `npm.cmd run build` all completed with exit code 0.
+- Final `git diff --check` completed with exit code 0; its output contained only
+  the repository's existing LF-to-CRLF warnings and no whitespace error.
+- Second-round Standards review reported no Blocker, High, or Low findings. It
+  confirmed the target-trace/parameter naming repair and found no new documented
+  standard or maintainability issue in the fail-closed changes.
+- Second-round Spec review reported no blocking or nonblocking findings across
+  semantic no-op, unsafe identity precedence, invalid iteration budget, and
+  returned Copy-envelope verification. Its read-only targeted Vitest run passed
+  2 files / 38 tests.
+- T07 is locally complete. Automated evidence covers Master/Copy separation and
+  source-fixture immutability; no live PhotoAgent Develop mutation, GitHub push,
+  issue closure, or creative visual acceptance is claimed.

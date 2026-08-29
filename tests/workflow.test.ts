@@ -79,11 +79,134 @@ describe("v0.1-alpha contracts", () => {
       allowCloudPreview: false,
     });
     expect(result.state).toBe("REVIEW_REQUIRED");
-    expect(backend.calls).not.toContain("apply_global_adjustment");
+    expect(backend.calls).toEqual([]);
     expect(await readFile(join(result.sessionDir, "semantic-intent.json"), "utf8")).toContain(
       "creative_goal",
     );
   });
+
+  it("does not create a Workflow Copy for an executable no-op", async () => {
+    const { root, raw, preview } = await fixturePair();
+    const backend = new MockBackend(raw);
+    const emptyProvider = {
+      requiresCloudPreview: false,
+      analyze: async () => ({
+        intent: {
+          schema_version: "0.1.0" as const,
+          creative_goal: "already matches",
+          adjustments: [],
+          overall_confidence: 1,
+        },
+        metadata: {
+          provider: "mock" as const,
+          model: "mock-empty-plan",
+          promptVersion: "test",
+          promptHash: "0".repeat(64),
+          cloudPreview: false,
+        },
+      }),
+    };
+    const result = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: emptyProvider,
+      backend,
+      sessionRoot: join(root, "sessions"),
+      apply: true,
+      allowCloudPreview: false,
+    });
+
+    expect(result.state).toBe("REVIEW_REQUIRED");
+    expect(backend.calls).toEqual([]);
+  });
+
+  it.each([
+    ["a clamped adjustment", { Exposure2012: 5, Contrast2012: 100 }],
+    ["an unresolvable adjustment", { Exposure2012: "unavailable" }],
+  ])("does not create a Workflow Copy for %s", async (_label, developOverride) => {
+    const { root, raw, preview } = await fixturePair();
+    const backend = new MockBackend(raw);
+    const readCurrentEdit = backend.readCurrentEdit.bind(backend);
+    backend.readCurrentEdit = async (photoId) => {
+      const state = await readCurrentEdit(photoId);
+      return {
+        ...state,
+        develop_settings: { ...state.develop_settings, ...developOverride },
+      };
+    };
+    const result = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: new MockProvider(),
+      backend,
+      sessionRoot: join(root, "sessions"),
+      apply: true,
+      allowCloudPreview: false,
+    });
+
+    expect(result.state).toBe("REVIEW_REQUIRED");
+    expect(backend.calls).toEqual(["connect", "handshake", "read_current_edit", "close"]);
+    expect(backend.calls).not.toContain("create_workflow_copy");
+  });
+
+  it("validates the iteration budget before creating a Workflow Copy", async () => {
+    const { root, raw, preview } = await fixturePair();
+    const backend = new MockBackend(raw);
+    const result = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: new MockProvider(),
+      backend,
+      sessionRoot: join(root, "sessions"),
+      apply: true,
+      allowCloudPreview: false,
+      maxIterations: 0,
+    });
+
+    expect(result.state).toBe("FAILED");
+    expect(backend.calls).toEqual([]);
+  });
+
+  it.each(["virtual_copy", "uncertain"] as const)(
+    "stops %s source identity before Workflow Copy creation",
+    async (sourceIdentity) => {
+      const { root, raw, preview } = await fixturePair();
+      const backend = new MockBackend(raw, { sourceIdentity });
+      const result = await runSinglePhoto({
+        rawPath: raw,
+        previewPath: preview,
+        provider: new MockProvider(),
+        backend,
+        sessionRoot: join(root, "sessions"),
+        apply: true,
+        allowCloudPreview: false,
+      });
+
+      expect(result.state).toBe("REVIEW_REQUIRED");
+      expect(backend.calls).toEqual(["connect", "handshake", "read_current_edit", "close"]);
+      expect(backend.calls).not.toContain("create_workflow_copy");
+    },
+  );
+
+  it.each(["virtual_copy", "uncertain"] as const)(
+    "keeps %s source identity in REVIEW_REQUIRED when its path also mismatches",
+    async (sourceIdentity) => {
+      const { root, raw, preview } = await fixturePair();
+      const backend = new MockBackend(join(root, "different.NEF"), { sourceIdentity });
+      const result = await runSinglePhoto({
+        rawPath: raw,
+        previewPath: preview,
+        provider: new MockProvider(),
+        backend,
+        sessionRoot: join(root, "sessions"),
+        apply: true,
+        allowCloudPreview: false,
+      });
+
+      expect(result.state).toBe("REVIEW_REQUIRED");
+      expect(backend.calls).not.toContain("create_workflow_copy");
+    },
+  );
 
   it("requires an explicit cloud-preview opt-in", async () => {
     const { root, raw, preview } = await fixturePair();
@@ -188,7 +311,7 @@ describe("v0.1-alpha contracts", () => {
     expect(backend.calls).toContain("apply_global_adjustment");
   });
 
-  it("runs the mock apply path through checkpoint, readback, and render", async () => {
+  it("routes the mock apply path through one verified Workflow Copy", async () => {
     const { root, raw, preview } = await fixturePair();
     const backend = new MockBackend(raw);
     const result = await runSinglePhoto({
@@ -206,15 +329,87 @@ describe("v0.1-alpha contracts", () => {
       "connect",
       "handshake",
       "read_current_edit",
+      "create_workflow_copy",
+      "read_current_edit",
       "create_checkpoint",
       "apply_global_adjustment",
       "read_current_edit",
       "render_preview",
       "close",
     ]);
+    expect(await readFile(join(result.sessionDir, "workflow-copy.json"), "utf8")).toContain(
+      '"is_virtual_copy": true',
+    );
+    const workflowCopy = JSON.parse(
+      await readFile(join(result.sessionDir, "workflow-copy.json"), "utf8"),
+    ) as { copy: { catalog_id: string } };
+    expect(backend.operationTargets).toEqual([
+      workflowCopy.copy.catalog_id,
+      workflowCopy.copy.catalog_id,
+      workflowCopy.copy.catalog_id,
+    ]);
+    await backend.connect();
+    await backend.handshake();
+    const masterAfter = await backend.readCurrentEdit(raw);
+    const copyAfter = await backend.readCurrentEdit(workflowCopy.copy.catalog_id);
+    await backend.close();
+    expect(masterAfter.develop_settings.Exposure2012).toBe(0);
+    expect(copyAfter.develop_settings.Exposure2012).toBe(0.2);
+    expect(await readFile(raw, "utf8")).toBe("synthetic raw fixture");
     expect(await readFile(join(result.sessionDir, "checkpoints", "before.json"), "utf8")).toContain(
       "PhotoAgent_",
     );
+  });
+
+  it("does not mutate a Copy when the create result has the wrong operation id", async () => {
+    const { root, raw, preview } = await fixturePair();
+    const backend = new MockBackend(raw);
+    const createWorkflowCopy = backend.createWorkflowCopy.bind(backend);
+    backend.createWorkflowCopy = async (sourcePhotoId, expectedSourceUuid, operationId) => ({
+      ...(await createWorkflowCopy(sourcePhotoId, expectedSourceUuid, operationId)),
+      operation_id: "unexpected-operation-id",
+    });
+    const result = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: new MockProvider(),
+      backend,
+      sessionRoot: join(root, "sessions"),
+      apply: true,
+      allowCloudPreview: false,
+    });
+
+    expect(result.state).toBe("REVIEW_REQUIRED");
+    expect(backend.operationTargets).toEqual([]);
+    expect(backend.calls).not.toContain("create_checkpoint");
+  });
+
+  it("does not mutate a Copy when the create result names a different Master", async () => {
+    const { root, raw, preview } = await fixturePair();
+    const backend = new MockBackend(raw);
+    const createWorkflowCopy = backend.createWorkflowCopy.bind(backend);
+    backend.createWorkflowCopy = async (sourcePhotoId, expectedSourceUuid, operationId) => {
+      const result = await createWorkflowCopy(sourcePhotoId, expectedSourceUuid, operationId);
+      return {
+        ...result,
+        master: result.master
+          ? { ...result.master, uuid: "unexpected-master-uuid" }
+          : result.master,
+      };
+    };
+    const result = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: new MockProvider(),
+      backend,
+      sessionRoot: join(root, "sessions"),
+      apply: true,
+      allowCloudPreview: false,
+    });
+
+    expect(result.state).toBe("REVIEW_REQUIRED");
+    expect(backend.operationTargets).toEqual([]);
+    expect(backend.calls).not.toContain("create_checkpoint");
   });
 
   it("rejects invalid state transitions", async () => {

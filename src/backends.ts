@@ -7,8 +7,10 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
 import {
   BackendCapabilityManifestSchema,
+  BackendPhotoIdentitySchema,
   BackendPhotoStateSchema,
   OperationSemanticsSchema,
+  WorkflowCopyResultSchema,
 } from "./schemas.js";
 import {
   assertBackendOperations,
@@ -22,6 +24,7 @@ import type {
   BackendPhotoState,
   CheckpointResult,
   RenderResult,
+  WorkflowCopyResult,
 } from "./types.js";
 
 const SUPPORTED_DEVELOP_KEYS = [
@@ -64,7 +67,7 @@ const LIGHTROOM_TOOL_OPERATIONS = {
   set_develop_settings: "apply_global_adjustment",
   create_develop_preset: "create_checkpoint",
   export_photos: "render_preview",
-  create_virtual_copy: "create_virtual_copy",
+  create_virtual_copy: "create_workflow_copy",
 } as const;
 
 const LIGHTROOM_HANDSHAKE_REQUIREMENTS: BackendHandshakeRequirements = {
@@ -85,6 +88,7 @@ export const LIGHTROOM_CAPABILITIES = BackendCapabilityManifestSchema.parse({
   trust_boundary: LIGHTROOM_TRUST_BOUNDARY,
   capabilities: [
     "read_current_edit",
+    "create_workflow_copy",
     "apply_global_adjustment",
     "render_preview",
     "create_checkpoint",
@@ -101,6 +105,18 @@ export const LIGHTROOM_CAPABILITIES = BackendCapabilityManifestSchema.parse({
       concurrency: "parallel_safe",
       retry_policy: "automatic",
       safe_to_resume: true,
+    },
+    create_workflow_copy: {
+      supported: true,
+      side_effect: "mutating",
+      idempotent: false,
+      reversible: "irreversible",
+      scope: "selection",
+      requires_active_selection: true,
+      requires_editor_foreground: true,
+      concurrency: "exclusive_backend",
+      retry_policy: "readback_before_retry",
+      safe_to_resume: false,
     },
     apply_global_adjustment: {
       supported: true,
@@ -147,6 +163,7 @@ export const MOCK_CAPABILITIES = BackendCapabilityManifestSchema.parse({
   trust_boundary: MOCK_TRUST_BOUNDARY,
   capabilities: [
     "read_current_edit",
+    "create_workflow_copy",
     "apply_global_adjustment",
     "render_preview",
     "create_checkpoint",
@@ -222,10 +239,23 @@ export class MockBackend implements BackendAdapter {
   readonly name = "mock";
   readonly handshakeRequirements = MOCK_HANDSHAKE_REQUIREMENTS;
   readonly calls: string[] = [];
+  readonly operationTargets: string[] = [];
   private readonly advertisedManifest: unknown;
+  private readonly sourceIdentityMode: "master" | "virtual_copy" | "uncertain";
   private negotiatedManifest: BackendCapabilityManifest | undefined;
   private connected = false;
-  private settings: Record<string, number | string | boolean> = {
+  private readonly masterUuid = "mock-master-uuid";
+  private masterPhotoId: string | undefined;
+  private readonly copies = new Map<
+    string,
+    {
+      operationId: string;
+      uuid: string;
+      settings: Record<string, number | string | boolean>;
+    }
+  >();
+  private readonly copyByOperation = new Map<string, string>();
+  private masterSettings: Record<string, number | string | boolean> = {
     WhiteBalance: "As Shot",
     Temperature: 5200,
     Tint: 0,
@@ -244,8 +274,15 @@ export class MockBackend implements BackendAdapter {
 
   constructor(private readonly photoPath: string, manifestOrOptions?: unknown) {
     const options = asRecord(manifestOrOptions);
+    const requestedIdentity = options.sourceIdentity;
+    this.sourceIdentityMode =
+      requestedIdentity === "virtual_copy" || requestedIdentity === "uncertain"
+        ? requestedIdentity
+        : "master";
     this.advertisedManifest =
-      "manifest" in options ? options.manifest : (manifestOrOptions ?? MOCK_CAPABILITIES);
+      "manifest" in options || "sourceIdentity" in options
+        ? (options.manifest ?? MOCK_CAPABILITIES)
+        : (manifestOrOptions ?? MOCK_CAPABILITIES);
   }
 
   get capabilities(): BackendCapabilityManifest {
@@ -289,37 +326,122 @@ export class MockBackend implements BackendAdapter {
   async readCurrentEdit(photoId: string): Promise<BackendPhotoState> {
     this.requireOperation("read_current_edit");
     this.calls.push("read_current_edit");
+    const copy = this.copies.get(photoId);
+    if (!this.masterPhotoId) this.masterPhotoId = copy ? undefined : photoId;
+    const masterId = this.masterPhotoId ?? photoId;
     return BackendPhotoStateSchema.parse({
       photo_id: photoId,
       path: resolve(this.photoPath),
-      develop_settings: this.settings,
+      develop_settings: copy?.settings ?? this.masterSettings,
+      identity: copy
+        ? {
+            catalog_id: photoId,
+            uuid: copy.uuid,
+            master_id: masterId,
+            master_uuid: this.masterUuid,
+            is_virtual_copy: true,
+          }
+        : this.sourceIdentityMode === "uncertain"
+          ? undefined
+          : this.sourceIdentityMode === "virtual_copy"
+            ? {
+                catalog_id: photoId,
+                uuid: "mock-input-copy-uuid",
+                master_id: `${photoId}-master`,
+                master_uuid: this.masterUuid,
+                is_virtual_copy: true,
+              }
+            : {
+                catalog_id: photoId,
+                uuid: this.masterUuid,
+                master_id: photoId,
+                master_uuid: this.masterUuid,
+                is_virtual_copy: false,
+              },
+    });
+  }
+
+  async createWorkflowCopy(
+    sourcePhotoId: string,
+    expectedSourceUuid: string,
+    operationId: string,
+  ): Promise<WorkflowCopyResult> {
+    this.requireOperation("create_workflow_copy");
+    this.calls.push("create_workflow_copy");
+    this.masterPhotoId ??= sourcePhotoId;
+    if (sourcePhotoId !== this.masterPhotoId || expectedSourceUuid !== this.masterUuid) {
+      throw new Error("Mock Workflow Copy source identity mismatch");
+    }
+    const existingId = this.copyByOperation.get(operationId);
+    const copyId = existingId ?? `mock-copy-${operationId}`;
+    if (!existingId) {
+      this.copies.set(copyId, {
+        operationId,
+        uuid: `mock-copy-uuid-${operationId}`,
+        settings: { ...this.masterSettings },
+      });
+      this.copyByOperation.set(operationId, copyId);
+    }
+    const copy = this.copies.get(copyId)!;
+    return WorkflowCopyResultSchema.parse({
+      operation_id: operationId,
+      result: existingId ? "reconciled" : "created",
+      partial: false,
+      source: {
+        catalog_id: this.masterPhotoId,
+        uuid: this.masterUuid,
+        master_id: this.masterPhotoId,
+        master_uuid: this.masterUuid,
+        is_virtual_copy: false,
+      },
+      master: {
+        catalog_id: this.masterPhotoId,
+        uuid: this.masterUuid,
+        master_id: this.masterPhotoId,
+        master_uuid: this.masterUuid,
+        is_virtual_copy: false,
+      },
+      copy: {
+        catalog_id: copyId,
+        uuid: copy.uuid,
+        master_id: this.masterPhotoId,
+        master_uuid: this.masterUuid,
+        is_virtual_copy: true,
+      },
+      selection_restoration: { status: "restored", verified: true },
     });
   }
 
   async createCheckpoint(
-    _photoId: string,
+    photoId: string,
     name: string,
     _settings: string[],
   ): Promise<CheckpointResult> {
     this.requireOperation("create_checkpoint");
     this.calls.push("create_checkpoint");
+    this.operationTargets.push(photoId);
     void _settings;
-    return { name, raw: { name, settings: this.settings } };
+    const settings = this.copies.get(photoId)?.settings ?? this.masterSettings;
+    return { name, raw: { name, settings } };
   }
 
   async applyGlobalAdjustment(
-    _photoId: string,
+    photoId: string,
     settings: Record<string, number | string | boolean>,
   ): Promise<unknown> {
     this.requireOperation("apply_global_adjustment");
     this.calls.push("apply_global_adjustment");
-    this.settings = { ...this.settings, ...settings };
+    this.operationTargets.push(photoId);
+    const copy = this.copies.get(photoId);
+    if (copy) copy.settings = { ...copy.settings, ...settings };
+    else this.masterSettings = { ...this.masterSettings, ...settings };
     return { applied: settings };
   }
 
-  async renderPreview(_photoId: string, destination: string): Promise<RenderResult> {
+  async renderPreview(photoId: string, destination: string): Promise<RenderResult> {
     this.requireOperation("render_preview");
     this.calls.push("render_preview");
+    this.operationTargets.push(photoId);
     await mkdir(destination, { recursive: true });
     const output = join(destination, "mock-render.jpg");
     await writeFixtureJpeg(output);
@@ -493,10 +615,77 @@ export class LightroomMcpAdapter implements BackendAdapter {
     const raw = await this.call<unknown>("get_photo_metadata", { photo_id: photoId });
     const record = asRecord(raw);
     const pathValue = record.path ?? asRecord(record.metadata).path ?? photoId;
+    const identityResult = BackendPhotoIdentitySchema.safeParse({
+      catalog_id: record.catalog_id,
+      uuid: record.uuid,
+      master_id: record.master_id,
+      master_uuid: record.master_uuid,
+      is_virtual_copy: record.is_virtual_copy,
+    });
     return BackendPhotoStateSchema.parse({
       photo_id: photoId,
       path: typeof pathValue === "string" ? pathValue : photoId,
       develop_settings: asDevelopSettings(raw),
+      ...(identityResult.success ? { identity: identityResult.data } : {}),
+    });
+  }
+
+  async createWorkflowCopy(
+    sourcePhotoId: string,
+    expectedSourceUuid: string,
+    operationId: string,
+  ): Promise<WorkflowCopyResult> {
+    this.requireOperation("create_workflow_copy");
+    const raw = await this.call<unknown>("create_virtual_copy", {
+      source_photo_id: sourcePhotoId,
+      expected_source_uuid: expectedSourceUuid,
+      operation_id: operationId,
+    });
+    const record = asRecord(raw);
+    const source = asRecord(record.source);
+    const master = asRecord(record.master);
+    const copy = asRecord(record.copy);
+    const masterId = master.catalog_id ?? source.catalog_id;
+    const masterUuid = master.uuid ?? source.uuid;
+    return WorkflowCopyResultSchema.parse({
+      operation_id: record.operation_id,
+      result: record.result,
+      partial: record.partial ?? false,
+      ...(typeof source.catalog_id === "string" && typeof source.uuid === "string"
+        ? {
+            source: {
+              catalog_id: source.catalog_id,
+              uuid: source.uuid,
+              master_id: masterId,
+              master_uuid: masterUuid,
+              is_virtual_copy: source.is_virtual_copy,
+            },
+          }
+        : {}),
+      ...(typeof masterId === "string" && typeof masterUuid === "string"
+        ? {
+            master: {
+              catalog_id: masterId,
+              uuid: masterUuid,
+              master_id: masterId,
+              master_uuid: masterUuid,
+              is_virtual_copy: false,
+            },
+          }
+        : {}),
+      ...(typeof copy.catalog_id === "string" && typeof copy.uuid === "string"
+        ? {
+            copy: {
+              catalog_id: copy.catalog_id,
+              uuid: copy.uuid,
+              master_id: masterId,
+              master_uuid: masterUuid,
+              is_virtual_copy: copy.is_virtual_copy,
+            },
+          }
+        : {}),
+      selection_restoration: record.selection_restoration,
+      ...(typeof record.reason === "string" ? { reason: record.reason } : {}),
     });
   }
 

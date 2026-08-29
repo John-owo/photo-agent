@@ -3,6 +3,7 @@ import type { BackendAdapter, BackendCapabilityManifest } from "./types.js";
 
 export const SINGLE_PHOTO_OPERATIONS = [
   "read_current_edit",
+  "create_workflow_copy",
   "create_checkpoint",
   "apply_global_adjustment",
   "render_preview",

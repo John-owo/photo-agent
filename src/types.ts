@@ -3,6 +3,7 @@ import type { z } from "zod";
 import type { BackendHandshakeRequirements } from "./backend-handshake.js";
 import type {
   BackendCapabilityManifestSchema,
+  BackendPhotoIdentitySchema,
   BackendPhotoStateSchema,
   CullingDecisionSchema,
   EvaluationResultSchema,
@@ -17,6 +18,7 @@ import type {
   ShootReviewFileSchema,
   PropagationPlanSchema,
   SourceAssetPairSchema,
+  WorkflowCopyResultSchema,
 } from "./schemas.js";
 
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
@@ -25,6 +27,8 @@ export type NormalizedEditPlan = z.infer<typeof NormalizedEditPlanSchema>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;
+export type BackendPhotoIdentity = z.infer<typeof BackendPhotoIdentitySchema>;
+export type WorkflowCopyResult = z.infer<typeof WorkflowCopyResultSchema>;
 export type EvaluationResult = z.infer<typeof EvaluationResultSchema>;
 export type CullingDecision = z.infer<typeof CullingDecisionSchema>;
 export type LightingClassification = z.infer<typeof LightingClassificationSchema>;
@@ -91,6 +95,11 @@ export type BackendAdapter = {
   handshake(): Promise<BackendCapabilityManifest>;
   close(): Promise<void>;
   readCurrentEdit(photoId: string): Promise<BackendPhotoState>;
+  createWorkflowCopy(
+    sourcePhotoId: string,
+    expectedSourceUuid: string,
+    operationId: string,
+  ): Promise<WorkflowCopyResult>;
   createCheckpoint(photoId: string, name: string, settings: string[]): Promise<CheckpointResult>;
   applyGlobalAdjustment(
     photoId: string,
