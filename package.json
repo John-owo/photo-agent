@@ -1,8 +1,8 @@
 {
   "name": "photo-agent",
-  "version": "0.1.0-alpha.0",
+  "version": "0.3.0-alpha.0",
   "private": true,
-  "description": "Backend-agnostic AI photography workflow agent (v0.1-alpha).",
+  "description": "Backend-agnostic AI photography workflow agent (v0.3 alpha).",
   "type": "module",
   "bin": {
     "photo-agent": "dist/src/cli.js"

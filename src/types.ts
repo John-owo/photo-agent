@@ -3,9 +3,18 @@ import type { z } from "zod";
 import type {
   BackendCapabilityManifestSchema,
   BackendPhotoStateSchema,
+  CullingDecisionSchema,
+  EvaluationResultSchema,
+  LightingClassificationSchema,
   NormalizedEditPlanSchema,
   SemanticIntentPlanSchema,
   SessionManifestSchema,
+  ShootAssetSchema,
+  ShootDecisionSchema,
+  ShootManifestSchema,
+  ShootPlanSchema,
+  ShootReviewFileSchema,
+  PropagationPlanSchema,
   SourceAssetPairSchema,
 } from "./schemas.js";
 
@@ -15,6 +24,15 @@ export type NormalizedEditPlan = z.infer<typeof NormalizedEditPlanSchema>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;
+export type EvaluationResult = z.infer<typeof EvaluationResultSchema>;
+export type CullingDecision = z.infer<typeof CullingDecisionSchema>;
+export type LightingClassification = z.infer<typeof LightingClassificationSchema>;
+export type ShootAsset = z.infer<typeof ShootAssetSchema>;
+export type ShootDecision = z.infer<typeof ShootDecisionSchema>;
+export type ShootManifest = z.infer<typeof ShootManifestSchema>;
+export type ShootPlan = z.infer<typeof ShootPlanSchema>;
+export type ShootReviewFile = z.infer<typeof ShootReviewFileSchema>;
+export type PropagationPlan = z.infer<typeof PropagationPlanSchema>;
 
 export type JobState =
   | "PENDING"
@@ -23,6 +41,9 @@ export type JobState =
   | "PLAN_READY"
   | "APPLYING"
   | "RENDERING"
+  | "EVALUATING"
+  | "REFINING"
+  | "ACCEPTED"
   | "REVIEW_REQUIRED"
   | "FAILED"
   | "CANCELLED";
@@ -75,6 +96,25 @@ export type BackendAdapter = {
   renderPreview(photoId: string, destination: string): Promise<RenderResult>;
 };
 
+export type EvaluationInput = {
+  renderPath: string;
+  iteration: number;
+  normalizedPlan: NormalizedEditPlan;
+  readBack: BackendPhotoState;
+};
+
+export type EditEvaluator = {
+  readonly name: string;
+  readonly requiresCloudPreview: boolean;
+  evaluate(input: EvaluationInput): Promise<EvaluationResult>;
+};
+
+export type ShootAnalyzer = {
+  readonly requiresCloudPreview?: boolean;
+  cull(asset: ShootAsset): Promise<CullingDecision>;
+  classify(asset: ShootAsset): Promise<LightingClassification>;
+};
+
 export type WorkflowOptions = {
   rawPath: string;
   previewPath: string;
@@ -84,6 +124,8 @@ export type WorkflowOptions = {
   sessionRoot: string;
   apply: boolean;
   allowCloudPreview: boolean;
+  evaluator?: EditEvaluator;
+  maxIterations?: number;
 };
 
 export type WorkflowResult = {
@@ -93,4 +135,5 @@ export type WorkflowResult = {
   normalizedPlan: NormalizedEditPlan;
   renderPath?: string;
   handoffPath?: string;
+  iterations?: number;
 };

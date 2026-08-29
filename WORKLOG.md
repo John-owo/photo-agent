@@ -1,0 +1,433 @@
+# photo-agent work log
+
+This is the first file every agent reads. Keep entries factual, append-only by
+date, and scoped to material changes or verification. Prefer the named files and
+targeted searches below over repository-wide scans.
+
+## 2026-08-12 - v0.2 and v0.3 continuation
+
+Baseline observed:
+
+- Branch `codex/v0.1-alpha` was one local commit ahead of
+  `origin/codex/v0.1-alpha` at `f8a1ab7`.
+- Pre-existing uncommitted edits were present in `README.md` and
+  `README.zh-TW.md`; preserve them.
+- `npm.cmd run check`: passed.
+- `npm.cmd run lint`: passed.
+- `npm.cmd test`: passed, 1 file and 12 tests.
+- `npm.cmd run build`: passed.
+- `npm.cmd run format:check`: failed on 19 pre-existing files. This is a known
+  repository-wide formatting baseline, not a functional-test failure. Do not
+  bulk-format unrelated files.
+
+Updates in progress:
+
+- Added `src/evaluation.ts` with evaluator contracts/helpers and deterministic
+  evaluators for closed-loop tests.
+- Added the initial `src/batch.ts` read-only shoot index/dry-run orchestration.
+- Extended schemas/types/runtime for v0.2 evaluation states and v0.3 shoot
+  manifests. These changes have not yet passed the post-change test suite.
+- Updated `AGENTS.md` to require this work log and targeted searches.
+
+Unverified boundaries:
+
+- No live Lightroom MCP connection, Lightroom mutation, Lightroom render, human
+  visual QA, or real-shoot run has been performed in this continuation yet.
+- v0.2 and v0.3 are not complete until the later work-log entry records their
+  tests and remaining limitations.
+
+### Implementation checkpoint
+
+- Extended the single-photo controller in `src/workflow.ts` with bounded
+  `APPLYING -> RENDERING -> EVALUATING -> REFINING` iterations, terminal
+  `ACCEPTED`/`REVIEW_REQUIRED` states, per-iteration checkpoints/read-backs,
+  evaluator rationale artifacts, render/plan stall detection, a maximum of ten
+  iterations, and `iteration-report.json` token/cost/time accounting.
+- Added CLI opt-in `--evaluator mock --max-iterations <1-10>` and a read-only
+  `shoot` command. No real Lightroom operation is enabled implicitly.
+- Added v0.3 schemas and a conservative shoot dry run that indexes RAW/preview
+  pairs, hashes sources, isolates per-photo analyzer failures, reports exact-file
+  duplicates, groups lighting classifications, and emits `manifest.json`,
+  `culling.csv`, `clusters.json`, and durable job records. With no configured
+  visual analyzer, every image remains `review`; no subjective selection is
+  invented and no Lightroom rating/label is written.
+- Post-change type/lint/test/build verification has not run yet.
+
+### Verification checkpoint 1
+
+- `npm.cmd run check`: passed after v0.2/v0.3 implementation.
+- `npm.cmd run lint`: passed.
+- `npm.cmd test`: failed with 1 regression and 16 passes. All 5 new milestone
+  tests passed, including the 120-pair dry run. The failing v0.1 test expected
+  `checkpoints/before.json`, while the new controller only wrote
+  `checkpoints/iteration-1-before.json`.
+- Root cause: v0.2 versioned iteration artifacts unintentionally removed the
+  stable v0.1 artifact alias. Fix must retain both, not weaken the old test.
+
+### Verification checkpoint 2
+
+- Added compatibility aliases for v0.1 while retaining v0.2 iteration artifacts:
+  `checkpoints/before.json`, `backend-readback.json`, and `render.json` mirror the
+  first iteration.
+- Targeted regression command passed: 1 selected test passed, 11 skipped.
+- `npm.cmd run check`: passed.
+- `npm.cmd run lint`: passed.
+- `npm.cmd test`: passed, 2 files and 17 tests.
+- `npm.cmd run build`: passed.
+- Automated verification now covers accept, refine-then-accept, repeated-plan/render
+  stall escalation, ambiguous/missing pairing, 120-pair indexing, and per-photo
+  failure isolation.
+- This validates mock/backend-independent behavior only. Live Lightroom, real VLM
+  judgment, real-shoot quality, and human visual acceptance remain unverified.
+
+### Documentation checkpoint
+
+- Updated both README languages with a responsibility table and the one-way
+  dependency `photo-agent -> lightroom-mcp`.
+- Recorded that PhotoAgent was extracted during v0.1, Lightroom MCP remains a
+  standalone backend, and new workflow-engine work belongs in this repository.
+- README status now says v0.3 development while preserving the unreleased
+  `0.1.0-alpha` package version and alpha warning.
+
+### Verification checkpoint 3
+
+- `npm.cmd run check`, `npm.cmd run lint`, `npm.cmd test` (17/17),
+  `npm.cmd run build`, and `git diff --check`: passed.
+- Targeted Prettier check failed on six files changed by this continuation:
+  `src/evaluation.ts`, `src/batch.ts`, `tests/milestones.test.ts`,
+  `src/workflow.ts`, `src/schemas.ts`, and `src/types.ts`.
+- Only these six files will be mechanically formatted; the unrelated 19-file
+  repository formatting baseline remains untouched.
+
+### Verification checkpoint 4 - stop boundary
+
+- Mechanically formatted only the six continuation-owned TypeScript/test files.
+- Final `npm.cmd run check`: passed.
+- Final `npm.cmd run lint`: passed.
+- Final `npm.cmd test`: passed, 2 files and 17 tests.
+- Final `npm.cmd run build`: passed.
+- Final `git diff --check`: passed.
+- Targeted Prettier check over continuation-owned source/tests plus
+  `AGENTS.md`/`WORKLOG.md`: passed.
+- v0.2 automated exit behavior is implemented and mock-verified. v0.3 has a
+  functional read-only index/cull/classify/cluster/report path and 120-pair test,
+  but the roadmap's real-shoot exit gate is not claimed: visual culling quality,
+  representative Lightroom edits, crash-resume from a partially completed shoot,
+  and a real hundreds-photo run remain future verification/implementation work.
+- Stop here to honor the user's remaining-usage boundary. Do not mark the goal
+  complete; continue from this entry without rescanning the repository.
+
+## 2026-08-12 - v0.3 resume and propagation continuation
+
+Implementation checkpoint:
+
+- Added a durable `shoot-plan.json` before analysis begins and atomic JSON writes
+  for plan, job, manifest, and cluster state.
+- Added `resumeShootDryRun`: schema-valid completed or failed jobs are reused and
+  never silently re-run; only missing/invalid job records are analyzed. The final
+  report records reused versus newly analyzed counts.
+- Added filename-sequence burst grouping alongside exact-content duplicate groups.
+- Representative selection is now deterministic within each lighting cluster:
+  highest-confidence `select`/`keep`; otherwise no representative is invented.
+- Added `createSafePropagationPlan`: it requires an explicit parameter allowlist,
+  excludes white balance/temperature/tint and non-shortlisted or ambiguous assets,
+  and emits a plan with `requires_explicit_apply: true`. It does not mutate
+  Lightroom.
+- Post-change verification has not run yet.
+
+Real-shoot and documentation checkpoint:
+
+- Built the CLI and ran a read-only dry run on the bounded shoot folder
+  `D:\photo\2026\2026.6.19 畢業典禮` (153 NEF, 135 JPG in the preflight count).
+- Result: 153 assets/jobs, 0 failures, 153 `review`, 0 select/keep/reject, one
+  conservative unknown-lighting cluster, 0 exact duplicate groups, and 10
+  filename-sequence burst groups. No photo, sidecar, rating, label, or Lightroom
+  state was modified.
+- Resuming the same session reused all 153 jobs, analyzed 0, and completed in
+  79 ms. Reports are under
+  `D:\photo\_agent_workspace\photo-jobs\photo-agent-v0.3-validation\2026-08-12T13-17-16.296Z-2cabcbb0`.
+- Changed shoot CLI output from the full manifest to a concise summary plus the
+  report path to avoid terminal/context waste.
+- Added `docs/implementation/v0.2.md` and `v0.3.md`, and documented mock closed
+  loop plus shoot/resume commands in both README languages.
+- Full post-documentation verification is pending.
+
+Representative/editing checkpoint:
+
+- Added `runRepresentativeEdits`, which sends only cluster representatives with
+  high-confidence source pairing through the existing v0.2 closed loop and
+  isolates failures per cluster.
+- Added `applyPropagationPlan`, which refuses to run without
+  `confirmApply=true`, serializes mutations under a lock, verifies the target RAW
+  path, creates a per-photo checkpoint, applies only the filtered global plan,
+  reads back every value, and escalates uncertain post-mutation state without a
+  retry.
+- Added schema-validated review-file input for explicit user/Codex culling and
+  lighting decisions. Missing entries stay `review`; no selection is invented.
+- Targeted v0.3 suite passed with 8 tests after these changes. Full repository
+  verification is pending.
+
+Cloud-analyzer checkpoint:
+
+- Added an opt-in OpenAI visual evaluator for the v0.2 render loop and an opt-in
+  OpenAI culling/lighting analyzer for v0.3. Both require explicit cloud-preview
+  authorization; PhotoAgent creates sanitized per-session JPEG inputs rather than
+  sending source paths or source files directly. Default and review-file analyzers
+  remain local and conservative.
+- Added automated privacy-boundary coverage: cloud evaluators/analyzers are
+  rejected before an image is sent unless cloud preview is explicitly allowed;
+  allowed fakes receive only the sanitized session copy.
+- Before the v0.3 analyzer addition, `npm.cmd run check`, `npm.cmd run lint`,
+  `npm.cmd test` (21/21), and `npm.cmd run build` passed.
+- The first post-v0.3-analyzer `npm.cmd run check` failed at `src/batch.ts:349`:
+  TypeScript inferred a union containing `ConservativeShootAnalyzer`, whose
+  concrete class did not declare the interface's optional
+  `requiresCloudPreview` property. No runtime or photo operation ran.
+- Root-cause fix: explicitly mark the conservative and review-file analyzers as
+  `requiresCloudPreview = false`. Post-fix verification is pending.
+- Targeted Prettier formatting reported all touched cloud-analyzer files
+  unchanged, and the post-fix `npm.cmd run check` passed.
+- Targeted cloud-boundary verification passed: 2 selected tests passed and 8
+  unrelated milestone tests were skipped.
+- `npm.cmd run lint`: passed.
+- `npm.cmd test`: passed, 2 files and 22 tests.
+- `npm.cmd run build`: passed.
+- These tests use injected fakes. No OpenAI request, Lightroom mutation, photo
+  modification, or subjective visual-quality claim was made.
+- Documentation/CLI review then found that `resume` accepted an OpenAI evaluator
+  but did not carry the `--allow-cloud-preview` consent flag into
+  `resumeCodexSession`. That could bypass the intended explicit-consent boundary
+  after a local Codex handoff. No live cloud call was made while finding it.
+- Fixed the resume API and CLI to require and propagate the flag, reject before
+  processing/changing the session or calling the backend/evaluator, and added a
+  regression assertion that the evaluator and backend receive zero calls.
+- Post-fix verification for this privacy repair is pending.
+- Targeted formatting, `npm.cmd run check`, and the two workflow tests matching
+  `cloud` passed after the resume repair; 10 unrelated workflow tests were
+  skipped by the targeted run.
+- Updated both README languages and the v0.2/v0.3 implementation records with
+  the explicit opt-in commands, sanitization boundary, one-request-per-asset
+  behavior, local conservative default, and honest live-verification limits.
+- Final post-documentation `npm.cmd run check`: passed.
+- Final `npm.cmd run lint`: passed.
+- Final `npm.cmd test`: passed, 2 files and 22 tests.
+- Final `npm.cmd run build`: passed.
+- Final `git diff --check`: passed; Git emitted only existing line-ending
+  normalization warnings.
+- Targeted Prettier check over all continuation-owned source, tests, docs,
+  READMEs, `AGENTS.md`, and this work log: passed.
+- The implemented cloud paths remain fake-verified only. No live cloud request,
+  Lightroom mutation/render, photo write, or human visual QA was performed.
+- Updated the workspace-level `D:\photo\AGENTS.md` so every agent must read the
+  active project's nearest work log first, use its targeted paths/searches, and
+  append all material changes plus pass/fail checks. This reinforces the same
+  repository-level rule without scanning the photo library.
+- Workspace-policy literal checks confirmed the nearest-work-log, targeted-search,
+  no-photo-root-scan, and append-pass/fail requirements are present.
+- Post-instruction targeted Prettier check for this log and `git diff --check`
+  passed; Git emitted only line-ending normalization warnings.
+- Completion-audit documentation fix: `.env.example` and both README language
+  tables now state that `OPENAI_API_KEY`/model configuration also applies to the
+  opt-in edit evaluator and shoot analyzer, not only the original analysis
+  provider. No runtime behavior changed.
+- Completion audit found that a direct `runShootDryRun` call checked cloud consent
+  only after creating its durable session. It still sent no image, but left an
+  unnecessary empty/plan session on refusal.
+- Added the consent guard before session creation and a regression assertion that
+  the blocked session root does not exist. Resume keeps its own independent guard.
+- Targeted Prettier invocation reported one expected tooling failure: Prettier
+  cannot infer a parser for `.env.example`. It formatted/confirmed the five
+  supported changed files; `.env.example` is a two-line comment/config change and
+  was instead covered by `git diff --check`.
+- Post-fix `npm.cmd run check`: passed.
+- Targeted cloud-boundary tests: 2 passed, 8 unrelated milestone tests skipped.
+- `npm.cmd run lint`: passed.
+- Full `npm.cmd test`: passed, 2 files and 22 tests.
+- `npm.cmd run build`: passed.
+- `git diff --check`: passed with only line-ending normalization warnings.
+
+## 2026-08-12 - authorized publish preparation
+
+- User authorized pushing both repositories.
+- Confirmed this worktree's complete tracked and untracked change set is the
+  v0.2/v0.3 implementation, tests, documentation, agent rules, configuration
+  example, and this append-only work log. It is the scope intended for the
+  `photo-agent` commit.
+- Current branch is `codex/v0.1-alpha`; remote is
+  `https://github.com/John-owo/photo-agent.git`. No default-branch switch is
+  required.
+- Pre-push full checks were already recorded above: check, lint, 22 tests, build,
+  diff check, and targeted formatting all passed. No photo or Lightroom state was
+  changed.
+- Fresh pre-push verification: `npm.cmd run check`, `npm.cmd run lint`,
+  `npm.cmd test` (2 files, 22 tests), `npm.cmd run build`, `git diff --check`,
+  and targeted Prettier check over the publish scope all passed. Git reported
+  only its normal LF-to-CRLF normalization warnings.
+- Staged-scope audit: exactly 19 confirmed v0.2/v0.3 implementation, test,
+  documentation, configuration, agent-rule, and work-log paths are staged;
+  `git diff --cached --check` passed.
+- First authorized `git push origin codex/v0.1-alpha` failed before contacting
+  GitHub because the restricted environment could not connect to `github.com:443`.
+  The commit remained local and unchanged; an approved network retry is pending.
+
+## 2026-08-12 - independent verification continuation
+
+- Confirmed the active checkout remains `codex/v0.1-alpha` at `f8a1ab7`, with the v0.2/v0.3 implementation changes uncommitted and no changes in `lightroom-mcp-john`.
+- `npm.cmd run check`: passed in the active worktree after re-running the verification for this task.
+- `npm.cmd run lint`: passed in the active worktree after re-running the verification for this task.
+- Network retry reached GitHub, but `origin/codex/v0.1-alpha` contains remote
+  commits not present locally, so the push was rejected as non-fast-forward.
+  No force-push was attempted; fetch-and-divergence review is required.
+- Fetched `origin/codex/v0.1-alpha` at `6702c89`. It is a merge commit whose
+  tree is identical to the local v0.1 base `f8a1ab7`; the remote-only history
+  is the already-published v0.1 merge, not conflicting file content. A normal
+  rebase of the new v0.2/v0.3 commit onto that remote branch is safe.
+- `npm.cmd test`: passed; 2 test files and 22 tests passed, including the v0.2
+  closed-loop and v0.3 shoot/resume/propagation/privacy milestone coverage.
+- `npm.cmd run build`: passed; TypeScript emitted the production build without
+  errors.
+- `git diff --check`: passed with no whitespace errors in tracked changes.
+- Targeted `npx.cmd prettier --check` over the v0.2/v0.3 source, tests,
+  documentation, README, agent rules, and work log failed: Prettier reported
+  style issues in all 18 requested files. This is a formatting-only failure;
+  no formatter write was performed, so existing/unrelated formatting was
+  preserved for review rather than bulk-reformatted during test verification.
+- Publish follow-up: the current checkout's fresh targeted Prettier check over
+  the actual publish scope passed before commit/push; the earlier formatting
+  failure entry above is retained as historical evidence from the independent
+  continuation and was not overwritten.
+- Authorized push succeeded: `origin/codex/v0.1-alpha` advanced from `6702c89`
+  to `f6bb3ef`. The GitHub branch now contains the v0.2/v0.3 publish scope.
+- `node dist/src/cli.js --help`: passed and exposed the v0.2 edit/resume/recover/
+  export-xmp commands plus the v0.3 shoot/resume commands, including explicit
+  cloud-preview and analyzer options.
+- Read-only preflight resolved the bounded folder `D:\photo\2026\2026.6.19
+  畢業典禮`; no new RAW was requested or copied.
+- `node dist/src/cli.js shoot --root "D:\photo\2026\2026.6.19 畢業典禮"
+  --session-root "D:\photo\_agent_workspace\photo-jobs\photo-agent-v0.3-validation-current"`:
+  passed on 153 existing RAW assets; 153 jobs completed, 0 failures, all 153
+  remained `review`, 1 conservative cluster, 0 exact duplicate groups, and 10
+  filename-sequence burst groups. The command wrote only the generated report
+  under `_agent_workspace` and made no photo/sidecar/Lightroom mutation.
+- `node dist/src/cli.js shoot --resume
+  "D:\photo\_agent_workspace\photo-jobs\photo-agent-v0.3-validation-current\2026-08-12T13-56-22.643Z-97e20520"`:
+  passed; all 153 jobs were reused, 0 jobs were re-analyzed, with the same
+  conservative summary and report path.
+- Scope/status audit after verification: `photo-agent` is clean at `d71d1ff`
+  with `origin/codex/v0.1-alpha` at the same commit; the v0.2/v0.3 implementation
+  is contained in the preceding `f6bb3ef` commit. `lightroom-mcp-john` retains
+  pre-existing local modifications and was not changed by this task.
+- The generated real-shoot validation session contains only `shoot-plan.json`,
+  `manifest.json`, `culling.csv`, and `clusters.json` under `_agent_workspace`.
+- A Windows PowerShell `ConvertFrom-Json` audit of the generated plan reported
+  `Unrecognized escape sequence` while reading the Unicode/path-heavy JSON.
+  This parser failure was reproduced only in that PowerShell audit; it did not
+  indicate a CLI failure.
+- Node's native `JSON.parse` audit passed for both `shoot-plan.json` and
+  `manifest.json`: each contains 153 assets. A follow-up audit parsed all 153
+  durable job files with 0 invalid files and 153 `completed` states; the final
+  manifest summary records 153 `review`, 0 failed, 153 resumed, and 0 analyzed.
+- Final post-publish-tree `npm.cmd test`: passed again; 2 files and 22 tests
+  passed at the current `d71d1ff` tree.
+- Final post-publish-tree `npm.cmd run check`: passed.
+- Final post-publish-tree `npm.cmd run lint`: passed.
+- Final post-publish-tree `npm.cmd run build`: passed.
+- Final post-publish-tree `git diff --check`: passed; Git reported only the
+  existing LF-to-CRLF normalization warning for `WORKLOG.md`.
+
+## 2026-08-12 - v0.3 live Lightroom verification attempt
+
+- User supplied the non-critical candidate RAW
+  `E:\Lr\2026\2026-07-25\DSC_5346.NEF`. Read-only preflight confirmed the file
+  exists (18,981,888 bytes); the adjacent folder has no same-stem JPEG or XMP.
+  No RAW, sidecar, or preview was copied, renamed, overwritten, or modified.
+- Read-only process inspection confirmed Lightroom Classic is running and two
+  existing `lightroom-mcp-john` bridge processes are running. A direct MCP
+  `listTools` probe failed with `Connection closed`; the bridge stderr identified
+  an existing instance lock for ports 58763/58764. No second bridge was forced.
+- Direct bridge startup without the existing lock failed first at the sandboxed
+  config directory; the approved retry confirmed the existing bridge lock rather
+  than a code or photo failure. A read-only netstat check found no active
+  Lightroom plugin connection on the expected 58763/58764 ports.
+- The bundled Computer Use initialization failed before any UI action with
+  `EPERM` while accessing the local Codex runtime. No Lightroom UI click, plugin
+  install, mutation, render, or visual claim was made.
+- The live Lightroom gate remains blocked on reconnecting the Lightroom MCP
+  plugin/server. Package version remains `0.1.0-alpha.0`; no v0.3 release commit
+  or tag was created before the live gate can be completed.
+- Read-only GitHub remote inspection was attempted but the restricted network
+  could not reach `github.com:443`; no GitHub write was attempted.
+
+## 2026-08-12 - final publish verification
+
+- Verified `HEAD` and `origin/codex/v0.1-alpha` both point to the published
+  `d71d1ff` work-log commit. The branch contains the v0.2/v0.3 implementation
+  commit `f6bb3ef` and its publish record.
+- The only post-publish local change was this append-only work-log update; no
+  source or photo files were changed.
+- Final ref/status check: local `HEAD` and `origin/codex/v0.1-alpha` both equal
+  `58a56a4`; the photo-agent worktree is clean.
+
+## 2026-08-13 - v0.3 alpha live proof and release preparation
+
+- After the user reloaded the Lightroom plug-in, the live status panel reported
+  `Running: true` and successful binds on request/response ports 58763/58764.
+- A rebuilt bridge `list_collections` probe succeeded with six collections, and
+  `search_photos` resolved exactly one catalog item for the user-supplied
+  `E:\Lr\2026\2026-07-25\DSC_5346.NEF` (catalog id 976313).
+- Read-only metadata identified a Nikon Z5 II capture at 600 mm, f/6.3,
+  1/800 s, ISO 7200, 6048 x 4032, with neutral global develop settings.
+- A direct Lightroom baseline export was written only under
+  `D:\photo\_agent_workspace\lightroom\verification\photo-agent-v0.3-dsc-5346-20260813-0040-baseline`.
+  The JPEG was visually inspected as a valid, uncropped/corruption-free squirrel
+  render; SHA-256 is
+  `D312666B7AF5B166F088C915345147FFF1061C0406C735919B24E910FB125762`.
+- PhotoAgent's own `LightroomMcpAdapter` then connected to the rebuilt external
+  MCP entry, read the same catalog item and 14 neutral settings, and rendered
+  `D:\photo\_agent_workspace\photo-jobs\photo-agent-v0.3-live-adapter-20260813-0045\DSC_5346.jpg`.
+  The 2,050,279-byte JPEG was visually inspected for expected subject, framing,
+  backlight, color, and absence of corruption; SHA-256 is
+  `B3F3312F5BF81212C4FE48E58B245EB2314ED6DE900BE58D92CE22DC1697A24F`.
+- This proof used no checkpoint, develop mutation, XMP write, rating, label, or
+  source-file change. It verifies the live adapter read/render path and a human
+  visual sanity check, not live closed-loop mutation, evaluator agreement,
+  subjective batch culling, or propagation quality.
+- A first combined release-file patch was rejected atomically because its
+  Traditional Chinese README context did not match; no file changed from that
+  failed attempt. Smaller exact patches then updated both READMEs, the v0.2/v0.3
+  implementation records, package/client versions, and the changelog for
+  `0.3.0-alpha.0`.
+- `npm.cmd run check`: passed for `0.3.0-alpha.0`.
+- `npm.cmd run lint`: passed for `0.3.0-alpha.0`; a parallel first invocation
+  outlived the 30-second tool yield, and the completed standalone rerun passed.
+- `npm.cmd test`: passed; 2 files and 22 tests passed.
+- `npm.cmd run build`: passed.
+- Targeted `npx.cmd prettier --check` reported eight changed files as needing
+  formatting. A control check also reported unchanged `AGENTS.md`, establishing
+  that this checkout's Prettier check has a pre-existing line-ending/style
+  baseline rather than a release-only regression; no repository-wide formatting
+  rewrite was performed.
+- The first baseline-format control command also supplied PowerShell-invalid
+  wildcard path arguments to `rg`; that diagnostic subcommand failed with
+  Windows error 123 and made no file change.
+- `git diff --check`: passed with only Git's LF-to-CRLF working-copy warnings.
+- Package/lock audit confirmed `package.json`, the lockfile root, and the root
+  package entry all report `0.3.0-alpha.0`; the stale-version text search found
+  no remaining release-facing `0.1.0-alpha` or v0.3-development wording.
+- The first sandboxed `git fetch origin codex/v0.1-alpha --tags` could not reach
+  GitHub port 443. The approved network retry succeeded; local `HEAD` and
+  `origin/codex/v0.1-alpha` both resolve to
+  `8751a580e06385ad38ef55552b37965d504c92ec`, and no existing `v0.3*` tag was
+  present before release.
+- Exact-path staging included only `CHANGELOG.md`, the synchronized English and
+  Traditional Chinese READMEs, this work log, v0.2/v0.3 implementation records,
+  package/lock versions, and the Lightroom adapter client version.
+  `git diff --cached --check` passed.
+- Release commit `d4a8d309e0fc3c89934f36e6e23c7fd9fee15724`
+  (`release: prepare v0.3 alpha`) was created, and annotated tag
+  `v0.3.0-alpha.0` was created at that commit.
+- Approved `git push origin codex/v0.1-alpha v0.3.0-alpha.0` succeeded: the
+  branch advanced from `8751a58` to `d4a8d30`, and GitHub accepted the new tag.
+- A GitHub `ls-remote` read-back confirmed the branch at
+  `d4a8d309e0fc3c89934f36e6e23c7fd9fee15724` and the annotated tag object at
+  `dbb0e7da63f2d952da5da55ccdd3cb245e5bc23d`.

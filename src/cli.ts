@@ -6,9 +6,17 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { LightroomMcpAdapter, MockBackend } from "./backends.js";
+import {
+  ConservativeShootAnalyzer,
+  loadReviewedShootAnalyzer,
+  resumeShootDryRun,
+  runShootDryRun,
+} from "./batch.js";
+import { AcceptingMockEvaluator, OpenAIEditEvaluator } from "./evaluation.js";
 import { CodexProvider, MockProvider, OpenAIProvider } from "./providers.js";
 import { SessionStore } from "./runtime.js";
 import { SemanticIntentPlanSchema } from "./schemas.js";
+import { OpenAIShootAnalyzer } from "./shoot-analyzers.js";
 import { resolveLightroomSettings, translateIntent } from "./translator.js";
 import { recoverSession, resumeCodexSession, runSinglePhoto } from "./workflow.js";
 import { writeXmpSidecar } from "./xmp.js";
@@ -17,10 +25,12 @@ const DEFAULT_LIGHTROOM_ENTRY = "D:\\photo\\lightroom-mcp-john\\server\\dist\\in
 
 function usage(): string {
   return [
-    "photo-agent edit-one --raw <RAW> --preview <JPEG> --backend <mock|lightroom> --provider <codex|mock|openai> [--intent-file <JSON>] [--apply] [--allow-cloud-preview]",
-    "photo-agent resume --session <SESSION_DIR> --intent-file <JSON> --backend <mock|lightroom> [--apply]",
+    "photo-agent edit-one --raw <RAW> --preview <JPEG> --backend <mock|lightroom> --provider <codex|mock|openai> [--evaluator <none|mock|openai>] [--intent-file <JSON>] [--apply] [--allow-cloud-preview]",
+    "photo-agent resume --session <SESSION_DIR> --intent-file <JSON> --backend <mock|lightroom> [--apply] [--evaluator <none|mock|openai>] [--allow-cloud-preview] [--max-iterations <1-10>]",
     "photo-agent recover --session <SESSION_DIR> --backend <mock|lightroom> [--photo-id <ID>]",
     "photo-agent export-xmp --raw <RAW> --intent-file <JSON> --current-settings <JSON> --output <XMP>",
+    "photo-agent shoot --root <SHOOT_DIR> [--session-root <DIR>] [--analysis-file <REVIEW_JSON> | --analyzer openai --allow-cloud-preview]",
+    "photo-agent shoot --resume <SESSION_DIR> [--analysis-file <REVIEW_JSON> | --analyzer openai --allow-cloud-preview]",
   ].join("\n");
 }
 
@@ -36,6 +46,13 @@ function createBackend(
       : undefined;
 }
 
+function createEvaluator(name: string | undefined) {
+  if (name === undefined || name === "none") return undefined;
+  if (name === "mock") return new AcceptingMockEvaluator();
+  if (name === "openai") return new OpenAIEditEvaluator();
+  throw new Error(`Unsupported evaluator: ${name}`);
+}
+
 async function editOne(argv: string[]): Promise<number> {
   const parsed = parseArgs({
     args: argv,
@@ -48,6 +65,8 @@ async function editOne(argv: string[]): Promise<number> {
       "intent-file": { type: "string" },
       apply: { type: "boolean", default: false },
       "allow-cloud-preview": { type: "boolean", default: false },
+      evaluator: { type: "string", default: "none" },
+      "max-iterations": { type: "string", default: "3" },
       "session-root": {
         type: "string",
         default: process.env.PHOTO_AGENT_SESSION_ROOT ?? ".photo-agent/sessions",
@@ -78,6 +97,7 @@ async function editOne(argv: string[]): Promise<number> {
   if (!provider) throw new Error(`Unsupported provider: ${providerName}`);
   const backend = createBackend(parsed.values.backend, raw, parsed.values["lightroom-mcp-entry"]);
   if (!backend) throw new Error(`Unsupported backend: ${parsed.values.backend}`);
+  const evaluator = createEvaluator(parsed.values.evaluator);
   const result = await runSinglePhoto({
     rawPath: raw,
     previewPath: preview,
@@ -87,6 +107,8 @@ async function editOne(argv: string[]): Promise<number> {
     sessionRoot: parsed.values["session-root"],
     apply: parsed.values.apply,
     allowCloudPreview: parsed.values["allow-cloud-preview"],
+    ...(evaluator ? { evaluator } : {}),
+    maxIterations: Number(parsed.values["max-iterations"]),
   });
   console.log(JSON.stringify(result, null, 2));
   return result.state === "FAILED" ? 1 : 0;
@@ -101,6 +123,9 @@ async function resume(argv: string[]): Promise<number> {
       "photo-id": { type: "string" },
       backend: { type: "string", default: "mock" },
       apply: { type: "boolean", default: false },
+      "allow-cloud-preview": { type: "boolean", default: false },
+      evaluator: { type: "string", default: "none" },
+      "max-iterations": { type: "string", default: "3" },
       "session-root": { type: "string", default: process.env.PHOTO_AGENT_SESSION_ROOT },
       "lightroom-mcp-entry": {
         type: "string",
@@ -124,6 +149,7 @@ async function resume(argv: string[]): Promise<number> {
     parsed.values["lightroom-mcp-entry"],
   );
   if (!backend) throw new Error(`Unsupported backend: ${parsed.values.backend}`);
+  const evaluator = createEvaluator(parsed.values.evaluator);
   const result = await resumeCodexSession({
     sessionDir,
     intentFile,
@@ -131,6 +157,9 @@ async function resume(argv: string[]): Promise<number> {
     backend,
     ...(parsed.values["session-root"] ? { sessionRoot: parsed.values["session-root"] } : {}),
     apply: parsed.values.apply,
+    allowCloudPreview: parsed.values["allow-cloud-preview"],
+    ...(evaluator ? { evaluator } : {}),
+    maxIterations: Number(parsed.values["max-iterations"]),
   });
   console.log(JSON.stringify(result, null, 2));
   return result.state === "FAILED" ? 1 : 0;
@@ -214,11 +243,77 @@ async function exportXmp(argv: string[]): Promise<number> {
   return 0;
 }
 
+async function shoot(argv: string[]): Promise<number> {
+  const parsed = parseArgs({
+    args: argv,
+    options: {
+      root: { type: "string" },
+      resume: { type: "string" },
+      "analysis-file": { type: "string" },
+      analyzer: { type: "string", default: "conservative" },
+      "allow-cloud-preview": { type: "boolean", default: false },
+      "session-root": {
+        type: "string",
+        default: process.env.PHOTO_AGENT_SESSION_ROOT ?? ".photo-agent/shoots",
+      },
+    },
+    allowPositionals: false,
+    strict: true,
+  });
+  if (
+    (!parsed.values.root && !parsed.values.resume) ||
+    (parsed.values.root && parsed.values.resume)
+  ) {
+    console.error(usage());
+    return 2;
+  }
+  if (parsed.values["analysis-file"] && parsed.values.analyzer !== "conservative") {
+    throw new Error("Choose either --analysis-file or --analyzer, not both");
+  }
+  const analyzer = parsed.values["analysis-file"]
+    ? await loadReviewedShootAnalyzer(parsed.values["analysis-file"])
+    : parsed.values.analyzer === "openai"
+      ? new OpenAIShootAnalyzer()
+      : parsed.values.analyzer === "conservative"
+        ? new ConservativeShootAnalyzer()
+        : (() => {
+            throw new Error(`Unsupported shoot analyzer: ${parsed.values.analyzer}`);
+          })();
+  const result = parsed.values.resume
+    ? await resumeShootDryRun({
+        sessionDir: parsed.values.resume,
+        analyzer,
+        allowCloudPreview: parsed.values["allow-cloud-preview"],
+      })
+    : await runShootDryRun({
+        shootRoot: parsed.values.root!,
+        sessionRoot: parsed.values["session-root"],
+        analyzer,
+        allowCloudPreview: parsed.values["allow-cloud-preview"],
+      });
+  console.log(
+    JSON.stringify(
+      {
+        sessionDir: result.sessionDir,
+        summary: result.manifest.summary,
+        clusters: result.manifest.clusters.length,
+        duplicate_groups: result.manifest.duplicate_groups.length,
+        burst_groups: result.manifest.burst_groups.length,
+        report: resolve(result.sessionDir, "manifest.json"),
+      },
+      null,
+      2,
+    ),
+  );
+  return result.manifest.summary.failed > 0 ? 1 : 0;
+}
+
 export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (argv[0] === "edit-one") return editOne(argv.slice(1));
   if (argv[0] === "resume") return resume(argv.slice(1));
   if (argv[0] === "recover") return recover(argv.slice(1));
   if (argv[0] === "export-xmp") return exportXmp(argv.slice(1));
+  if (argv[0] === "shoot") return shoot(argv.slice(1));
   console.error(usage());
   return 2;
 }

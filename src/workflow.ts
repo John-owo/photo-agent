@@ -1,5 +1,6 @@
 import { join, resolve } from "node:path";
 
+import { MIN_EVALUATION_CONFIDENCE, planFingerprint, renderFingerprint } from "./evaluation.js";
 import { ingestPair } from "./ingest.js";
 import { createSanitizedPreview } from "./preview.js";
 import {
@@ -15,8 +16,10 @@ import {
   writeCodexAnalysisRequest,
 } from "./providers.js";
 import { acquireMutationLock, SessionStore } from "./runtime.js";
+import { EvaluationResultSchema } from "./schemas.js";
 import type {
   BackendAdapter,
+  EditEvaluator,
   NormalizedEditPlan,
   ProviderResult,
   SourceAssetPair,
@@ -40,7 +43,7 @@ function emptyPlan(): NormalizedEditPlan {
 function resultFor(
   session: SessionStore,
   normalizedPlan: NormalizedEditPlan,
-  extra: { renderPath?: string; handoffPath?: string } = {},
+  extra: { renderPath?: string; handoffPath?: string; iterations?: number } = {},
 ): WorkflowResult {
   return {
     sessionDir: session.dir,
@@ -49,6 +52,7 @@ function resultFor(
     normalizedPlan,
     ...(extra.renderPath ? { renderPath: extra.renderPath } : {}),
     ...(extra.handoffPath ? { handoffPath: extra.handoffPath } : {}),
+    ...(extra.iterations !== undefined ? { iterations: extra.iterations } : {}),
   };
 }
 
@@ -88,6 +92,8 @@ type PlanExecutionOptions = {
   backend: BackendAdapter;
   sessionRoot: string;
   apply: boolean;
+  evaluator?: EditEvaluator;
+  maxIterations?: number;
 };
 
 async function executePlan(
@@ -122,42 +128,167 @@ async function executePlan(
     await session.updateManifest({
       backend: { name: options.backend.name, version: options.backend.capabilities.version },
     });
-    const current = await options.backend.readCurrentEdit(photoId);
+    let current = await options.backend.readCurrentEdit(photoId);
     if (!samePath(current.path, source.raw_path)) {
       throw new Error(
         `Lightroom photo path mismatch; refusing mutation: ${current.path} <> ${source.raw_path}`,
       );
     }
-    const settings = resolveLightroomSettings(current.develop_settings, normalizedPlan);
-    const checkpointName = `PhotoAgent_${session.currentManifest.session_id}_before`;
-    await session.transition("APPLYING", { checkpoint: checkpointName });
-    const checkpoint = await options.backend.createCheckpoint(
-      photoId,
-      checkpointName,
-      LIGHTROOM_CHECKPOINT_KEYS,
-    );
-    await session.writeJson("checkpoints/before.json", checkpoint);
-    sideEffectStarted = true;
-    await options.backend.applyGlobalAdjustment(photoId, settings);
-    const readBack = await options.backend.readCurrentEdit(photoId);
-    await session.writeJson("backend-readback.json", {
-      requested: settings,
-      read_back: readBack.develop_settings,
-    });
-    for (const [key, value] of Object.entries(settings)) {
-      if (readBack.develop_settings[key] !== value) {
-        await session.transition("REVIEW_REQUIRED", { reason: "backend_readback_mismatch", key });
-        return resultFor(session, normalizedPlan);
-      }
+    const maxIterations = options.maxIterations ?? 3;
+    if (!Number.isInteger(maxIterations) || maxIterations < 1 || maxIterations > 10) {
+      throw new Error("maxIterations must be an integer from 1 to 10");
     }
-    await session.transition("RENDERING");
-    const render = await options.backend.renderPreview(photoId, join(session.dir, "renders"));
-    await session.writeJson("render.json", render);
-    await session.transition("REVIEW_REQUIRED", {
-      reason: "visual_evaluator_not_in_alpha",
-      render: render.path,
-    });
-    return resultFor(session, normalizedPlan, { renderPath: render.path });
+    const startedAt = Date.now();
+    let activePlan = normalizedPlan;
+    let previousRenderHash: string | undefined;
+    let previousPlanHash: string | undefined;
+    let evaluatorCalls = 0;
+    let totalTokens = 0;
+    let estimatedCostUsd = 0;
+
+    const finishReport = async (iterations: number, reason: string): Promise<void> => {
+      await session.writeJson("iteration-report.json", {
+        evaluator: options.evaluator?.name ?? null,
+        iterations,
+        evaluator_calls: evaluatorCalls,
+        total_tokens: totalTokens,
+        estimated_cost_usd: Number(estimatedCostUsd.toFixed(6)),
+        elapsed_ms: Date.now() - startedAt,
+        terminal_state: session.currentState,
+        reason,
+      });
+    };
+
+    for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
+      const settings = resolveLightroomSettings(current.develop_settings, activePlan);
+      const checkpointName = `PhotoAgent_${session.currentManifest.session_id}_iteration_${iteration}_before`;
+      await session.transition("APPLYING", { checkpoint: checkpointName, iteration });
+      const checkpoint = await options.backend.createCheckpoint(
+        photoId,
+        checkpointName,
+        LIGHTROOM_CHECKPOINT_KEYS,
+      );
+      await session.writeJson(`checkpoints/iteration-${iteration}-before.json`, checkpoint);
+      if (iteration === 1) await session.writeJson("checkpoints/before.json", checkpoint);
+      sideEffectStarted = true;
+      await options.backend.applyGlobalAdjustment(photoId, settings);
+      const readBack = await options.backend.readCurrentEdit(photoId);
+      await session.writeJson(`backend-readback-iteration-${iteration}.json`, {
+        requested: settings,
+        read_back: readBack.develop_settings,
+      });
+      if (iteration === 1) {
+        await session.writeJson("backend-readback.json", {
+          requested: settings,
+          read_back: readBack.develop_settings,
+        });
+      }
+      for (const [key, value] of Object.entries(settings)) {
+        if (readBack.develop_settings[key] !== value) {
+          await session.transition("REVIEW_REQUIRED", {
+            reason: "backend_readback_mismatch",
+            key,
+            iteration,
+            rollback_checkpoint: checkpointName,
+          });
+          await finishReport(iteration, "backend_readback_mismatch");
+          return resultFor(session, normalizedPlan, { iterations: iteration });
+        }
+      }
+      current = readBack;
+      await session.transition("RENDERING", { iteration });
+      const render = await options.backend.renderPreview(
+        photoId,
+        join(session.dir, "renders", `iteration-${iteration}`),
+      );
+      await session.writeJson(`render-iteration-${iteration}.json`, render);
+      if (iteration === 1) await session.writeJson("render.json", render);
+      if (!options.evaluator) {
+        await session.transition("REVIEW_REQUIRED", {
+          reason: "visual_evaluator_not_configured",
+          render: render.path,
+          rollback_checkpoint: checkpointName,
+        });
+        await finishReport(iteration, "visual_evaluator_not_configured");
+        return resultFor(session, normalizedPlan, {
+          renderPath: render.path,
+          iterations: iteration,
+        });
+      }
+
+      await session.transition("EVALUATING", { iteration, render: render.path });
+      const evaluationPath = options.evaluator.requiresCloudPreview
+        ? join(session.dir, "evaluations", `iteration-${iteration}-analysis.jpg`)
+        : render.path;
+      if (options.evaluator.requiresCloudPreview) {
+        await createSanitizedPreview(render.path, evaluationPath);
+      }
+      const evaluation = EvaluationResultSchema.parse(
+        await options.evaluator.evaluate({
+          renderPath: evaluationPath,
+          iteration,
+          normalizedPlan: activePlan,
+          readBack,
+        }),
+      );
+      evaluatorCalls += evaluation.usage?.evaluator_calls ?? 1;
+      totalTokens += evaluation.usage?.total_tokens ?? 0;
+      estimatedCostUsd += evaluation.usage?.estimated_cost_usd ?? 0;
+      await session.writeJson(`evaluations/iteration-${iteration}.json`, evaluation);
+
+      if (evaluation.confidence < MIN_EVALUATION_CONFIDENCE || evaluation.verdict === "review") {
+        await session.transition("REVIEW_REQUIRED", {
+          reason:
+            evaluation.confidence < MIN_EVALUATION_CONFIDENCE
+              ? "low_evaluator_confidence"
+              : "evaluator_requested_review",
+          iteration,
+          rollback_checkpoint: checkpointName,
+        });
+        await finishReport(iteration, "human_review_escalation");
+        return resultFor(session, normalizedPlan, {
+          renderPath: render.path,
+          iterations: iteration,
+        });
+      }
+      if (evaluation.verdict === "accept") {
+        await session.transition("ACCEPTED", { iteration, render: render.path });
+        await finishReport(iteration, "accepted");
+        return resultFor(session, normalizedPlan, {
+          renderPath: render.path,
+          iterations: iteration,
+        });
+      }
+
+      const nextPlan = evaluation.refinement_plan!;
+      const renderHash = await renderFingerprint(render.path);
+      const nextPlanHash = planFingerprint(evaluation);
+      const stalled =
+        nextPlan.operations.length === 0 ||
+        renderHash === previousRenderHash ||
+        (nextPlanHash !== undefined && nextPlanHash === previousPlanHash);
+      if (stalled || iteration === maxIterations) {
+        const reason = stalled ? "closed_loop_stalled" : "iteration_budget_exhausted";
+        await session.transition("REVIEW_REQUIRED", {
+          reason,
+          iteration,
+          rollback_checkpoint: checkpointName,
+        });
+        await finishReport(iteration, reason);
+        return resultFor(session, normalizedPlan, {
+          renderPath: render.path,
+          iterations: iteration,
+        });
+      }
+      previousRenderHash = renderHash;
+      previousPlanHash = nextPlanHash;
+      activePlan = nextPlan;
+      await session.transition("REFINING", {
+        iteration,
+        next_operation_count: nextPlan.operations.length,
+      });
+    }
+    throw new Error("Closed-loop controller exited without a terminal state");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await session.writeJson("error.json", { message, side_effect_started: sideEffectStarted });
@@ -179,6 +310,9 @@ async function executePlan(
 export async function runSinglePhoto(options: WorkflowOptions): Promise<WorkflowResult> {
   if (options.provider.requiresCloudPreview && !options.allowCloudPreview) {
     throw new Error("This provider requires --allow-cloud-preview; no image was sent");
+  }
+  if (options.evaluator?.requiresCloudPreview && !options.allowCloudPreview) {
+    throw new Error("This evaluator requires --allow-cloud-preview; no render was sent");
   }
   const source = await ingestPair(options.rawPath, options.previewPath);
   const session = await SessionStore.create(options.sessionRoot, source, options.backend.name);
@@ -234,6 +368,8 @@ export async function runSinglePhoto(options: WorkflowOptions): Promise<Workflow
       backend: options.backend,
       sessionRoot: options.sessionRoot,
       apply: options.apply,
+      ...(options.evaluator ? { evaluator: options.evaluator } : {}),
+      ...(options.maxIterations !== undefined ? { maxIterations: options.maxIterations } : {}),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -253,9 +389,15 @@ export type ResumeCodexOptions = {
   backend: BackendAdapter;
   sessionRoot?: string;
   apply: boolean;
+  allowCloudPreview: boolean;
+  evaluator?: EditEvaluator;
+  maxIterations?: number;
 };
 
 export async function resumeCodexSession(options: ResumeCodexOptions): Promise<WorkflowResult> {
+  if (options.evaluator?.requiresCloudPreview && !options.allowCloudPreview) {
+    throw new Error("This evaluator requires --allow-cloud-preview; no render was sent");
+  }
   const session = await SessionStore.open(options.sessionDir);
   if (session.currentState !== "CODEX_INPUT_REQUIRED") {
     throw new Error(
@@ -277,6 +419,8 @@ export async function resumeCodexSession(options: ResumeCodexOptions): Promise<W
       backend: options.backend,
       sessionRoot,
       apply: options.apply,
+      ...(options.evaluator ? { evaluator: options.evaluator } : {}),
+      ...(options.maxIterations !== undefined ? { maxIterations: options.maxIterations } : {}),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -307,7 +451,12 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
     .catch(() => emptyPlan());
   const state = session.currentState;
 
-  if (state === "REVIEW_REQUIRED" || state === "FAILED" || state === "CANCELLED") {
+  if (
+    state === "ACCEPTED" ||
+    state === "REVIEW_REQUIRED" ||
+    state === "FAILED" ||
+    state === "CANCELLED"
+  ) {
     return resultFor(session, normalizedPlan);
   }
   if (state === "CODEX_INPUT_REQUIRED") {

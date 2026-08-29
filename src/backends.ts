@@ -251,7 +251,7 @@ export class LightroomMcpAdapter implements BackendAdapter {
       args: [this.entryPath],
       stderr: "pipe",
     });
-    this.client = new Client({ name: "photo-agent", version: "0.1.0-alpha.0" });
+    this.client = new Client({ name: "photo-agent", version: "0.3.0-alpha.0" });
     await this.client.connect(this.transport);
     const tools = await this.client.listTools();
     const names = new Set(tools.tools.map((tool) => tool.name));

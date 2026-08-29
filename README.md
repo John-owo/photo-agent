@@ -2,11 +2,68 @@
 
 繁體中文文件：[README.zh-TW.md](README.zh-TW.md)。
 
-Backend-agnostic AI photography workflow agent — v0.1 implementation.
+## What is this?
 
-This first version processes one explicit RAW/preview pair. It is designed to
-prove the runtime, normalized edit contract, and Lightroom adapter boundary
-before adding culling, batch work, or Style Memory.
+`photo-agent` is a backend-agnostic AI photography workflow agent that turns one
+explicit RAW/preview pair into a traceable `analyze → plan → apply → render`
+session. It owns the workflow plus its safety and recovery boundaries;
+`lightroom-mcp-john` is the external Lightroom MCP backend used to apply edits
+and read back/render state, not the definition of the whole agent. The current
+`0.3` alpha adds bounded closed-loop editing, shoot indexing, culling and
+lighting review, representative orchestration, and guarded propagation on top
+of the recoverable v0.1 workflow.
+
+### Relationship to `lightroom-mcp`
+
+| Repository                                                            | Owns                                                                                                                                   | Does not own                                                                          |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| [`John-owo/photo-agent`](https://github.com/John-owo/photo-agent)     | Workflow state, safety/recovery policy, semantic plans, closed-loop evaluation, culling, clustering, and shoot orchestration.          | Lightroom catalog transport or the Lightroom Classic plug-in.                         |
+| [`John-owo/lightroom-mcp`](https://github.com/John-owo/lightroom-mcp) | The standalone MCP server and Lightroom Classic Lua plug-in: catalog reads/writes, develop settings, checkpoints, and renders/exports. | PhotoAgent's iteration policy, culling decisions, scene grouping, or batch job state. |
+
+PhotoAgent was extracted from the earlier combined Lightroom fork during v0.1.
+The dependency is one-way: PhotoAgent may use Lightroom MCP as one backend;
+Lightroom MCP remains independently usable by any MCP client and does not depend
+on PhotoAgent. The bundled `raw-photo-lightroom-preset` in the older fork is
+historical workflow guidance; new workflow-engine development belongs here.
+
+## Status: v0.3 alpha (`0.3.0-alpha.0` package version)
+
+> **Alpha/testing only.** v0.2 and v0.3 automated gates pass, and one
+> non-critical RAW completed a live Lightroom adapter read/render plus human
+> visual check without a develop mutation. Subjective batch culling, live
+> representative edits/propagation, and evaluator-to-human agreement remain
+> unverified. Do not point this release at production photos or an
+> irreplaceable photo library before reviewing it for your setup.
+
+## Platform assumptions
+
+All command examples below are written for Windows PowerShell. `npm.cmd`,
+backslash paths, PowerShell environment-variable syntax, and backtick line
+continuations are intentional. The Node.js CLI is not deliberately Windows-only,
+but non-Windows Lightroom integration has not been validated for this alpha, so
+Windows + PowerShell is the supported setup. For CLI/mock use on another
+platform, replace `npm.cmd` with `npm`, adapt environment-variable syntax and
+path separators, and set `PHOTO_AGENT_LIGHTROOM_MCP_ENTRY` to a
+platform-appropriate executable; treat Lightroom use there as unvalidated.
+
+## Safety guarantees
+
+- Never delete, rename, or overwrite any source photo, RAW file, sidecar,
+  preview, or export file.
+- RAW files and EXIF/GPS metadata are never uploaded. Cloud preview transfer is
+  disabled unless `--allow-cloud-preview` is explicitly supplied, and only the
+  locally sanitized preview is eligible for transfer.
+- The default `--provider codex` path creates a local handoff and does not call
+  a visual-model API. The OpenAI provider remains an explicit opt-in path.
+- Never blindly retry a Lightroom mutation after a timeout. Read back backend
+  state first; if reconciliation is uncertain, stop at `REVIEW_REQUIRED`.
+- After an interruption, `recover` only reads back state and reconciles the
+  session; it never retries a mutation automatically.
+- XMP fallback writes a new sidecar and refuses to overwrite an existing
+  sidecar or source file.
+- `lightroom-mcp-john` is an external backend checkout; a photo workflow does
+  not modify that checkout. Use a non-critical test photo for real Lightroom
+  runs.
 
 ## Install and verify
 
@@ -19,6 +76,45 @@ npm.cmd run lint
 npm.cmd test
 npm.cmd run build
 ```
+
+## Environment variables
+
+These four variables are the values documented by `.env.example`:
+
+| Variable                          | Purpose                                                                                                            | Default                                            |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
+| `OPENAI_API_KEY`                  | Credential for an explicitly selected OpenAI provider, evaluator, or shoot analyzer when cloud preview is allowed. | Unset (empty)                                      |
+| `PHOTO_AGENT_OPENAI_MODEL`        | Model name used by OpenAI analysis and evaluation paths.                                                           | `gpt-5.6-terra`                                    |
+| `PHOTO_AGENT_LIGHTROOM_MCP_ENTRY` | Executable entry for the local `lightroom-mcp-john` MCP server.                                                    | `D:\photo\lightroom-mcp-john\server\dist\index.js` |
+| `PHOTO_AGENT_SESSION_ROOT`        | Root directory for generated session state and renders.                                                            | `.photo-agent\sessions`                            |
+
+## v0.2/v0.3 commands
+
+Run the deterministic closed loop against fixtures or a non-critical test pair:
+
+```powershell
+node dist\src\cli.js edit-one --raw <RAW> --preview <JPEG> --backend mock --provider mock --apply --evaluator mock --max-iterations 3
+```
+
+`--evaluator openai --allow-cloud-preview` replaces the mock evaluator with the
+opt-in structured visual evaluator. The same consent flag is required when an
+OpenAI evaluator is selected on `resume`. Only a fresh sanitized session JPEG is
+eligible for transfer; no OpenAI request is made by the default or mock paths.
+
+Create a conservative, read-only shoot report and resume the same durable job set:
+
+```powershell
+node dist\src\cli.js shoot --root <SHOOT_DIR> --session-root .photo-agent\shoots --analysis-file <REVIEW_JSON>
+node dist\src\cli.js shoot --resume <SESSION_DIR> --analysis-file <REVIEW_JSON>
+node dist\src\cli.js shoot --root <SHOOT_DIR> --session-root .photo-agent\shoots --analyzer openai --allow-cloud-preview
+```
+
+The optional review file contains schema-validated user/Codex culling and
+lighting decisions and is mutually exclusive with `--analyzer openai`. Without
+either opt-in source, every image remains `review`. The OpenAI analyzer uses one
+structured request per preview asset and only a sanitized session copy. The
+shoot command does not write ratings, labels, edits, or source files. See the [v0.2 record](docs/implementation/v0.2.md)
+and [v0.3 record](docs/implementation/v0.3.md).
 
 ## Codex-local run (default)
 
@@ -108,6 +204,13 @@ node dist/src/cli.js export-xmp `
   --output .photo-agent\exports\photo.xmp
 ```
 
-See [AGENTS.md](AGENTS.md), [ROADMAP.md](ROADMAP.md), the [v0.1 implementation
-record](docs/implementation/v0.1.md), the [v0.1–v0.3 direction](docs/implementation/v0.1-v0.3-direction.zh-TW.md),
-and [the Codex handoff contract](docs/codex-provider.md).
+## References
+
+- [AGENTS.md](AGENTS.md) — repository safety and development rules.
+- [ROADMAP.md](ROADMAP.md) — project goals and milestones.
+- [v0.1 implementation record](docs/implementation/v0.1.md).
+- [v0.1–v0.3 direction](docs/implementation/v0.1-v0.3-direction.zh-TW.md).
+- [Codex handoff contract](docs/codex-provider.md).
+- [Examples](examples/README.md) — reproducible fixture commands.
+- [MIT License](LICENSE).
+- [NOTICE.md](NOTICE.md) — `lightroom-mcp-john` third-party provenance.
