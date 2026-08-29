@@ -891,3 +891,17 @@ Cloud-analyzer checkpoint:
   completed with exit 0. The later targeted lifecycle/source command returned
   exit 1 solely because the final port-listener filter was empty; its source
   and current log evidence completed before that expected empty result.
+
+## 2026-08-29 - T04 remains paused at Codex tool discovery
+
+- The integration bridge successfully started and connected at
+  23:03:34-23:03:36, but this Codex task initialized before the bridge was ready.
+  The first heartbeat timed out and its late response was rejected, leaving no
+  callable Lightroom tools in the current model turn.
+- Plug-in Manager was opened at 23:03:50 immediately before the heartbeat
+  timeout sequence. T04 requires a clean Codex restart with that modal panel
+  closed and the bridge already running. No direct TCP fallback, Workflow Copy,
+  Develop mutation, render, Master/source/catalog change, or T07 code change
+  was attempted.
+- Final `git diff --check` passed with only the normal LF-to-CRLF warning;
+  status showed only this append-only `WORKLOG.md` update.
