@@ -874,3 +874,20 @@ Cloud-analyzer checkpoint:
   warning; only this append-only work-log file was modified. No PhotoAgent
   runtime/test, Lightroom catalog, Master Develop State, source file, sidecar,
   preview, GitHub issue, branch, or remote state changed.
+
+## 2026-08-29 - T04 integration start-stop race diagnosed
+
+- The manually loaded integration plug-in did start successfully: current
+  Lightroom log evidence shows both ports bound and both MCP sockets connected
+  at 22:53:08-22:53:10. The Plug-in Manager had rendered one second earlier
+  with stale `Running: false` status while auto-start was still in progress.
+- A later button action at 22:53:16 entered the live-state Stop branch and
+  cleanly stopped the bridge. This accounts for the user's apparent Start
+  action producing a stopped server; no startup error or catalog call occurred.
+- Current checks show Lightroom present but no 58763/58764 listener and no
+  Lightroom MCP tool registered in this Codex task. T04 and T07 therefore
+  remain paused; `DSC_5343.NEF` Master/source/catalog state remains untouched.
+- Verification commands: current process/port/log/tool-registry/status readback
+  completed with exit 0. The later targeted lifecycle/source command returned
+  exit 1 solely because the final port-listener filter was empty; its source
+  and current log evidence completed before that expected empty result.
