@@ -102,11 +102,40 @@ export const SourceAssetPairSchema = z.object({
   source_confidence: z.literal("high"),
 });
 
+export const BackendPhotoIdentitySchema = z
+  .object({
+    catalog_id: z.string().min(1),
+    uuid: z.string().min(1),
+    master_id: z.string().min(1),
+    master_uuid: z.string().min(1),
+    is_virtual_copy: z.boolean(),
+  })
+  .strict();
+
 export const BackendPhotoStateSchema = z.object({
   photo_id: z.string().min(1),
   path: z.string().min(1),
   develop_settings: z.record(z.string(), z.union([z.number(), z.string(), z.boolean()])),
+  identity: BackendPhotoIdentitySchema.optional(),
 });
+
+export const WorkflowCopyResultSchema = z
+  .object({
+    operation_id: z.string().min(1),
+    result: z.enum(["created", "reconciled", "REVIEW_REQUIRED"]),
+    partial: z.boolean(),
+    source: BackendPhotoIdentitySchema.optional(),
+    master: BackendPhotoIdentitySchema.optional(),
+    copy: BackendPhotoIdentitySchema.optional(),
+    selection_restoration: z
+      .object({
+        status: z.enum(["not_needed", "restored", "failed"]),
+        verified: z.boolean(),
+      })
+      .strict(),
+    reason: z.string().optional(),
+  })
+  .strict();
 
 export const OperationSemanticsSchema = z.object({
   supported: z.boolean(),
@@ -114,22 +143,62 @@ export const OperationSemanticsSchema = z.object({
   idempotent: z.boolean(),
   reversible: z.enum(["true_undo", "checkpoint_only", "new_file", "irreversible"]),
   scope: z.enum(["photo", "selection", "catalog", "filesystem", "session"]),
+  requires_active_selection: z.boolean(),
+  requires_editor_foreground: z.boolean(),
   concurrency: z.enum(["parallel_safe", "per_photo_serialized", "exclusive_backend"]),
   retry_policy: z.enum(["automatic", "readback_before_retry", "manual_review_only"]),
   safe_to_resume: z.boolean(),
-});
+}).strict();
 
-export const BackendCapabilityManifestSchema = z.object({
-  backend: z.string().min(1),
-  version: z.string().min(1),
-  trust_boundary: z.object({
-    transport: z.string().min(1),
-    authentication: z.string().min(1),
-    cloud: z.boolean(),
-  }),
-  capabilities: z.array(z.string().min(1)),
-  operations: z.record(z.string(), OperationSemanticsSchema),
-});
+export const SemverSchema = z
+  .string()
+  .regex(
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/,
+    "Expected a semantic version",
+  );
+
+export const BackendCapabilityManifestSchema = z
+  .object({
+    backend: z.string().min(1),
+    version: SemverSchema,
+    trust_boundary: z
+      .object({
+        transport: z.string().min(1),
+        authentication: z.string().min(1),
+        cloud: z.boolean(),
+      })
+      .strict(),
+    capabilities: z.array(z.string().min(1)),
+    operations: z.record(z.string(), OperationSemanticsSchema),
+  })
+  .strict()
+  .superRefine((manifest, context) => {
+    const seen = new Set<string>();
+    for (const capability of manifest.capabilities) {
+      if (seen.has(capability)) {
+        context.addIssue({
+          code: "custom",
+          path: ["capabilities"],
+          message: `Duplicate capability: ${capability}`,
+        });
+      }
+      seen.add(capability);
+      const semantics = manifest.operations[capability];
+      if (!semantics) {
+        context.addIssue({
+          code: "custom",
+          path: ["operations", capability],
+          message: `Missing operation semantics for capability: ${capability}`,
+        });
+      } else if (!semantics.supported) {
+        context.addIssue({
+          code: "custom",
+          path: ["operations", capability, "supported"],
+          message: `Unsupported operation cannot be advertised as a capability: ${capability}`,
+        });
+      }
+    }
+  });
 
 export const SessionManifestSchema = z.object({
   schema_version: z.literal(SCHEMA_VERSION),

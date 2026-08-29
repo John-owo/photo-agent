@@ -36,6 +36,15 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
 - 預設的 `--provider codex` 路徑只建立本機交接資料，不會呼叫視覺模型 API；OpenAI provider 必須明確選取才會啟用。
 - Lightroom mutation 發生 timeout 後絕不盲目重試；會先讀回 backend 狀態，若無法確定是否已套用，就停在 `REVIEW_REQUIRED`。
 - 中斷後使用 `recover` 只會讀回狀態並 reconcile session，不會自動重試 mutation。
+- 單張 apply 會先唯讀並驗證 Master；只有明確允許 apply 且計畫含可執行調整時，
+  才建立一份帶 session 標記的 Workflow Copy。checkpoint、Develop mutation、讀回與
+  render 只會指向已驗證的 Copy。dry-run／no-op 不會建立 Copy；輸入已是 Virtual
+  Copy 或身分不確定時會停在 `REVIEW_REQUIRED`。
+- 在 apply／recover／propagation 路徑進行任何 backend 讀取、checkpoint、mutation
+  或 render 前，PhotoAgent 會先執行有版本的 MCP capability handshake。它從連線的
+  server 真實取得版本、工具、信任邊界與 operation-semantics metadata；major 不相容、
+  identity／trust 不符、manifest 格式錯誤或該路徑缺少必要 operation 時會 fail closed。
+  自動化測試使用 Mock 與記憶體內 fake MCP server；真實 Lightroom 的 handshake 驗收仍未驗證。
 - XMP fallback 只會建立新的 sidecar，並拒絕覆寫既有 sidecar 或來源檔案。
 - `lightroom-mcp-john` 是外部 backend checkout；照片工作流程不會修改該 checkout。實際執行 Lightroom 時仍應使用非關鍵測試照片。
 

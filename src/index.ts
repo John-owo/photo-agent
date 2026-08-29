@@ -1,4 +1,5 @@
 export * from "./backends.js";
+export * from "./backend-handshake.js";
 export * from "./batch.js";
 export * from "./batch-edit.js";
 export * from "./evaluation.js";

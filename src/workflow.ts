@@ -1,6 +1,11 @@
 import { join, resolve } from "node:path";
 
 import { MIN_EVALUATION_CONFIDENCE, planFingerprint, renderFingerprint } from "./evaluation.js";
+import {
+  RECOVERY_OPERATIONS,
+  requireBackendHandshake,
+  SINGLE_PHOTO_OPERATIONS,
+} from "./backend-handshake.js";
 import { ingestPair } from "./ingest.js";
 import { createSanitizedPreview } from "./preview.js";
 import {
@@ -29,6 +34,24 @@ import type {
 
 function samePath(left: string, right: string): boolean {
   return resolve(left).toLowerCase() === resolve(right).toLowerCase();
+}
+
+function sameDevelopSettings(
+  left: Record<string, number | string | boolean>,
+  right: Record<string, number | string | boolean>,
+): boolean {
+  const leftEntries = Object.entries(left).sort(([a], [b]) => a.localeCompare(b));
+  const rightEntries = Object.entries(right).sort(([a], [b]) => a.localeCompare(b));
+  return JSON.stringify(leftEntries) === JSON.stringify(rightEntries);
+}
+
+function hasEffectiveSettings(
+  current: Record<string, number | string | boolean>,
+  requested: Record<string, number | string | boolean>,
+): boolean {
+  return Object.entries(requested).some(
+    ([key, value]) => key !== "WhiteBalance" && current[key] !== value,
+  );
 }
 
 function emptyPlan(): NormalizedEditPlan {
@@ -111,6 +134,13 @@ async function executePlan(
     await session.transition("REVIEW_REQUIRED", { reason: "no_executable_operations" });
     return resultFor(session, normalizedPlan);
   }
+  const maxIterations = options.maxIterations ?? 3;
+  if (!Number.isInteger(maxIterations) || maxIterations < 1 || maxIterations > 10) {
+    await session.transition("FAILED", {
+      error: "maxIterations must be an integer from 1 to 10",
+    });
+    return resultFor(session, normalizedPlan);
+  }
 
   let sideEffectStarted = false;
   let unlock: (() => Promise<void>) | undefined;
@@ -125,19 +155,123 @@ async function executePlan(
     );
     await options.backend.connect();
     connected = true;
+    const backendManifest = await requireBackendHandshake(options.backend, SINGLE_PHOTO_OPERATIONS);
     await session.updateManifest({
-      backend: { name: options.backend.name, version: options.backend.capabilities.version },
+      backend: { name: backendManifest.backend, version: backendManifest.version },
     });
-    let current = await options.backend.readCurrentEdit(photoId);
+    const master = await options.backend.readCurrentEdit(photoId);
+    let current = master;
+    if (!master.identity) {
+      await session.transition("REVIEW_REQUIRED", { reason: "source_identity_uncertain" });
+      return resultFor(session, normalizedPlan);
+    }
+    if (master.identity.is_virtual_copy) {
+      await session.transition("REVIEW_REQUIRED", { reason: "source_is_virtual_copy" });
+      return resultFor(session, normalizedPlan);
+    }
+    if (
+      master.identity.catalog_id !== master.photo_id ||
+      master.identity.master_id !== master.identity.catalog_id ||
+      master.identity.master_uuid !== master.identity.uuid
+    ) {
+      await session.transition("REVIEW_REQUIRED", { reason: "source_identity_uncertain" });
+      return resultFor(session, normalizedPlan);
+    }
     if (!samePath(current.path, source.raw_path)) {
       throw new Error(
         `Lightroom photo path mismatch; refusing mutation: ${current.path} <> ${source.raw_path}`,
       );
     }
-    const maxIterations = options.maxIterations ?? 3;
-    if (!Number.isInteger(maxIterations) || maxIterations < 1 || maxIterations > 10) {
-      throw new Error("maxIterations must be an integer from 1 to 10");
+    let initialSettings: Record<string, number | string | boolean>;
+    try {
+      initialSettings = resolveLightroomSettings(master.develop_settings, normalizedPlan);
+    } catch (error) {
+      await session.transition("REVIEW_REQUIRED", {
+        reason: "no_executable_operations",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return resultFor(session, normalizedPlan);
     }
+    if (!hasEffectiveSettings(master.develop_settings, initialSettings)) {
+      await session.transition("REVIEW_REQUIRED", { reason: "no_effective_adjustments" });
+      return resultFor(session, normalizedPlan);
+    }
+    const operationId = `photoagent-vc-${session.currentManifest.session_id}`;
+    await session.writeJson("workflow-copy-intent.json", {
+      operation_id: operationId,
+      source_photo_id: master.identity.catalog_id,
+      expected_source_uuid: master.identity.uuid,
+    });
+    sideEffectStarted = true;
+    const workflowCopy = await options.backend.createWorkflowCopy(
+      master.identity.catalog_id,
+      master.identity.uuid,
+      operationId,
+    );
+    await session.writeJson("workflow-copy.json", workflowCopy);
+    const envelopeVerified =
+      workflowCopy.operation_id === operationId &&
+      workflowCopy.source?.catalog_id === master.identity.catalog_id &&
+      workflowCopy.source.uuid === master.identity.uuid &&
+      workflowCopy.source.master_id === master.identity.catalog_id &&
+      workflowCopy.source.master_uuid === master.identity.uuid &&
+      workflowCopy.source.is_virtual_copy === false &&
+      workflowCopy.master?.catalog_id === master.identity.catalog_id &&
+      workflowCopy.master.uuid === master.identity.uuid &&
+      workflowCopy.master.master_id === master.identity.catalog_id &&
+      workflowCopy.master.master_uuid === master.identity.uuid &&
+      workflowCopy.master.is_virtual_copy === false &&
+      workflowCopy.copy?.catalog_id !== master.identity.catalog_id &&
+      workflowCopy.copy?.master_id === master.identity.catalog_id &&
+      workflowCopy.copy.master_uuid === master.identity.uuid &&
+      workflowCopy.copy.is_virtual_copy === true &&
+      workflowCopy.copy.uuid !== master.identity.uuid &&
+      workflowCopy.selection_restoration.status !== "failed" &&
+      workflowCopy.selection_restoration.verified;
+    if (
+      workflowCopy.result === "REVIEW_REQUIRED" ||
+      !workflowCopy.copy ||
+      workflowCopy.partial ||
+      !envelopeVerified
+    ) {
+      await session.transition("REVIEW_REQUIRED", {
+        reason:
+          workflowCopy.reason ??
+          (envelopeVerified ? "workflow_copy_requires_review" : "workflow_copy_envelope_mismatch"),
+        operation_id: operationId,
+      });
+      return resultFor(session, normalizedPlan);
+    }
+    const copyState = await options.backend.readCurrentEdit(workflowCopy.copy.catalog_id);
+    const copyIdentity = copyState.identity;
+    const copyVerified =
+      copyIdentity?.is_virtual_copy === true &&
+      copyState.photo_id === workflowCopy.copy.catalog_id &&
+      copyIdentity.catalog_id === workflowCopy.copy.catalog_id &&
+      copyIdentity.uuid === workflowCopy.copy.uuid &&
+      copyIdentity.master_id === master.identity.catalog_id &&
+      copyIdentity.master_uuid === master.identity.uuid &&
+      samePath(copyState.path, master.path) &&
+      sameDevelopSettings(copyState.develop_settings, master.develop_settings);
+    await session.writeJson("workflow-copy-verification.json", {
+      operation_id: operationId,
+      verified: copyVerified,
+      master: master.identity,
+      copy: copyIdentity ?? null,
+      inherited_develop_state: sameDevelopSettings(
+        copyState.develop_settings,
+        master.develop_settings,
+      ),
+    });
+    if (!copyVerified) {
+      await session.transition("REVIEW_REQUIRED", {
+        reason: "workflow_copy_identity_or_inheritance_mismatch",
+        operation_id: operationId,
+      });
+      return resultFor(session, normalizedPlan);
+    }
+    current = copyState;
+    const activePhotoId = workflowCopy.copy.catalog_id;
     const startedAt = Date.now();
     let activePlan = normalizedPlan;
     let previousRenderHash: string | undefined;
@@ -160,19 +294,22 @@ async function executePlan(
     };
 
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
-      const settings = resolveLightroomSettings(current.develop_settings, activePlan);
+      const settings =
+        iteration === 1
+          ? initialSettings
+          : resolveLightroomSettings(current.develop_settings, activePlan);
       const checkpointName = `PhotoAgent_${session.currentManifest.session_id}_iteration_${iteration}_before`;
       await session.transition("APPLYING", { checkpoint: checkpointName, iteration });
       const checkpoint = await options.backend.createCheckpoint(
-        photoId,
+        activePhotoId,
         checkpointName,
         LIGHTROOM_CHECKPOINT_KEYS,
       );
       await session.writeJson(`checkpoints/iteration-${iteration}-before.json`, checkpoint);
       if (iteration === 1) await session.writeJson("checkpoints/before.json", checkpoint);
       sideEffectStarted = true;
-      await options.backend.applyGlobalAdjustment(photoId, settings);
-      const readBack = await options.backend.readCurrentEdit(photoId);
+      await options.backend.applyGlobalAdjustment(activePhotoId, settings);
+      const readBack = await options.backend.readCurrentEdit(activePhotoId);
       await session.writeJson(`backend-readback-iteration-${iteration}.json`, {
         requested: settings,
         read_back: readBack.develop_settings,
@@ -198,7 +335,7 @@ async function executePlan(
       current = readBack;
       await session.transition("RENDERING", { iteration });
       const render = await options.backend.renderPreview(
-        photoId,
+        activePhotoId,
         join(session.dir, "renders", `iteration-${iteration}`),
       );
       await session.writeJson(`render-iteration-${iteration}.json`, render);
@@ -484,6 +621,10 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
     );
     await options.backend.connect();
     connected = true;
+    const backendManifest = await requireBackendHandshake(options.backend, RECOVERY_OPERATIONS);
+    await session.updateManifest({
+      backend: { name: backendManifest.backend, version: backendManifest.version },
+    });
     const current = await options.backend.readCurrentEdit(photoId);
     if (!samePath(current.path, session.currentManifest.source.raw_path)) {
       throw new Error(
