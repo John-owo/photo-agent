@@ -1164,3 +1164,14 @@ Cloud-analyzer checkpoint:
   eight gate-parent issues are excluded. The v0.1 gate's four direct PhotoAgent
   children are locally 2/4 complete (T06/T07 done; T08/T09 pending), but the gate
   itself remains open and must not be represented as accepted.
+
+## 2026-08-30 - authorized GitHub branch publication
+
+- User explicitly authorized pushing the current version to GitHub. The first
+  escalated non-force push was rejected locally by Git's dubious-ownership
+  guard; no PhotoAgent remote state changed in that failed attempt.
+- Retried with command-local
+  `-c safe.directory=D:/photo/_agent_workspace/git-worktrees/photo-agent-roadmap-integration`.
+  The retry created `origin/codex/roadmap-integration` and configured the local
+  branch to track it. No global Git configuration, force push, merge, issue
+  state, milestone, or pull request was changed.
