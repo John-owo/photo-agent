@@ -1146,3 +1146,21 @@ Cloud-analyzer checkpoint:
 - T07 is locally complete. Automated evidence covers Master/Copy separation and
   source-fixture immutability; no live PhotoAgent Develop mutation, GitHub push,
   issue closure, or creative visual acceptance is claimed.
+
+## 2026-08-30 - read-only roadmap progress audit
+
+- User requested a plain-language percentage and concrete feature summary.
+  Live read-only `gh issue list` queries confirmed 50 open / 0 closed issues in
+  `John-owo/photo-agent` and 11 open / 0 closed issues in
+  `John-owo/lightroom-mcp`: 61 tracked issues total, including eight cumulative
+  acceptance-gate parents and 53 implementation/verification tickets.
+- The first sandboxed GraphQL queries for both repositories failed with the
+  expected network access denial. Approved read-only retries succeeded. A later
+  pair of summary queries failed because PowerShell quoting split the complex
+  `--jq` expression; simpler open/closed count queries then succeeded.
+- Remote issue state therefore reports 0% closed because publication/closure
+  has not been authorized. Local verified work covers Lightroom T01-T04 and
+  PhotoAgent T06-T07: 6/61 (9.8%) of all tracked nodes or 6/53 (11.3%) when the
+  eight gate-parent issues are excluded. The v0.1 gate's four direct PhotoAgent
+  children are locally 2/4 complete (T06/T07 done; T08/T09 pending), but the gate
+  itself remains open and must not be represented as accepted.
