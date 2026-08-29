@@ -1175,3 +1175,12 @@ Cloud-analyzer checkpoint:
   The retry created `origin/codex/roadmap-integration` and configured the local
   branch to track it. No global Git configuration, force push, merge, issue
   state, milestone, or pull request was changed.
+- Post-push `git rev-parse '@{u}'` initially failed even though the remote branch
+  existed because this repository's intentionally narrow `remote.origin.fetch`
+  refspec only included `codex/v0.1-alpha`. A normal fetch therefore populated
+  only `FETCH_HEAD`, and the first `branch --set-upstream-to` attempt failed.
+- Fetched the exact roadmap ref into
+  `refs/remotes/origin/codex/roadmap-integration`, then added that one exact
+  branch to the local origin fetch refspec. Final local verification resolves
+  HEAD and upstream to `95db02c0e62ee9ac2195b7b17b3ff8fa59f1ca60` and reports
+  a clean branch tracking `origin/codex/roadmap-integration`.
