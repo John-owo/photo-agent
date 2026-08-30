@@ -1378,3 +1378,473 @@ Cloud-analyzer checkpoint:
   execution context. No remote change resulted. The same read-only query is
   being rerun with the command-local `safe.directory` override; no global Git
   configuration will be changed.
+
+## 2026-08-30 - T09 continuation baseline
+
+- Read the supplied handoff at
+  `C:\Users\John\AppData\Local\Temp\codex-handoff-20260830-t08.md`.
+  T09 was not started there; the active clean worktree is
+  `D:\photo\_agent_workspace\git-worktrees\photo-agent-roadmap-integration`
+  on `codex/roadmap-t09` at `4b74878`.
+- Read-only `gh issue view 14 --repo John-owo/photo-agent` confirmed the
+  `[T09] Produce the v0.1 clean-clone and live evidence pack` scope: clean-clone
+  CI must install/check/build/test and run the documented example; live
+  Lightroom E2E plus human render inspection must use a non-critical photo and
+  record source preservation; preset export remains experimental until a real
+  export/re-import round trip passes. The first sandboxed query was denied by
+  network policy; the approved read-only retry returned the issue unchanged.
+- Baseline `git status --short --branch` was clean at `codex/roadmap-t09` with
+  HEAD `4b74878`.
+- Baseline `npm.cmd run check`, `npm.cmd run lint`,
+  `npm.cmd test -- tests/workflow.test.ts` (29 tests), and
+  `npm.cmd run build` all passed. Existing CI runs install/check/lint/test/build
+  but does not run a documented example. No photo, catalog, sidecar, or
+  configured `D:\photo\lightroom-mcp-john` checkout was modified.
+
+## 2026-08-30 - T09 clean-clone smoke implementation
+
+- Added `npm run example`, CI execution after build, and
+  `examples/run-example.mjs`. The example creates synthetic files only in the
+  OS temporary directory, runs the built mock single-photo workflow, checks the
+  `ACCEPTED` state and render, verifies source bytes, and cleans up.
+- Post-change `npm.cmd run check` and `npm.cmd run build` passed.
+- The first post-change `npm.cmd run lint` failed on five undeclared Node
+  globals in the new `.mjs` runner (`URL`, `process`, `Buffer`, and `console`).
+  No runtime example was counted from that attempt; the runner will import the
+  required `node:` bindings explicitly before the next verification.
+
+## 2026-08-30 - T09 clean-clone smoke lint repair
+
+- Explicit `node:` imports removed the lint diagnostics; the follow-up
+  `npm.cmd run lint` passed.
+- The first runtime `npm.cmd run example` failed before the workflow because
+  `node:console` has no named `console` export in the available Node runtime.
+  No source or photo data was involved. The runner will write its final JSON
+  through the already imported `process` binding instead.
+
+## 2026-08-30 - T09 clean-clone smoke path green
+
+- Replaced the unsupported `node:console` binding with `process.stdout`; the
+  runner now passes the strict lint/runtime boundary.
+- Follow-up `npm.cmd run lint` passed.
+- `npm.cmd run example` passed: the built CLI reached `ACCEPTED`, produced a
+  mock render, confirmed source fixtures were byte-identical, and removed its
+  OS-temporary fixture directory. No external backend or photo data was used.
+- Added the T09 evidence pack, linked it from both READMEs, and updated the v0.1
+  implementation status to distinguish CI automation from the still-manual
+  Lightroom, human-render, and preset round-trip gates.
+
+## 2026-08-30 - T09 post-change verification checkpoint
+
+- Full `npm.cmd test` passed: 3 Vitest files / 56 tests.
+- `git diff --check` passed with only the repository's known LF-to-CRLF
+  normalization warnings.
+- Targeted `npx.cmd prettier --check` over the T09 documentation/configuration
+  scope reported seven existing-style files, including the newly touched
+  README/config files and the new evidence document. The new runner itself was
+  not reported. No whole-file line-ending normalization or unrelated bulk
+  formatting was applied because the repository retains a known broad format
+  baseline failure.
+- Read-only runtime preflight found no Lightroom process and no listener on
+  ports 58763/58764 in this environment; no live UI/MCP/catalog/photo action
+  was attempted.
+
+## 2026-08-30 - T09 evidence-pack formatting
+
+- Ran `npx.cmd prettier --write docs/acceptance/t09-clean-clone-and-live-evidence.md`
+  only on the new evidence document; it completed successfully. Existing
+  repository files were not normalized.
+
+## 2026-08-30 - T09 pre-commit verification
+
+- Final pre-commit `npm.cmd run check`, `npm.cmd run lint`, full
+  `npm.cmd test` (3 files / 56 tests), `npm.cmd run build`, and
+  `npm.cmd run example` all passed.
+- The new `examples/run-example.mjs` and T09 evidence pack both passed the
+  targeted Prettier check.
+- Final pre-commit `git diff --check` passed with only the known LF-to-CRLF
+  normalization warnings. The example again reported `ACCEPTED`, a readable
+  mock render, and unchanged source fixtures.
+
+## 2026-08-30 - T09 staged-scope audit
+
+- Staged exactly the T09 CI, example, documentation, package-script, evidence,
+  and append-only work-log paths. `git diff --cached --check` passed, and the
+  staged summary reported 9 files / 314 added lines / 1 deletion. No source
+  image, Lightroom checkout, or unrelated repository path was staged.
+- Manual staged-diff review found the live Lightroom and human-render clauses
+  intentionally remain pending external gates; no historical artifact was
+  relabelled as current T09 E2E evidence.
+
+## 2026-08-30 - T09 clean-clone dependency preflight
+
+- Created a fresh detached worktree at
+  `D:\photo\_agent_workspace\git-worktrees\photo-agent-t09-clean-clone`
+  from commit `af5197b`.
+- The first clean-clone `npm.cmd ci` failed before dependency installation
+  because the pre-existing user npm cache returned `EPERM` while statting
+  `C:\Users\John\AppData\Local\npm-cache`. No tracked file or source/photo
+  data changed. The retry uses a task-local cache under `_agent_workspace`.
+
+## 2026-08-30 - T09 clean-clone dependency install
+
+- The task-local-cache retry reached the npm registry but failed with
+  `EACCES` while fetching `zod-to-json-schema`; the failure was environmental,
+  before a usable dependency tree existed. No tracked file changed.
+- An approved network retry of `npm.cmd ci --cache
+  D:\photo\_agent_workspace\runtime\npm-cache-t09` completed in the detached
+  clean-clone worktree: 247 packages added and 0 vulnerabilities reported.
+  npm emitted only its normal pending `esbuild` install-script warning.
+
+## 2026-08-30 - T09 detached clean-clone verification
+
+- In the fresh detached worktree at commit `af5197b`,
+  `npm.cmd run check`, `npm.cmd run lint`, full `npm.cmd test` (3 files / 56
+  tests), and `npm.cmd run build` all passed.
+- The same clean worktree then ran `npm.cmd run example` successfully. It
+  reached `ACCEPTED`, produced a mock render, confirmed byte-identical source
+  fixtures, and cleaned its temporary fixture directory.
+- Final clean-clone `git status --short --branch` was clean at `af5197b`.
+
+## 2026-08-30 - T09 review findings and repair
+
+- Full `npm.cmd run format:check` reported the known 45-file repository format
+  baseline (`.prettierrc`, existing source/tests/docs/configuration, and the
+  append-only work log); no bulk normalization was performed. Fixed-base
+  `git diff 4b74878...HEAD --check` passed, and the T09 branch was clean before
+  the review repair.
+- Parallel Standards review found one hard documentation violation: the live
+  procedure allowed a generic disposable directory outside `_agent_workspace`.
+  Spec review found that the smoke path did not exercise `recover`, the render
+  assertion checked only `stat`, and the live preservation checklist omitted
+  preview and delivery-folder state. It also identified the expected external
+  gaps: no hosted CI run and no current Lightroom/human/preset evidence.
+- Narrowed the live procedure to disposable directories inside
+  `_agent_workspace`, extended the clean-clone runner to create an `APPLYING`
+  session and invoke `recover`, strengthened render validation to regular,
+  non-empty, readable file checks, and expanded the source-preservation
+  checklist. The runner remains explicit that the recovery is simulated and
+  that no live evidence is invented.
+
+## 2026-08-30 - T09 review repair verification
+
+- After the review repair, `npm.cmd run check`, `npm.cmd run lint`,
+  `npm.cmd test -- tests/workflow.test.ts` (29 tests), and
+  `npm.cmd run build` passed.
+- The expanded `npm.cmd run example` passed with `ACCEPTED` plus
+  `REVIEW_REQUIRED` recovery, a non-empty readable render, a recovery report,
+  and byte-identical source fixtures.
+- `git diff --check` passed with only the known LF-to-CRLF warnings.
+- The first targeted Prettier check after expanding the runner failed only on
+  `examples/run-example.mjs`; `npx.cmd prettier --write` was applied to that
+  new runner only. The evidence pack itself remained formatted.
+
+## 2026-08-30 - T09 clean-clone documentation repair
+
+- Changed the Windows install commands in `README.md` and
+  `README.zh-TW.md` from `npm.cmd install` to reproducible `npm.cmd ci`,
+  matching the CI workflow and the acceptance evidence pack.
+
+## 2026-08-30 - T09 review repair final verification
+
+- After the documentation and smoke-path repair, `npm.cmd run check`,
+  `npm.cmd run lint`, `npm.cmd test -- tests/workflow.test.ts` (29 tests),
+  `npm.cmd run build`, and full `npm.cmd test` (3 files / 56 tests) passed.
+- `npm.cmd run example` passed with `ACCEPTED`, `REVIEW_REQUIRED` recovery,
+  a non-empty readable render, a JSON recovery artifact, and byte-identical
+  source fixtures.
+- Targeted `npx.cmd prettier --check examples/run-example.mjs
+  docs/acceptance/t09-clean-clone-and-live-evidence.md` passed.
+- Full `npm.cmd run format:check` still reports the known 45-file repository
+  baseline, including existing README, package, source, tests, and WORKLOG
+  files; no bulk formatting was applied. `git diff --check` passed with only
+  the known LF-to-CRLF warnings.
+
+## 2026-08-30 - T09 final detached clean-clone verification
+
+- Created detached worktree `D:\photo\_agent_workspace\git-worktrees\photo-agent-t09-clean-clone-final`
+  at commit `892126b` and installed the lockfile with `npm.cmd ci` using the
+  task-local npm cache: 247 packages added, 0 vulnerabilities reported.
+- In that clean clone, `npm.cmd run check`, `npm.cmd run lint`, full
+  `npm.cmd test` (3 files / 56 tests), `npm.cmd run build`, and
+  `npm.cmd run example` all passed. The example reported `ACCEPTED`,
+  `REVIEW_REQUIRED` recovery, a readable render, and preserved source bytes.
+- Final clean-clone `git status --short --branch` was clean at `892126b`; the
+  only npm output was the existing pending `esbuild` install-script warning.
+
+## 2026-08-30 - T09 Standards review follow-up
+
+- The second Standards review found that the example runner still used the OS
+  temp directory, which violated the workspace output rule. It also noted
+  duplicated CLI failure/JSON parsing logic. The runner now defaults to a
+  per-run directory under `_agent_workspace` for this configured worktree,
+  accepts `PHOTO_AGENT_EXAMPLE_ROOT` for a documented CI-safe override, and
+  uses one JSON subprocess helper.
+- CI sets `PHOTO_AGENT_EXAMPLE_ROOT` to `${{ runner.temp }}` for its ephemeral
+  environment. The README files and T09 evidence pack document both paths.
+- After this repair, `npm.cmd run check`, `npm.cmd run lint`, `npm.cmd run
+  build`, full `npm.cmd test` (3 files / 56 tests), default `npm.cmd run
+  example`, and the explicit CI-equivalent override example all passed.
+- Targeted Prettier checks for the runner and evidence pack passed. `git diff
+  --check` passed with only the known LF-to-CRLF warnings. The second Spec
+  review found no scope creep and retained hosted-CI, simulated-recovery,
+  Lightroom/human, and preset round-trip boundaries as partial or pending.
+
+## 2026-08-30 - T09 final review and clean-clone record
+
+- Final detached clean clone at commit `9270a2f` installed 247 packages with
+  `npm.cmd ci` using the task-local cache, then passed `npm.cmd run check`,
+  `npm.cmd run lint`, full `npm.cmd test` (3 files / 56 tests),
+  `npm.cmd run build`, and `npm.cmd run example`. The example reported
+  `ACCEPTED`, `REVIEW_REQUIRED` recovery, a readable render, and preserved
+  source bytes; its worktree remained clean.
+- Final Standards review passed with no new documented-standard violations or
+  baseline smells. Final Spec review found no scope creep or incorrect claims;
+  it confirmed the local implementation and the explicit boundary that
+  simulated recovery is not live crash/MCP-disconnect proof.
+- Hosted CI execution, live Lightroom E2E, human render inspection, live source
+  preservation, and real preset export/re-import remain pending external or
+  manual gates. No issue transition, merge, push, or Lightroom mutation was
+  performed in this pass.
+
+## 2026-08-30 - T09 final acceptance preflight
+
+- Read-only GitHub checks, with the required network escalation after the
+  sandbox socket restriction, returned no run for `codex/roadmap-t09`, no PR,
+  and Issue #14 still `OPEN`. A command-local `git ls-remote` found no remote
+  branch ref for `codex/roadmap-t09`; no push was performed.
+- Read-only Lightroom preflight found no Lightroom process and no listeners on
+  ports 58763/58764. The configured server/plugin files exist. A command-local
+  `safe.directory` inspection confirmed the separate
+  `D:\photo\lightroom-mcp-john` checkout is dirty on
+  `codex/project-boundary-docs` at `46d3543`; it was not modified.
+- Targeted recovery inspection confirmed `recoverSession` uses the read-only
+  reconciliation path and the two-file T08 regression run passed 46 tests.
+- Extended the T09 evidence pack with an explicit final acceptance matrix for
+  T09 AC1/AC2/AC3 and T08 live recovery, plus the current GitHub/Lightroom
+  blocker state. The matrix does not promote absent live evidence to PASS.
+
+## 2026-08-30 - T09 acceptance stop boundary
+
+- Committed the final acceptance matrix and preflight record as
+  `7449f25` (`docs: record T09 acceptance blockers`). Final branch status was
+  clean on `codex/roadmap-t09`; fixed-base `git diff 4b74878...HEAD --check`
+  passed.
+- Stopped at the external acceptance boundary: no hosted CI can run until the
+  branch is published, and no Lightroom evidence can be collected until
+  Lightroom Classic, the MCP plugin, and a non-critical validated test photo
+  are available for a human-supervised run.
+
+## 2026-08-30 - T09 hosted CI publication and first green run
+
+- Immediately before publication, `codex/roadmap-t09` was clean at
+  `e7d3ba492cbdc54ac5adeaf657bedb4de52fdbc0`. The first sandbox push failed
+  because outbound GitHub access was blocked; the authorized normal
+  non-force retry succeeded and created the remote branch.
+- Read-only GitHub status showed no PR and started hosted CI run
+  `33316341500` for `e7d3ba4`. `gh run watch --exit-status` completed green in
+  23 seconds: `npm ci`, check, lint, test, build, and example all passed.
+  GitHub emitted only the Node.js 20 deprecation annotation for the v4 action
+  wrappers. No force push, merge, issue transition, or PR creation occurred.
+- Updated the evidence pack final matrix: T09 AC1 is now PASS based on the
+  hosted run; T09 AC2 and T08 live recovery remain blocked on Lightroom.
+
+## 2026-08-30 - T09 hosted CI evidence update verification
+
+- Pushed the evidence-pack update as `ba4444c` with a normal non-force push.
+  Hosted run `33316433174` completed successfully for that exact commit;
+  install, check, lint, test, build, and example all passed.
+- The only hosted annotation remains GitHub's Node.js 20 deprecation notice
+  for the v4 checkout/setup actions. No code, photo, Lightroom checkout, PR,
+  or issue state was changed by this verification.
+
+## 2026-08-30 - T09 latest hosted CI verification
+
+- The final published worklog commit `d9cd945` triggered hosted run
+  `33316474321`, which completed successfully. Its install, check, lint, test,
+  build, and example steps all passed; the same Node.js 20 deprecation notice
+  was the only annotation.
+
+## 2026-08-30 - T09 hosted evidence-pack verification
+
+- Added the hosted CI run link and result to the final acceptance matrix,
+  changed T09 AC1 to PASS, and kept AC2 and T08 live recovery blocked.
+- Targeted `npx.cmd prettier --check
+  docs/acceptance/t09-clean-clone-and-live-evidence.md` passed. `git diff
+  --check` passed with only the known LF-to-CRLF warnings.
+
+## 2026-08-30 - T09 live Lightroom connectivity check
+
+- With Lightroom Classic open, process `Lightroom.exe` was present and
+  `netstat -ano` showed the plugin listening on request port `58763` and
+  response port `58764`.
+- The read-only direct TCP probe `node manual-test.mjs ping '{}'` connected to
+  both ports, but the plugin log recorded `Auth failed (token mismatch)` for
+  the probe request. No successful MCP/plugin handshake or Lightroom metadata
+  read is claimed.
+- This confirms that an LRC plugin is running, but the active plugin instance
+  is not authenticated with the probe/server token. No photo, Master, catalog,
+  or configuration mutation was performed.
+- Post-check `git status --short --branch` and `git diff --check` passed; the
+  only worktree change is this append-only `WORKLOG.md` entry. Git emitted only
+  the known LF-to-CRLF normalization warning.
+
+## 2026-08-30 - T09 live backend follow-up
+
+- After the user reported the Lightroom setup was resolved, the selected
+  plugin status showed `Running: true`, but both `Request socket connected` and
+  `Response socket connected` were still `false`.
+- A second read-only `node manual-test.mjs ping '{}'` reached both ports, then
+  the plugin log recorded `Auth failed (token mismatch)` and closed the probe
+  connection. No MCP handshake, metadata read, or mutation is claimed.
+- Starting the configured integration `server\dist\index.js` was blocked by
+  its existing bridge lock reporting PID `8988`. Read-only `Get-Process` and
+  `tasklist` checks found no such process; the lock was not removed or altered.
+- No photo, Master, catalog, plugin source, configuration, or Lightroom
+  application state was changed by this follow-up.
+
+## 2026-08-30 - T09 duplicate Lightroom plugin instance repair
+
+- Computer Use inspected the live Lightroom Plug-in Manager and confirmed two
+  Lightroom MCP entries: the intended integration plug-in at
+  `D:\photo\_agent_workspace\git-worktrees\lightroom-mcp-roadmap-integration\plugin\LightroomMCP.lrplugin`
+  was disabled, while the older Roaming copy at
+  `C:\Users\John\AppData\Roaming\Adobe\Lightroom\Modules\LightroomMCP.lrplugin`
+  was enabled.
+- Disabled the older Roaming plug-in, enabled the integration plug-in, and
+  clicked `Start Server`. The visible status dialog reported `Running: true`,
+  and the log recorded a new token plus successful request/response binds on
+  ports 58763/58764 at 22:39:31. Neither plug-in bundle was deleted.
+- The repository `manual-test.mjs` probe still sent authentication as a
+  separate hello frame, while the current plug-in validates `hello` on every
+  request; that stale probe consequently reproduced `token mismatch`. A
+  generated read-only verification probe at
+  `D:\photo\_agent_workspace\lightroom\verification\t09-plugin-switch-20260830\ping-per-message.mjs`
+  followed the current per-message contract and returned `{"pong":true}`.
+  This proves live plug-in reachability/authentication only, not full PhotoAgent
+  live E2E or a creative render acceptance.
+- Closing Plug-in Manager caused one click-through selection change to
+  `DSC_5652.NEF`; Computer Use immediately restored the original selection and
+  a fresh accessibility readback confirmed exactly one selected photo,
+  `DSC_5343.NEF`. No Develop setting, photo, Master, catalog, sidecar, preview,
+  or export was modified.
+- Computer Use initially resolved the workspace's older `@oai/sky` 0.6.6 and
+  failed before UI input on its blocked `node:process` import. For this run only,
+  the bundled 0.6.24 package was copied into the already trusted workspace
+  runtime path. After UI verification, the original 0.6.6 package was restored
+  byte-for-path; the used newer copy remains recoverably archived as
+  `sky.new-0.6.24-used-20260830`. No Codex config was changed.
+- Final read-only verification showed Lightroom still listening on both ports,
+  the expected 22:39:31 integration start/bind log entries, and only this
+  append-only work-log change in the PhotoAgent worktree. `git diff --check`
+  exited 0 with only the known LF-to-CRLF warning.
+
+## 2026-08-30 - T09 live E2E and controlled interrupted-run recovery
+
+- Corrective evidence for the earlier probe entries: the checked-in
+  `lightroom-mcp-john\manual-test.mjs` sends authentication as a standalone
+  hello message, but the active integration plug-in requires per-message
+  authentication. Its `token mismatch` result is therefore stale-probe
+  behavior, not evidence that the intended integration server is unusable.
+- Started the integration worktree server `server\dist\index.js` and sent raw
+  MCP JSON-RPC `initialize`, `ping`, and `get_photo_metadata` calls. The live
+  server identified itself as `lightroom-mcp-server` `0.10.0`; ping and catalog
+  readback succeeded for Master `976310` and the T09 Copy `1011757`.
+- The first live PhotoAgent command used the real `lightroom` backend and the
+  integration server entry with the non-critical `DSC_5343.NEF` plus its
+  explicitly matching preview. It created Copy `1011757`, verified the
+  Copy/Master identity and inherited Develop state, applied the requested
+  `Exposure2012=0` / `Contrast2012=14`, read the values back from Lightroom,
+  exported one render, and ended `REVIEW_REQUIRED` because no visual evaluator
+  was configured. The session is under
+  `D:\photo\_agent_workspace\photo-jobs\t09-live-20260830-dsc5343\`.
+- Direct post-run catalog readback showed Master still `is_virtual_copy=false`
+  with its pre-run exposed Develop state unchanged. The Master's virtual-copy
+  count increased from the one pre-existing Copy to exactly two, including one
+  new T09 operation marker.
+- Post-run file verification passed: the RAW remained 19,126,784 bytes with
+  SHA-256 `E8BD9B1F59D5D0DFC431674E28BA981B548640BC32FBEAF8D569B6F4760E418A`
+  and unchanged creation/last-write timestamps; the matching preview remained
+  608,915 bytes with SHA-256
+  `69EB4B4331CA5C5203CFFF0D4B391AF11C6813522FEC831E4A9E1FC2B4F604D8` and
+  unchanged timestamps. The adjacent XMP sidecar remained absent.
+- The first render existed, was non-empty and readable, and was visually
+  checked by the agent. That observation is not human visual acceptance; the
+  required human gate remains pending.
+- A targeted artifact inspection initially attempted to read a non-existent
+  `events.jsonl` and exited 1 after printing the other artifacts. The durable
+  `session.log`, `state.json`, workflow-copy, checkpoint, readback, and render
+  artifacts were then inspected directly; no event log was treated as evidence.
+- For a real interruption test, the dedicated recovery root was confirmed
+  absent, then a second real Lightroom run was launched. After the mutation
+  and Develop readback completed, while the session was in `RENDERING`, the
+  PhotoAgent process and its MCP child process were terminated with their exact
+  PIDs. The resulting session retained the Copy and readback artifacts, and
+  Lightroom logged the subsequent client socket close. This is controlled real
+  process interruption plus MCP disconnect evidence, not a simulated state
+  edit and not a claim of a spontaneous Lightroom crash or network fault.
+- The terminated server left a lock containing a dead PID. It was moved, not
+  deleted or overwritten, to the per-run recovery evidence directory as
+  `bridge-58763-58764.lock.stale-backup`; source absence and backup existence
+  were verified.
+- The first recovery attempt from an incorrect, non-existent work directory
+  failed before execution with Windows `os error 267` (invalid directory).
+  The corrected `node dist\src\cli.js recover ... --backend lightroom` then
+  passed with `REVIEW_REQUIRED`. A second recovery of the same session also
+  passed with `REVIEW_REQUIRED`.
+- Both recovery reports were `evidence_status=consistent`, targeted exact Copy
+  `1011792`, read back `Exposure2012=0` / `Contrast2012=14`, and recorded
+  `copy_creation_retried=false` and `mutation_retried=false`. Final direct
+  catalog readback showed Master virtual-copy count exactly three (the prior
+  Copy plus the two T09 test Copies), with no fourth Copy after the second
+  recovery. This evidences exact-Copy reuse, duplicate prevention, and no blind
+  retry of the completed mutation.
+- Created the local audit index at
+  `D:\photo\_agent_workspace\lightroom\verification\t09-live-20260830-dsc5343\README.md`
+  and updated the committed T09 acceptance pack with the live evidence and
+  remaining human-gate boundary. Preset export remains
+  `experimental / not part of validated v0.1 guarantees`.
+- Post-update `git status --short --branch` and `git diff --check` showed only
+  the expected append-only worklog plus the T09 evidence-pack change; Git
+  emitted only the known LF-to-CRLF normalization warning.
+
+## 2026-08-30 - T09 post-evidence local verification
+
+- After updating the acceptance pack, `npm.cmd run check`, `npm.cmd run lint`,
+  `npm.cmd test`, `npm.cmd run build`, targeted `npx.cmd prettier --check`, and
+  `git diff --check` all passed. Vitest reported 3 test files and 56 tests
+  passed.
+- `npm.cmd run example` passed with `ACCEPTED`, simulated recovery
+  `REVIEW_REQUIRED`, a readable render, and `source_preserved=true`.
+- Final status remains limited to the intended `WORKLOG.md` and T09 acceptance
+  pack changes; no generated build or example fixture was added to the Git
+  worktree. Git emitted only the known LF-to-CRLF normalization warnings.
+
+## 2026-08-30 - T09 evidence publication and hosted CI
+
+- Committed the live evidence update as `43016a3`
+  (`docs: record T09 live acceptance evidence`). The first normal
+  `git push origin codex/roadmap-t09` was rejected by Git's dubious-ownership
+  guard before any remote write; a retry using a one-command
+  `safe.directory` override succeeded without changing global Git settings.
+- Hosted CI run [33318780835](https://github.com/John-owo/photo-agent/actions/runs/33318780835)
+  for commit `43016a38a95b8804a3ef6bd182b446b11d14027e` completed successfully.
+  Its verify job passed `npm ci`, check, lint, tests, build, and example. The
+  only annotation was GitHub's Node.js 20 deprecation notice for checkout/setup
+  action versions; no job step failed.
+- The remote branch is `origin/codex/roadmap-t09` at `43016a3`. No merge, PR,
+  or Issue #14 status change was performed.
+
+## 2026-08-30 - T09 human render gate and final acceptance
+
+- The user inspected the opened T09 render and confirmed `render PASS` at
+  2026-08-30 23:14:46 UTC+08:00. This is the required human visual evidence;
+  the agent's earlier readability check was not used as a substitute.
+- Updated the local Lightroom evidence index and the committed T09 acceptance
+  pack to record the human confirmation. T09 AC2 is now PASS; T09 AC1 remains
+  PASS, T09 AC3 remains PASS only as the documented experimental boundary, and
+  the controlled live T08 recovery items remain PASS.
+- With all required v0.1 evidence present, PhotoAgent v0.1 first phase is
+  eligible for formal completion. Preset export remains
+  `experimental / not part of validated v0.1 guarantees`; no stable preset
+  guarantee is claimed.

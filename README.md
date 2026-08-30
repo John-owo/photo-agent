@@ -85,12 +85,21 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
 Requires Node.js 24+.
 
 ```powershell
-npm.cmd install
+npm.cmd ci
 npm.cmd run check
 npm.cmd run lint
 npm.cmd test
 npm.cmd run build
+npm.cmd run example
 ```
+
+`npm.cmd run example` is the clean-clone smoke path. It generates synthetic
+RAW/preview fixtures in a per-run scratch directory under `_agent_workspace`,
+runs the documented single-photo workflow with the mock provider/backend,
+recovers a simulated interrupted session, verifies an `ACCEPTED` result,
+readable render, and recovery artifact, checks that both source fixtures remain
+byte-identical, and removes the per-run directory. Hosted CI supplies its
+ephemeral runner directory through `PHOTO_AGENT_EXAMPLE_ROOT`.
 
 ## Environment variables
 
@@ -130,6 +139,8 @@ either opt-in source, every image remains `review`. The OpenAI analyzer uses one
 structured request per preview asset and only a sanitized session copy. The
 shoot command does not write ratings, labels, edits, or source files. See the [v0.2 record](docs/implementation/v0.2.md)
 and [v0.3 record](docs/implementation/v0.3.md).
+
+For the v0.1 clean-clone and live-evidence boundary, see [the T09 evidence pack](docs/acceptance/t09-clean-clone-and-live-evidence.md).
 
 ## Codex-local run (default)
 
