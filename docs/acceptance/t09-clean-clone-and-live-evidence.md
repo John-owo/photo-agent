@@ -9,7 +9,8 @@ separates reproducible repository checks from Lightroom and human gates.
 | Gate                                          | Status in this implementation pass | Evidence                                                                                                                          |
 | --------------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | Clean-clone install, check, lint, test, build | Implemented                        | `.github/workflows/ci.yml` runs `npm ci`, `npm run check`, `npm run lint`, `npm test`, and `npm run build`.                       |
-| Documented single-photo example               | Implemented                        | `npm run example` runs `examples/run-example.mjs` after build.                                                                    |
+| Documented single-photo example               | Implemented                        | `npm run example` runs `examples/run-example.mjs` after build and includes a simulated interrupted-session recovery.              |
+| Interrupted-session recovery                  | Implemented in smoke path          | The example creates an `APPLYING` session, runs `recover`, requires `REVIEW_REQUIRED`, and checks for a recovery report.          |
 | Live Lightroom single-photo E2E               | Pending external/manual gate       | Must be run with Lightroom Classic and the intended MCP plug-in connected, using a non-critical photo.                            |
 | Human inspection of the resulting render      | Pending external/manual gate       | Inspect the Lightroom-rendered `renderPath` and record the observed subject, framing, corruption, and relevant color limitations. |
 | Preset export/re-import stability             | Experimental only                  | No stable preset claim is made until a real export and re-import round trip passes.                                               |
@@ -30,30 +31,34 @@ npm.cmd run example
 `npm run example` creates a non-delivery synthetic `.NEF` and a 1×1 JPEG in
 the operating system temporary directory, invokes the built CLI with
 `--backend mock --provider mock --apply --evaluator mock`, requires an
-`ACCEPTED` result and a readable render, checks that the source fixtures are
-byte-identical after the run, and removes the temporary directory. The fixture
-RAW is only a non-empty extension-validated test file; it is never presented as
-a real camera RAW or Lightroom proof.
+`ACCEPTED` result and a non-empty readable render, then creates an `APPLYING`
+session and invokes the documented `recover` command. Recovery must return
+`REVIEW_REQUIRED` with a JSON recovery artifact. The runner checks that the
+source fixtures are byte-identical after both paths and removes the temporary
+directory. The fixture RAW is only a non-empty extension-validated test file; it
+is never presented as a real camera RAW or Lightroom proof.
 
 ## Live Lightroom procedure
 
 The live gate must be run as a separate, explicitly recorded action:
 
 1. Choose an imported, non-critical RAW and an explicitly matching preview.
-2. Record the RAW hash, size, creation/last-write timestamps, adjacent sidecar
-   state, and the Master Develop read-back before the run.
+2. Record the RAW and matching preview hashes, sizes, creation/last-write
+   timestamps, adjacent sidecar state, delivery-folder state, and the Master
+   Develop read-back before the run.
 3. Confirm that the intended Lightroom MCP plug-in is connected and that the
    backend handshake advertises the required operations.
 4. Build the repository, then run the single-photo command with the Lightroom
-   backend and an explicit apply choice. Keep the session and render under
-   `_agent_workspace` or another disposable review directory.
+   backend and an explicit apply choice. Keep the session and render under a
+   disposable directory inside `_agent_workspace` only.
 5. Read back the resulting Workflow Copy, checkpoint, Develop settings, and
    render. Do not treat `REVIEW_REQUIRED` caused by the absence of an evaluator
    as a failed safety result; it is the expected terminal state for a live
    run that only proves apply/read-back/render.
 6. Inspect the rendered JPEG manually and record what was actually seen.
-7. Re-check the original RAW hash, size, timestamps, sidecar state, and Master
-   Develop settings. Any mismatch stops the acceptance and requires review.
+7. Re-check the original RAW and preview hashes, sizes, timestamps, sidecar
+   state, delivery-folder state, and Master Develop settings. Any mismatch
+   stops the acceptance and requires review.
 
 Suggested safe command shape (replace placeholders with a verified pair):
 

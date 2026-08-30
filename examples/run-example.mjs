@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
@@ -8,6 +8,8 @@ import { fileURLToPath, URL } from "node:url";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const { writeFixtureJpeg } = await import("../dist/src/preview.js");
+const { ingestPair } = await import("../dist/src/ingest.js");
+const { SessionStore } = await import("../dist/src/runtime.js");
 const exampleRoot = await mkdtemp(join(tmpdir(), "photo-agent-example-"));
 
 function runCli(args) {
@@ -79,7 +81,38 @@ try {
   if (typeof result.renderPath !== "string") {
     throw new Error("clean-clone example did not return a render path");
   }
-  await stat(result.renderPath);
+  const render = await stat(result.renderPath);
+  if (!render.isFile() || render.size === 0) {
+    throw new Error("clean-clone example did not produce a non-empty render file");
+  }
+  await readFile(result.renderPath);
+
+  const source = await ingestPair(rawPath, previewPath);
+  const interrupted = await SessionStore.create(sessionRoot, source, "mock");
+  await interrupted.transition("ANALYZING");
+  await interrupted.transition("PLAN_READY");
+  await interrupted.transition("APPLYING");
+  const recoveryRun = await runCli(["recover", "--session", interrupted.dir, "--backend", "mock"]);
+  if (recoveryRun.code !== 0) {
+    throw new Error(
+      `clean-clone recovery example failed with code ${recoveryRun.code ?? "null"}\n${
+        recoveryRun.stderr
+      }\n${recoveryRun.stdout}`,
+    );
+  }
+  let recovery;
+  try {
+    recovery = JSON.parse(recoveryRun.stdout);
+  } catch (error) {
+    throw new Error(`clean-clone recovery returned invalid JSON: ${error}\n${recoveryRun.stdout}`);
+  }
+  if (recovery.state !== "REVIEW_REQUIRED") {
+    throw new Error(`clean-clone recovery did not stop for review: ${JSON.stringify(recovery)}`);
+  }
+  const recoveryArtifacts = await readdir(join(recovery.sessionDir, "recovery"));
+  if (!recoveryArtifacts.some((name) => name.endsWith(".json"))) {
+    throw new Error("clean-clone recovery did not write a recovery report");
+  }
 
   const rawAfter = await readFile(rawPath);
   const previewAfter = await readFile(previewPath);
@@ -92,6 +125,7 @@ try {
       {
         example: "single-photo",
         state: result.state,
+        recovery_state: recovery.state,
         render: result.renderPath,
         source_preserved: true,
         external_backend: false,

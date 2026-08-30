@@ -1505,3 +1505,57 @@ Cloud-analyzer checkpoint:
   reached `ACCEPTED`, produced a mock render, confirmed byte-identical source
   fixtures, and cleaned its temporary fixture directory.
 - Final clean-clone `git status --short --branch` was clean at `af5197b`.
+
+## 2026-08-30 - T09 review findings and repair
+
+- Full `npm.cmd run format:check` reported the known 45-file repository format
+  baseline (`.prettierrc`, existing source/tests/docs/configuration, and the
+  append-only work log); no bulk normalization was performed. Fixed-base
+  `git diff 4b74878...HEAD --check` passed, and the T09 branch was clean before
+  the review repair.
+- Parallel Standards review found one hard documentation violation: the live
+  procedure allowed a generic disposable directory outside `_agent_workspace`.
+  Spec review found that the smoke path did not exercise `recover`, the render
+  assertion checked only `stat`, and the live preservation checklist omitted
+  preview and delivery-folder state. It also identified the expected external
+  gaps: no hosted CI run and no current Lightroom/human/preset evidence.
+- Narrowed the live procedure to disposable directories inside
+  `_agent_workspace`, extended the clean-clone runner to create an `APPLYING`
+  session and invoke `recover`, strengthened render validation to regular,
+  non-empty, readable file checks, and expanded the source-preservation
+  checklist. The runner remains explicit that the recovery is simulated and
+  that no live evidence is invented.
+
+## 2026-08-30 - T09 review repair verification
+
+- After the review repair, `npm.cmd run check`, `npm.cmd run lint`,
+  `npm.cmd test -- tests/workflow.test.ts` (29 tests), and
+  `npm.cmd run build` passed.
+- The expanded `npm.cmd run example` passed with `ACCEPTED` plus
+  `REVIEW_REQUIRED` recovery, a non-empty readable render, a recovery report,
+  and byte-identical source fixtures.
+- `git diff --check` passed with only the known LF-to-CRLF warnings.
+- The first targeted Prettier check after expanding the runner failed only on
+  `examples/run-example.mjs`; `npx.cmd prettier --write` was applied to that
+  new runner only. The evidence pack itself remained formatted.
+
+## 2026-08-30 - T09 clean-clone documentation repair
+
+- Changed the Windows install commands in `README.md` and
+  `README.zh-TW.md` from `npm.cmd install` to reproducible `npm.cmd ci`,
+  matching the CI workflow and the acceptance evidence pack.
+
+## 2026-08-30 - T09 review repair final verification
+
+- After the documentation and smoke-path repair, `npm.cmd run check`,
+  `npm.cmd run lint`, `npm.cmd test -- tests/workflow.test.ts` (29 tests),
+  `npm.cmd run build`, and full `npm.cmd test` (3 files / 56 tests) passed.
+- `npm.cmd run example` passed with `ACCEPTED`, `REVIEW_REQUIRED` recovery,
+  a non-empty readable render, a JSON recovery artifact, and byte-identical
+  source fixtures.
+- Targeted `npx.cmd prettier --check examples/run-example.mjs
+  docs/acceptance/t09-clean-clone-and-live-evidence.md` passed.
+- Full `npm.cmd run format:check` still reports the known 45-file repository
+  baseline, including existing README, package, source, tests, and WORKLOG
+  files; no bulk formatting was applied. `git diff --check` passed with only
+  the known LF-to-CRLF warnings.

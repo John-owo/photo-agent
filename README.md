@@ -85,7 +85,7 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
 Requires Node.js 24+.
 
 ```powershell
-npm.cmd install
+npm.cmd ci
 npm.cmd run check
 npm.cmd run lint
 npm.cmd test
@@ -95,9 +95,10 @@ npm.cmd run example
 
 `npm.cmd run example` is the clean-clone smoke path. It generates synthetic
 RAW/preview fixtures outside the repository, runs the documented single-photo
-workflow with the mock provider/backend, verifies an `ACCEPTED` result and a
-render artifact, checks that both source fixtures remain byte-identical, and
-removes the temporary directory.
+workflow with the mock provider/backend, recovers a simulated interrupted
+session, verifies an `ACCEPTED` result, readable render, and recovery artifact,
+checks that both source fixtures remain byte-identical, and removes the
+temporary directory.
 
 ## Environment variables
 

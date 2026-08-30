@@ -55,7 +55,7 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
 需要 Node.js 24 以上：
 
 ```powershell
-npm.cmd install
+npm.cmd ci
 npm.cmd run check
 npm.cmd run lint
 npm.cmd test
@@ -65,8 +65,8 @@ npm.cmd run example
 
 `npm.cmd run example` 是 clean clone 的 smoke 測試：它會在 repository 外的
 作業系統暫存目錄建立合成 RAW／預覽圖，使用 mock provider/backend 執行文件中
-記載的單張流程，確認結果為 `ACCEPTED` 且 render 存在，驗證兩個來源 fixture
-仍逐 byte 相同，最後刪除暫存目錄。
+記載的單張流程，恢復一個模擬中斷的 session，確認結果為 `ACCEPTED`、render
+與 recovery report 都存在，驗證兩個來源 fixture 仍逐 byte 相同，最後刪除暫存目錄。
 
 ## 環境變數
 

@@ -2,8 +2,9 @@
 
 After building, run the clean-clone smoke example. It creates synthetic files
 in the OS temporary directory, exercises the documented single-photo CLI with
-the mock provider/backend, checks the render artifact, verifies both source
-fixtures are unchanged, and removes the temporary directory:
+the mock provider/backend, recovers a simulated interrupted session, checks the
+render and recovery artifacts, verifies both source fixtures are unchanged, and
+removes the temporary directory:
 
 ```powershell
 npm.cmd run build
