@@ -2189,6 +2189,9 @@ Cloud-analyzer checkpoint:
 - Staged the intended T18-T25 source, test, docs, and worklog files explicitly;
   `git diff --cached --check` passed with no whitespace errors and the staged
   stat contains 12 files, including the two new metadata/grouping modules.
+- Created local commit `32ddd4d` (`feat: harden shoot culling and propagation`)
+  containing the T18-T25 implementation, tests, docs, and this worklog. No
+  push, merge, issue closure, or milestone update was performed.
 - `npx.cmd prettier --check src\\batch-edit.ts tests\\milestones.test.ts`
   passed with exit code 0.
 - Re-ran the T24 boundary after adding plan-scope validation: `npm.cmd run
