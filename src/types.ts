@@ -7,9 +7,17 @@ import type {
   BackendPhotoStateSchema,
   CheckpointEvidenceSchema,
   CullingDecisionSchema,
+  EvaluationArtifactSchema,
   EvaluationResultSchema,
+  FinalExportSettingsSchema,
+  IterationReportRecordSchema,
+  IterationReportSchema,
   LightingClassificationSchema,
   NormalizedEditPlanSchema,
+  NormalizedParameter,
+  NormalizedOperationSchema,
+  PreviewArtifactSchema,
+  PreviewPolicySchema,
   SemanticIntentPlanSchema,
   SessionManifestSchema,
   ShootAssetSchema,
@@ -30,6 +38,8 @@ import type {
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
 export type SemanticIntentPlan = z.infer<typeof SemanticIntentPlanSchema>;
 export type NormalizedEditPlan = z.infer<typeof NormalizedEditPlanSchema>;
+export type { NormalizedParameter };
+export type NormalizedOperation = z.infer<typeof NormalizedOperationSchema>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;
@@ -42,6 +52,12 @@ export type WorkflowCopyIntent = z.infer<typeof WorkflowCopyIntentSchema>;
 export type WorkflowCopyResult = z.infer<typeof WorkflowCopyResultSchema>;
 export type WorkflowCopyVerification = z.infer<typeof WorkflowCopyVerificationSchema>;
 export type EvaluationResult = z.infer<typeof EvaluationResultSchema>;
+export type EvaluationArtifact = z.infer<typeof EvaluationArtifactSchema>;
+export type PreviewArtifact = z.infer<typeof PreviewArtifactSchema>;
+export type PreviewPolicy = z.infer<typeof PreviewPolicySchema>;
+export type FinalExportSettings = z.infer<typeof FinalExportSettingsSchema>;
+export type IterationReportRecord = z.infer<typeof IterationReportRecordSchema>;
+export type IterationReport = z.infer<typeof IterationReportSchema>;
 export type CullingDecision = z.infer<typeof CullingDecisionSchema>;
 export type LightingClassification = z.infer<typeof LightingClassificationSchema>;
 export type ShootAsset = z.infer<typeof ShootAssetSchema>;
@@ -123,6 +139,11 @@ export type BackendAdapter = {
     settings: Record<string, number | string | boolean>,
   ): Promise<unknown>;
   renderPreview(photoId: string, destination: string): Promise<RenderResult>;
+  exportFinal?(
+    photoId: string,
+    destination: string,
+    settings: FinalExportSettings,
+  ): Promise<RenderResult>;
 };
 
 export type EvaluationInput = {

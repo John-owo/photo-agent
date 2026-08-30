@@ -37,6 +37,8 @@ export const NORMALIZED_PARAMETERS = [
   "saturation",
 ] as const;
 
+export type NormalizedParameter = (typeof NORMALIZED_PARAMETERS)[number];
+
 export const SemanticAdjustmentSchema = z.object({
   parameter: z.enum(SEMANTIC_PARAMETERS),
   direction,
@@ -54,7 +56,7 @@ export const SemanticIntentPlanSchema = z.object({
 
 export const NormalizedOperationSchema = z.object({
   parameter: z.enum(NORMALIZED_PARAMETERS),
-  mode: z.literal("delta"),
+  mode: z.enum(["delta", "absolute"]),
   value: z.number().finite(),
   confidence: z.number().min(0).max(1),
   rationale: z.string().min(1).max(500),
@@ -62,37 +64,168 @@ export const NormalizedOperationSchema = z.object({
 
 export const NormalizedEditPlanSchema = z.object({
   schema_version: z.literal(SCHEMA_VERSION),
+  parameter_registry_version: z.string().min(1).optional(),
   operations: z.array(NormalizedOperationSchema).max(NORMALIZED_PARAMETERS.length),
   warnings: z.array(z.string().min(1).max(500)),
 });
 
-export const EvaluationResultSchema = z
+const EvaluationResultFieldsSchema = z.object({
+  schema_version: z.literal("0.2.0"),
+  verdict: z.enum(["accept", "refine", "review"]),
+  confidence: z.number().min(0).max(1),
+  rationale: z.string().min(1).max(2000),
+  issues: z.array(z.string().min(1).max(500)),
+  refinement_plan: NormalizedEditPlanSchema.optional(),
+  usage: z
+    .object({
+      evaluator_calls: z.number().int().nonnegative().default(1),
+      input_tokens: z.number().int().nonnegative().optional(),
+      output_tokens: z.number().int().nonnegative().optional(),
+      total_tokens: z.number().int().nonnegative().optional(),
+      estimated_cost_usd: z.number().nonnegative().optional(),
+    })
+    .optional(),
+});
+
+function requireRefinementPlan(
+  value: { verdict: "accept" | "refine" | "review"; refinement_plan?: unknown },
+  context: z.RefinementCtx,
+): void {
+  if (value.verdict === "refine" && !value.refinement_plan) {
+    context.addIssue({
+      code: "custom",
+      path: ["refinement_plan"],
+      message: "refine verdict requires a refinement_plan",
+    });
+  }
+}
+
+export const EvaluationResultSchema =
+  EvaluationResultFieldsSchema.superRefine(requireRefinementPlan);
+
+const EvidenceLinkSchema = z
+  .object({
+    path: z.string().min(1),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
+export const EvaluationArtifactSchema = EvaluationResultFieldsSchema.extend({
+  iteration: z.number().int().positive(),
+  operation_id: z.string().min(1),
+  evidence: z
+    .object({
+      render: EvidenceLinkSchema,
+      preview: EvidenceLinkSchema,
+      backend_render: EvidenceLinkSchema,
+      plan: EvidenceLinkSchema,
+      readback: EvidenceLinkSchema,
+    })
+    .strict(),
+})
+  .strict()
+  .superRefine(requireRefinementPlan);
+
+export const PreviewArtifactSchema = z
+  .object({
+    schema_version: z.literal("0.1.0"),
+    artifact_id: z.string().min(1),
+    iteration: z.number().int().positive(),
+    path: z.string().min(1),
+    source_path: z.string().min(1),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    mime_type: z.literal("image/jpeg"),
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+    retention: z.literal("session"),
+    delivery_export: z.literal(false),
+  })
+  .strict();
+
+export const PreviewPolicySchema = z
+  .object({
+    schema_version: z.literal("0.1.0"),
+    artifact_kind: z.literal("session_preview_policy"),
+    preview: z
+      .object({
+        storage_root: z.literal("renders"),
+        naming: z.literal("renders/iteration-{n}/preview.jpg"),
+        format: z.literal("jpeg"),
+        max_width: z.literal(2048),
+        max_height: z.literal(2048),
+        quality: z.literal(85),
+        sanitized: z.literal(true),
+        retention: z.literal("session"),
+        cloud_transfer: z.literal("sanitized_only_with_explicit_opt_in"),
+      })
+      .strict(),
+    final_export: z
+      .object({
+        capability: z.literal("export_final"),
+        availability: z.literal("explicit_only"),
+        requires_explicit_destination: z.literal(true),
+        requires_delivery_settings: z.literal(true),
+        preview_is_not_final: z.literal(true),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const FinalExportSettingsSchema = z
+  .object({
+    format: z.enum(["jpeg", "png", "tiff"]),
+    quality: z.number().int().min(1).max(100),
+    width: z.number().int().positive(),
+    height: z.number().int().positive(),
+    filename: z
+      .string()
+      .min(1)
+      .max(255)
+      .refine(
+        (filename) => filename !== "." && filename !== ".." && !/[\\/]/.test(filename),
+        "filename must be a single file name",
+      ),
+  })
+  .strict();
+
+export const IterationReportRecordSchema = z
+  .object({
+    iteration: z.number().int().positive(),
+    operation_id: z.string().min(1),
+    state: z.enum(["REFINING", "ACCEPTED", "REVIEW_REQUIRED", "FAILED"]),
+    plan: EvidenceLinkSchema,
+    checkpoint: EvidenceLinkSchema.optional(),
+    readback: EvidenceLinkSchema.optional(),
+    backend_render: EvidenceLinkSchema.optional(),
+    preview: EvidenceLinkSchema.optional(),
+    evaluation: z
+      .object({
+        path: z.string().min(1),
+        verdict: z.enum(["accept", "refine", "review"]),
+        confidence: z.number().min(0).max(1),
+        rationale: z.string().min(1).max(2000),
+        issues: z.array(z.string().min(1).max(500)),
+      })
+      .strict()
+      .optional(),
+    error: z.string().min(1).optional(),
+  })
+  .strict();
+
+export const IterationReportSchema = z
   .object({
     schema_version: z.literal("0.2.0"),
-    verdict: z.enum(["accept", "refine", "review"]),
-    confidence: z.number().min(0).max(1),
-    rationale: z.string().min(1).max(2000),
-    issues: z.array(z.string().min(1).max(500)),
-    refinement_plan: NormalizedEditPlanSchema.optional(),
-    usage: z
-      .object({
-        evaluator_calls: z.number().int().nonnegative().default(1),
-        input_tokens: z.number().int().nonnegative().optional(),
-        output_tokens: z.number().int().nonnegative().optional(),
-        total_tokens: z.number().int().nonnegative().optional(),
-        estimated_cost_usd: z.number().nonnegative().optional(),
-      })
-      .optional(),
+    evaluator: z.string().nullable(),
+    iterations: z.number().int().nonnegative(),
+    evaluator_calls: z.number().int().nonnegative(),
+    total_tokens: z.number().int().nonnegative(),
+    estimated_cost_usd: z.number().nonnegative(),
+    elapsed_ms: z.number().int().nonnegative(),
+    terminal_state: z.enum(["REFINING", "ACCEPTED", "REVIEW_REQUIRED", "FAILED"]),
+    reason: z.string().min(1),
+    iteration_records: z.array(IterationReportRecordSchema),
   })
-  .superRefine((value, context) => {
-    if (value.verdict === "refine" && !value.refinement_plan) {
-      context.addIssue({
-        code: "custom",
-        path: ["refinement_plan"],
-        message: "refine verdict requires a refinement_plan",
-      });
-    }
-  });
+  .strict();
 
 export const SourceAssetPairSchema = z.object({
   raw_path: z.string().min(1),
@@ -178,10 +311,7 @@ export const DevelopIterationIntentSchema = z
     iteration: z.number().int().positive(),
     target: BackendPhotoIdentitySchema,
     checkpoint_name: z.string().min(1),
-    requested_settings: z.record(
-      z.string(),
-      z.union([z.number(), z.string(), z.boolean()]),
-    ),
+    requested_settings: z.record(z.string(), z.union([z.number(), z.string(), z.boolean()])),
   })
   .strict();
 
@@ -216,12 +346,7 @@ export const RecoveryEvidenceSchema = z
     schema_version: z.literal(SCHEMA_VERSION),
     recovered_at: z.string().datetime(),
     interrupted_state: z.string().min(1),
-    evidence_status: z.enum([
-      "consistent",
-      "contradictory",
-      "insufficient",
-      "readback_failed",
-    ]),
+    evidence_status: z.enum(["consistent", "contradictory", "insufficient", "readback_failed"]),
     reason: z.string().min(1),
     requested_photo_id: z.string().min(1).optional(),
     target_photo_id: z.string().min(1).optional(),
@@ -231,12 +356,7 @@ export const RecoveryEvidenceSchema = z
     checkpoint_artifacts: z.array(z.string().min(1)),
     operation_artifacts: z.array(z.string().min(1)),
     readback_artifacts: z.array(z.string().min(1)),
-    operation_evidence_status: z.enum([
-      "none",
-      "consistent",
-      "insufficient",
-      "contradictory",
-    ]),
+    operation_evidence_status: z.enum(["none", "consistent", "insufficient", "contradictory"]),
     invalid_artifacts: z.array(z.string().min(1)),
     read_back: BackendPhotoStateSchema.nullable(),
     copy_creation_reconciled: z.boolean(),
@@ -245,18 +365,20 @@ export const RecoveryEvidenceSchema = z
   })
   .strict();
 
-export const OperationSemanticsSchema = z.object({
-  supported: z.boolean(),
-  side_effect: z.enum(["read_only", "temporary", "mutating", "delivery_export"]),
-  idempotent: z.boolean(),
-  reversible: z.enum(["true_undo", "checkpoint_only", "new_file", "irreversible"]),
-  scope: z.enum(["photo", "selection", "catalog", "filesystem", "session"]),
-  requires_active_selection: z.boolean(),
-  requires_editor_foreground: z.boolean(),
-  concurrency: z.enum(["parallel_safe", "per_photo_serialized", "exclusive_backend"]),
-  retry_policy: z.enum(["automatic", "readback_before_retry", "manual_review_only"]),
-  safe_to_resume: z.boolean(),
-}).strict();
+export const OperationSemanticsSchema = z
+  .object({
+    supported: z.boolean(),
+    side_effect: z.enum(["read_only", "temporary", "mutating", "delivery_export"]),
+    idempotent: z.boolean(),
+    reversible: z.enum(["true_undo", "checkpoint_only", "new_file", "irreversible"]),
+    scope: z.enum(["photo", "selection", "catalog", "filesystem", "session"]),
+    requires_active_selection: z.boolean(),
+    requires_editor_foreground: z.boolean(),
+    concurrency: z.enum(["parallel_safe", "per_photo_serialized", "exclusive_backend"]),
+    retry_policy: z.enum(["automatic", "readback_before_retry", "manual_review_only"]),
+    safe_to_resume: z.boolean(),
+  })
+  .strict();
 
 export const SemverSchema = z
   .string()
@@ -445,6 +567,7 @@ export const ShootManifestSchema = z.object({
 
 export const PropagationPlanSchema = z.object({
   schema_version: z.literal("0.3.0"),
+  parameter_registry_version: z.string().min(1).optional(),
   cluster_id: z.string().min(1),
   representative_id: z.string().min(1),
   operation_parameters: z.array(z.enum(NORMALIZED_PARAMETERS)).min(1),

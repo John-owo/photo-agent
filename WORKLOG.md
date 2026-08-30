@@ -1848,3 +1848,88 @@ Cloud-analyzer checkpoint:
   eligible for formal completion. Preset export remains
   `experimental / not part of validated v0.1 guarantees`; no stable preset
   guarantee is claimed.
+
+## 2026-08-31 - T09 後 roadmap frontier audit
+
+- Read the active `codex/roadmap-t09` worktree state, the latest T08/T09
+  acceptance records, and the current GitHub issue graph without changing
+  code, photos, Lightroom, or issue state.
+- T08/T09 have local acceptance evidence, but GitHub issues #13 and #14 and
+  the v0.1 gate #4 remain open. Therefore the formal next closure sequence is
+  T06-T09, then T05 gate; no issue closure was performed in this audit.
+- After T05 closes, the unblocked implementation frontier is T11 (#15),
+  T13 (#17), and T16 (#19), which can proceed in parallel. T12 (#16) depends
+  on T11; T14 (#18) depends on T11, T12, and T13. T17 (#20) remains behind
+  the v0.2 gate #5.
+- Verification commands: `git worktree list --porcelain`, targeted `rg`,
+  local worktree/status/log reads, and read-only `gh issue list/view` for
+  `John-owo/photo-agent`; all returned successfully. Remote issues were only
+  read and remain open.
+- Post-audit verification: `git diff --check` passed with only the repository's
+  normal LF-to-CRLF warning; `git status --short --branch` showed only this
+  intended `WORKLOG.md` modification on `codex/roadmap-t09`.
+
+## 2026-08-31 - T11/T13/T16 implementation baseline
+
+- Read the exact GitHub acceptance criteria for T11 (#15), T13 (#17), and
+  T16 (#19) with read-only `gh issue view`; all three remain `OPEN` and are
+  blocked only by the open v0.1 gate #4 in the remote graph.
+- Read the workspace and project instructions, the current T09 worklog, and
+  the existing workflow, preview, translator, schema, backend, and milestone
+  test paths. No source, photo, Lightroom, or remote issue state was changed
+  during discovery.
+- Baseline verification passed on `codex/roadmap-t09`: `npm.cmd test` (3 files
+  / 56 tests), `npm.cmd run check`, `npm.cmd run lint`, and `npm.cmd run build`.
+  `git diff --check` also exited 0 with only the normal LF-to-CRLF warning.
+
+## 2026-08-31 - T11/T13/T16 implementation verification
+
+- The first targeted `npm.cmd test -- tests/next-tickets.test.ts` run exposed
+  two implementation gaps: semantic parameter names were not accepted by the
+  registry lookup, and the mock handshake did not advertise its explicit final
+  export capability. Both were corrected; the same targeted suite now passes
+  8/8 tests.
+- Added deterministic preview-policy and final-export documentation, a
+  versioned parameter-registry export, fail-closed unknown-asset handling, and
+  strict single-file-name validation for delivery settings. The checked-in
+  Lightroom capability reference does not claim final export because the live
+  adapter has no corresponding tool; the mock backend advertises it for seam
+  testing.
+- Verification passed: targeted `npx.cmd prettier --check` for all changed
+  source, test, and implementation-doc files; `npm.cmd run check`; and
+  `npm.cmd run lint`. The earlier targeted check failure was limited to
+  optional evidence-field narrowing in the new test and was corrected before
+  this pass.
+
+## 2026-08-31 - T11/T13/T16 full regression
+
+- Full verification passed on `codex/roadmap-t09`: `npm.cmd test` (4 test files
+  / 64 tests), `npm.cmd run check`, `npm.cmd run lint`, `npm.cmd run build`,
+  targeted `npx.cmd prettier --check` for every changed source/test/doc file,
+  and `git diff --check`.
+- No photo files, Lightroom catalog state, external issue state, commit, push,
+  merge, or issue closure was performed. The build only regenerated ignored
+  TypeScript output under `dist`.
+
+## 2026-08-31 - T11/T13/T16 safety-test follow-up
+
+- An initial broad `rg` verification command failed because its PowerShell
+  quoting produced an unclosed regular expression; the narrower targeted
+  search was rerun successfully and confirmed all new Registry, preview-policy,
+  final-export, and operation-mode references.
+- Added regression coverage for path-like final filenames and incompatible
+  parameter-registry versions. Targeted `npx.cmd prettier --write` and
+  `npm.cmd test -- tests/next-tickets.test.ts` passed (8/8 tests).
+- Final post-test verification passed: `npm.cmd test` (4 files / 64 tests),
+  `npm.cmd run check`, `npm.cmd run lint`, `npm.cmd run build`, targeted
+  Prettier check, and `git diff --check`; only the normal LF-to-CRLF warnings
+  were emitted by Git.
+- The staged change set also passed `git diff --cached --check` before the
+  local handoff commit.
+
+## 2026-08-31 - T11/T13/T16 local handoff
+
+- The verified implementation and its regression tests are captured in the
+  current local handoff commit on `codex/roadmap-t09`. No push, PR, merge,
+  remote issue closure, milestone update, photo change, or Lightroom action
+  was performed.

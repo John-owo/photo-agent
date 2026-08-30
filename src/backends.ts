@@ -1,4 +1,4 @@
-import { mkdir, readdir } from "node:fs/promises";
+import { access, mkdir, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -24,6 +24,7 @@ import type {
   BackendCapabilityManifest,
   BackendPhotoState,
   CheckpointResult,
+  FinalExportSettings,
   RenderResult,
   WorkflowCopyResult,
 } from "./types.js";
@@ -48,8 +49,7 @@ const SUPPORTED_DEVELOP_KEYS = [
 const PLUGIN_READY_TIMEOUT_MS = 10_000;
 const PLUGIN_READY_RETRY_MS = 250;
 export const LIGHTROOM_MCP_SERVER_NAME = "lightroom-mcp-server";
-export const OPERATION_SEMANTICS_META_KEY =
-  "io.github.john-owo.lightroom-mcp/operation-semantics";
+export const OPERATION_SEMANTICS_META_KEY = "io.github.john-owo.lightroom-mcp/operation-semantics";
 
 export const LIGHTROOM_TRUST_BOUNDARY = {
   transport: "localhost stdio -> Lightroom MCP local TCP bridge",
@@ -182,9 +182,24 @@ export const MOCK_CAPABILITIES = BackendCapabilityManifestSchema.parse({
     WORKFLOW_COPY_RECONCILIATION_OPERATION,
     "apply_global_adjustment",
     "render_preview",
+    "export_final",
     "create_checkpoint",
   ],
-  operations: LIGHTROOM_CAPABILITIES.operations,
+  operations: {
+    ...LIGHTROOM_CAPABILITIES.operations,
+    export_final: {
+      supported: true,
+      side_effect: "delivery_export",
+      idempotent: false,
+      reversible: "new_file",
+      scope: "filesystem",
+      requires_active_selection: false,
+      requires_editor_foreground: false,
+      concurrency: "exclusive_backend",
+      retry_policy: "manual_review_only",
+      safe_to_resume: false,
+    },
+  },
 });
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -288,7 +303,10 @@ export class MockBackend implements BackendAdapter {
     Saturation: 0,
   };
 
-  constructor(private readonly photoPath: string, manifestOrOptions?: unknown) {
+  constructor(
+    private readonly photoPath: string,
+    manifestOrOptions?: unknown,
+  ) {
     const options = asRecord(manifestOrOptions);
     const requestedIdentity = options.sourceIdentity;
     this.sourceIdentityMode =
@@ -317,7 +335,10 @@ export class MockBackend implements BackendAdapter {
   async handshake(): Promise<BackendCapabilityManifest> {
     if (!this.connected) throw new Error("Mock backend must connect before handshake");
     this.calls.push("handshake");
-    const manifest = validateBackendCapabilityManifest(this.advertisedManifest, MOCK_HANDSHAKE_REQUIREMENTS);
+    const manifest = validateBackendCapabilityManifest(
+      this.advertisedManifest,
+      MOCK_HANDSHAKE_REQUIREMENTS,
+    );
     this.negotiatedManifest = manifest;
     return manifest;
   }
@@ -502,6 +523,32 @@ export class MockBackend implements BackendAdapter {
     await writeFixtureJpeg(output);
     return { path: output, raw: { output } };
   }
+
+  async exportFinal(
+    photoId: string,
+    destination: string,
+    settings: FinalExportSettings,
+  ): Promise<RenderResult> {
+    this.requireOperation("export_final");
+    this.calls.push("export_final");
+    this.operationTargets.push(photoId);
+    if (settings.format !== "jpeg") {
+      throw new Error(`Mock backend only supports jpeg final export, received ${settings.format}`);
+    }
+    if (settings.filename.includes("/") || settings.filename.includes("\\")) {
+      throw new Error("Final export filename must not contain a path");
+    }
+    await mkdir(destination, { recursive: true });
+    const output = join(destination, settings.filename);
+    try {
+      await access(output);
+      throw new Error(`Final export refuses to overwrite existing file: ${output}`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    await writeFixtureJpeg(output);
+    return { path: output, raw: { output, settings } };
+  }
 }
 
 export class LightroomMcpAdapter implements BackendAdapter {
@@ -541,7 +588,8 @@ export class LightroomMcpAdapter implements BackendAdapter {
         args: [this.entryPath],
         stderr: "pipe",
       });
-    this.client = this.injectedClient ?? new Client({ name: "photo-agent", version: "0.3.0-alpha.0" });
+    this.client =
+      this.injectedClient ?? new Client({ name: "photo-agent", version: "0.3.0-alpha.0" });
     await this.client.connect(this.transport);
     this.negotiatedManifest = undefined;
     this.availableToolNames = new Set<string>();
@@ -606,10 +654,7 @@ export class LightroomMcpAdapter implements BackendAdapter {
       capabilities,
       operations,
     });
-    const validated = validateBackendCapabilityManifest(
-      manifest,
-      LIGHTROOM_HANDSHAKE_REQUIREMENTS,
-    );
+    const validated = validateBackendCapabilityManifest(manifest, LIGHTROOM_HANDSHAKE_REQUIREMENTS);
     this.availableToolNames = new Set(tools.keys());
     this.negotiatedManifest = validated;
     this.pluginReady = false;
@@ -719,10 +764,8 @@ export class LightroomMcpAdapter implements BackendAdapter {
         ? {
             catalog_id: source.catalog_id,
             uuid: source.uuid,
-            master_id:
-              typeof source.master_id === "string" ? source.master_id : masterId,
-            master_uuid:
-              typeof source.master_uuid === "string" ? source.master_uuid : masterUuid,
+            master_id: typeof source.master_id === "string" ? source.master_id : masterId,
+            master_uuid: typeof source.master_uuid === "string" ? source.master_uuid : masterUuid,
             is_virtual_copy: source.is_virtual_copy,
           }
         : undefined;
@@ -734,15 +777,12 @@ export class LightroomMcpAdapter implements BackendAdapter {
             catalog_id: masterId,
             uuid: masterUuid,
             master_id: typeof master.master_id === "string" ? master.master_id : masterId,
-            master_uuid:
-              typeof master.master_uuid === "string" ? master.master_uuid : masterUuid,
+            master_uuid: typeof master.master_uuid === "string" ? master.master_uuid : masterUuid,
             is_virtual_copy: master.is_virtual_copy,
           }
         : undefined;
-    const copyMasterId =
-      typeof copy.master_id === "string" ? copy.master_id : masterId;
-    const copyMasterUuid =
-      typeof copy.master_uuid === "string" ? copy.master_uuid : masterUuid;
+    const copyMasterId = typeof copy.master_id === "string" ? copy.master_id : masterId;
+    const copyMasterUuid = typeof copy.master_uuid === "string" ? copy.master_uuid : masterUuid;
     const copyIdentity =
       typeof copy.catalog_id === "string" &&
       typeof copy.uuid === "string" &&

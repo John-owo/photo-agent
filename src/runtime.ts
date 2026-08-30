@@ -3,6 +3,7 @@ import { mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promis
 import { dirname, join, resolve } from "node:path";
 
 import { SessionManifestSchema } from "./schemas.js";
+import { PREVIEW_POLICY } from "./preview.js";
 import type { JobState, SessionManifest, SourceAssetPair } from "./types.js";
 
 const TRANSITIONS: Record<JobState, readonly JobState[]> = {
@@ -171,7 +172,10 @@ export class SessionStore {
     await mkdir(join(dir, "renders"), { recursive: true });
     await mkdir(join(dir, "evaluations"), { recursive: true });
     await mkdir(join(dir, "checkpoints"), { recursive: true });
+    await mkdir(join(dir, "operations"), { recursive: true });
+    await mkdir(join(dir, "plans"), { recursive: true });
     await atomicJsonWrite(join(dir, "manifest.json"), manifest);
+    await atomicJsonWrite(join(dir, "preview-policy.json"), PREVIEW_POLICY);
     await atomicJsonWrite(join(dir, "state.json"), { state: store.state });
     await store.appendEvent("PENDING", { reason: "session_created" });
     return store;

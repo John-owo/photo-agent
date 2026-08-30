@@ -11,6 +11,7 @@ import {
 } from "./schemas.js";
 import { sha256File } from "./ingest.js";
 import { createSanitizedPreview } from "./preview.js";
+import { PARAMETER_REGISTRY_VERSION, selectPropagatableOperations } from "./parameter-registry.js";
 import type {
   CullingDecision,
   LightingClassification,
@@ -412,20 +413,6 @@ export async function runShootDryRun(options: {
   });
 }
 
-const SAFE_PROPAGATION_PARAMETERS = new Set([
-  "exposure_ev",
-  "contrast",
-  "highlights",
-  "shadows",
-  "whites",
-  "blacks",
-  "texture",
-  "clarity",
-  "dehaze",
-  "vibrance",
-  "saturation",
-]);
-
 export function createSafePropagationPlan(options: {
   manifest: ShootManifest;
   clusterId: string;
@@ -436,11 +423,9 @@ export function createSafePropagationPlan(options: {
   if (!cluster) throw new Error(`Unknown cluster: ${options.clusterId}`);
   if (!cluster.representative_id)
     throw new Error(`Cluster ${options.clusterId} has no representative`);
-  const explicitlyAllowed = new Set(options.allowedParameters);
-  const operations = options.representativePlan.operations.filter(
-    (operation) =>
-      explicitlyAllowed.has(operation.parameter) &&
-      SAFE_PROPAGATION_PARAMETERS.has(operation.parameter),
+  const operations = selectPropagatableOperations(
+    options.representativePlan,
+    options.allowedParameters,
   );
   if (operations.length === 0) {
     throw new Error("No explicitly allowed safe global operations remain for propagation");
@@ -453,7 +438,11 @@ export function createSafePropagationPlan(options: {
   const excluded: PropagationPlan["excluded"] = [];
   for (const assetId of cluster.member_ids) {
     if (assetId === cluster.representative_id) continue;
-    const asset = assetsById.get(assetId)!;
+    const asset = assetsById.get(assetId);
+    if (!asset) {
+      excluded.push({ asset_id: assetId, reason: "unknown_asset" });
+      continue;
+    }
     const decision = decisionsById.get(assetId);
     if (asset.source_confidence !== "high") {
       excluded.push({ asset_id: assetId, reason: `source_${asset.source_confidence}` });
@@ -469,6 +458,7 @@ export function createSafePropagationPlan(options: {
   }
   return PropagationPlanSchema.parse({
     schema_version: "0.3.0",
+    parameter_registry_version: PARAMETER_REGISTRY_VERSION,
     cluster_id: options.clusterId,
     representative_id: cluster.representative_id,
     operation_parameters: operations.map((operation) => operation.parameter),

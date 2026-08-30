@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 
 import { MIN_EVALUATION_CONFIDENCE, planFingerprint, renderFingerprint } from "./evaluation.js";
 import {
@@ -10,7 +10,7 @@ import {
   WORKFLOW_COPY_RECONCILIATION_OPERATION,
 } from "./backend-handshake.js";
 import { ingestPair } from "./ingest.js";
-import { createSanitizedPreview } from "./preview.js";
+import { createSanitizedPreview, materializePreviewArtifact } from "./preview.js";
 import {
   resolveLightroomSettings,
   translateIntent,
@@ -27,8 +27,11 @@ import { acquireMutationLock, SessionStore } from "./runtime.js";
 import {
   DevelopIterationIntentSchema,
   CheckpointEvidenceSchema,
+  EvaluationArtifactSchema,
   DevelopReadbackEvidenceSchema,
   EvaluationResultSchema,
+  IterationReportRecordSchema,
+  IterationReportSchema,
   RecoveryEvidenceSchema,
   WorkflowCopyIntentSchema,
   WorkflowCopyResultSchema,
@@ -42,6 +45,7 @@ import type {
   DevelopIterationIntent,
   DevelopReadbackEvidence,
   EditEvaluator,
+  IterationReportRecord,
   NormalizedEditPlan,
   ProviderResult,
   RecoveryEvidence,
@@ -55,6 +59,20 @@ import type {
 
 function samePath(left: string, right: string): boolean {
   return resolve(left).toLowerCase() === resolve(right).toLowerCase();
+}
+
+function sessionRelativePath(sessionDir: string, path: string): string {
+  return relative(sessionDir, path).split("\\").join("/");
+}
+
+type EvidenceLink = IterationReportRecord["plan"];
+
+async function evidenceLink(
+  sessionDir: string,
+  path: string,
+  relativePath = sessionRelativePath(sessionDir, path),
+): Promise<EvidenceLink> {
+  return { path: relativePath, sha256: await renderFingerprint(path) };
 }
 
 function sameDevelopSettings(
@@ -125,21 +143,19 @@ function workflowCopyResultIsComplete(result: WorkflowCopyResult): boolean {
   );
 }
 
-function supportsReadOnlyWorkflowCopyReconciliation(
-  manifest: BackendCapabilityManifest,
-): boolean {
+function supportsReadOnlyWorkflowCopyReconciliation(manifest: BackendCapabilityManifest): boolean {
   const semantics = manifest.operations[WORKFLOW_COPY_RECONCILIATION_OPERATION];
   return Boolean(
     manifest.capabilities.includes(WORKFLOW_COPY_RECONCILIATION_OPERATION) &&
-      semantics?.supported === true &&
-      semantics.side_effect === "read_only" &&
-      semantics.idempotent &&
-      semantics.scope === "catalog" &&
-      !semantics.requires_active_selection &&
-      !semantics.requires_editor_foreground &&
-      semantics.concurrency === "exclusive_backend" &&
-      semantics.retry_policy === "automatic" &&
-      semantics.safe_to_resume,
+    semantics?.supported === true &&
+    semantics.side_effect === "read_only" &&
+    semantics.idempotent &&
+    semantics.scope === "catalog" &&
+    !semantics.requires_active_selection &&
+    !semantics.requires_editor_foreground &&
+    semantics.concurrency === "exclusive_backend" &&
+    semantics.retry_policy === "automatic" &&
+    semantics.safe_to_resume,
   );
 }
 
@@ -243,6 +259,45 @@ async function executePlan(
   let sideEffectStarted = false;
   let unlock: (() => Promise<void>) | undefined;
   let connected = false;
+  const startedAt = Date.now();
+  let activeIteration = 0;
+  let activeRecord: Partial<IterationReportRecord> | undefined;
+  let iterationRecords: IterationReportRecord[] = [];
+  let evaluatorCalls = 0;
+  let totalTokens = 0;
+  let estimatedCostUsd = 0;
+  let evaluatorAttempted = false;
+
+  const finishReport = async (iterations: number, reason: string): Promise<void> => {
+    await session.writeJson(
+      "iteration-report.json",
+      IterationReportSchema.parse({
+        schema_version: "0.2.0",
+        evaluator: options.evaluator?.name ?? null,
+        iterations,
+        evaluator_calls: evaluatorCalls,
+        total_tokens: totalTokens,
+        estimated_cost_usd: Number(estimatedCostUsd.toFixed(6)),
+        elapsed_ms: Date.now() - startedAt,
+        terminal_state: session.currentState,
+        reason,
+        iteration_records: iterationRecords,
+      }),
+    );
+  };
+
+  const completeIteration = (
+    state: IterationReportRecord["state"],
+    extra: Partial<IterationReportRecord> = {},
+  ): void => {
+    if (!activeRecord) return;
+    iterationRecords = [
+      ...iterationRecords,
+      IterationReportRecordSchema.parse({ ...activeRecord, ...extra, state }),
+    ];
+    activeRecord = undefined;
+  };
+
   try {
     unlock = await acquireMutationLock(
       join(options.sessionRoot, `${options.backend.name}.mutation.lock`),
@@ -354,26 +409,9 @@ async function executePlan(
     }
     current = copyState;
     const activePhotoId = workflowCopy.copy.catalog_id;
-    const startedAt = Date.now();
     let activePlan = normalizedPlan;
     let previousRenderHash: string | undefined;
     let previousPlanHash: string | undefined;
-    let evaluatorCalls = 0;
-    let totalTokens = 0;
-    let estimatedCostUsd = 0;
-
-    const finishReport = async (iterations: number, reason: string): Promise<void> => {
-      await session.writeJson("iteration-report.json", {
-        evaluator: options.evaluator?.name ?? null,
-        iterations,
-        evaluator_calls: evaluatorCalls,
-        total_tokens: totalTokens,
-        estimated_cost_usd: Number(estimatedCostUsd.toFixed(6)),
-        elapsed_ms: Date.now() - startedAt,
-        terminal_state: session.currentState,
-        reason,
-      });
-    };
 
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
       const settings =
@@ -382,6 +420,16 @@ async function executePlan(
           : resolveLightroomSettings(current.develop_settings, activePlan);
       const checkpointName = `PhotoAgent_${session.currentManifest.session_id}_iteration_${iteration}_before`;
       const iterationOperationId = `photoagent-iteration-${session.currentManifest.session_id}-${iteration}`;
+      const planRelativePath = `plans/iteration-${iteration}.json`;
+      const planPath = join(session.dir, planRelativePath);
+      await session.writeJson(planRelativePath, activePlan);
+      activeIteration = iteration;
+      activeRecord = {
+        iteration,
+        operation_id: iterationOperationId,
+        state: "FAILED",
+        plan: await evidenceLink(session.dir, planPath, planRelativePath),
+      };
       await session.transition("APPLYING", { checkpoint: checkpointName, iteration });
       const iterationIntent = DevelopIterationIntentSchema.parse({
         schema_version: "0.1.0",
@@ -406,11 +454,17 @@ async function executePlan(
         checkpoint_name: checkpointName,
         checkpoint,
       });
-      await session.writeJson(
-        `checkpoints/iteration-${iteration}-before.json`,
-        checkpointEvidence,
-      );
+      const checkpointRelativePath = `checkpoints/iteration-${iteration}-before.json`;
+      await session.writeJson(checkpointRelativePath, checkpointEvidence);
       if (iteration === 1) await session.writeJson("checkpoints/before.json", checkpointEvidence);
+      activeRecord = {
+        ...activeRecord,
+        checkpoint: await evidenceLink(
+          session.dir,
+          join(session.dir, checkpointRelativePath),
+          checkpointRelativePath,
+        ),
+      };
       sideEffectStarted = true;
       await options.backend.applyGlobalAdjustment(activePhotoId, settings);
       const readBack = await options.backend.readCurrentEdit(activePhotoId);
@@ -422,13 +476,14 @@ async function executePlan(
         requested: settings,
         read_back: readBack.develop_settings,
       });
-      await session.writeJson(
-        `backend-readback-iteration-${iteration}.json`,
-        readbackEvidence,
-      );
+      const readbackRelativePath = `backend-readback-iteration-${iteration}.json`;
+      await session.writeJson(readbackRelativePath, readbackEvidence);
       if (iteration === 1) {
         await session.writeJson("backend-readback.json", readbackEvidence);
       }
+      const readbackPath = join(session.dir, readbackRelativePath);
+      const readbackLink = await evidenceLink(session.dir, readbackPath, readbackRelativePath);
+      activeRecord = { ...activeRecord, readback: readbackLink };
       for (const [key, value] of Object.entries(settings)) {
         if (readBack.develop_settings[key] !== value) {
           await session.transition("REVIEW_REQUIRED", {
@@ -436,6 +491,9 @@ async function executePlan(
             key,
             iteration,
             rollback_checkpoint: checkpointName,
+          });
+          completeIteration("REVIEW_REQUIRED", {
+            error: `backend_readback_mismatch:${key}`,
           });
           await finishReport(iteration, "backend_readback_mismatch");
           return resultFor(session, normalizedPlan, { iterations: iteration });
@@ -447,14 +505,30 @@ async function executePlan(
         activePhotoId,
         join(session.dir, "renders", `iteration-${iteration}`),
       );
-      await session.writeJson(`render-iteration-${iteration}.json`, render);
-      if (iteration === 1) await session.writeJson("render.json", render);
+      const previewArtifact = await materializePreviewArtifact(session.dir, iteration, render.path);
+      const previewPath = resolve(session.dir, previewArtifact.path);
+      const backendRenderLink = await evidenceLink(
+        session.dir,
+        render.path,
+        sessionRelativePath(session.dir, render.path),
+      );
+      const previewLink = await evidenceLink(session.dir, previewPath, previewArtifact.path);
+      const renderArtifact = { ...render, preview: previewArtifact };
+      await session.writeJson(`render-iteration-${iteration}.json`, renderArtifact);
+      if (iteration === 1) await session.writeJson("render.json", renderArtifact);
+      activeRecord = {
+        ...activeRecord,
+        backend_render: backendRenderLink,
+        preview: previewLink,
+      };
       if (!options.evaluator) {
         await session.transition("REVIEW_REQUIRED", {
           reason: "visual_evaluator_not_configured",
           render: render.path,
+          preview: previewArtifact.path,
           rollback_checkpoint: checkpointName,
         });
+        completeIteration("REVIEW_REQUIRED", { error: "visual_evaluator_not_configured" });
         await finishReport(iteration, "visual_evaluator_not_configured");
         return resultFor(session, normalizedPlan, {
           renderPath: render.path,
@@ -462,13 +536,15 @@ async function executePlan(
         });
       }
 
-      await session.transition("EVALUATING", { iteration, render: render.path });
+      await session.transition("EVALUATING", { iteration, render: previewArtifact.path });
       const evaluationPath = options.evaluator.requiresCloudPreview
         ? join(session.dir, "evaluations", `iteration-${iteration}-analysis.jpg`)
-        : render.path;
+        : previewPath;
       if (options.evaluator.requiresCloudPreview) {
-        await createSanitizedPreview(render.path, evaluationPath);
+        await createSanitizedPreview(previewPath, evaluationPath);
       }
+      const evaluationRelativePath = sessionRelativePath(session.dir, evaluationPath);
+      evaluatorAttempted = true;
       const evaluation = EvaluationResultSchema.parse(
         await options.evaluator.evaluate({
           renderPath: evaluationPath,
@@ -480,8 +556,27 @@ async function executePlan(
       evaluatorCalls += evaluation.usage?.evaluator_calls ?? 1;
       totalTokens += evaluation.usage?.total_tokens ?? 0;
       estimatedCostUsd += evaluation.usage?.estimated_cost_usd ?? 0;
-      await session.writeJson(`evaluations/iteration-${iteration}.json`, evaluation);
-
+      evaluatorAttempted = false;
+      const evaluationArtifact = EvaluationArtifactSchema.parse({
+        ...evaluation,
+        iteration,
+        operation_id: iterationOperationId,
+        evidence: {
+          render: await evidenceLink(session.dir, evaluationPath, evaluationRelativePath),
+          preview: previewLink,
+          backend_render: backendRenderLink,
+          plan: activeRecord.plan,
+          readback: readbackLink,
+        },
+      });
+      await session.writeJson(`evaluations/iteration-${iteration}.json`, evaluationArtifact);
+      const evaluationSummary = {
+        path: `evaluations/iteration-${iteration}.json`,
+        verdict: evaluation.verdict,
+        confidence: evaluation.confidence,
+        rationale: evaluation.rationale,
+        issues: evaluation.issues,
+      };
       if (evaluation.confidence < MIN_EVALUATION_CONFIDENCE || evaluation.verdict === "review") {
         await session.transition("REVIEW_REQUIRED", {
           reason:
@@ -491,6 +586,7 @@ async function executePlan(
           iteration,
           rollback_checkpoint: checkpointName,
         });
+        completeIteration("REVIEW_REQUIRED", { evaluation: evaluationSummary });
         await finishReport(iteration, "human_review_escalation");
         return resultFor(session, normalizedPlan, {
           renderPath: render.path,
@@ -498,7 +594,8 @@ async function executePlan(
         });
       }
       if (evaluation.verdict === "accept") {
-        await session.transition("ACCEPTED", { iteration, render: render.path });
+        await session.transition("ACCEPTED", { iteration, render: previewArtifact.path });
+        completeIteration("ACCEPTED", { evaluation: evaluationSummary });
         await finishReport(iteration, "accepted");
         return resultFor(session, normalizedPlan, {
           renderPath: render.path,
@@ -507,7 +604,7 @@ async function executePlan(
       }
 
       const nextPlan = evaluation.refinement_plan!;
-      const renderHash = await renderFingerprint(render.path);
+      const renderHash = await renderFingerprint(previewPath);
       const nextPlanHash = planFingerprint(evaluation);
       const stalled =
         nextPlan.operations.length === 0 ||
@@ -520,6 +617,7 @@ async function executePlan(
           iteration,
           rollback_checkpoint: checkpointName,
         });
+        completeIteration("REVIEW_REQUIRED", { evaluation: evaluationSummary });
         await finishReport(iteration, reason);
         return resultFor(session, normalizedPlan, {
           renderPath: render.path,
@@ -533,10 +631,15 @@ async function executePlan(
         iteration,
         next_operation_count: nextPlan.operations.length,
       });
+      completeIteration("REFINING", { evaluation: evaluationSummary });
     }
     throw new Error("Closed-loop controller exited without a terminal state");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (evaluatorAttempted) {
+      evaluatorCalls += 1;
+      evaluatorAttempted = false;
+    }
     await session.writeJson("error.json", { message, side_effect_started: sideEffectStarted });
     if (sideEffectStarted && session.currentState !== "REVIEW_REQUIRED") {
       await session.transition("REVIEW_REQUIRED", {
@@ -545,6 +648,10 @@ async function executePlan(
       });
     } else if (session.currentState !== "FAILED" && session.currentState !== "REVIEW_REQUIRED") {
       await session.transition("FAILED", { error: message });
+    }
+    completeIteration("REVIEW_REQUIRED", { error: message });
+    if (activeIteration > 0) {
+      await finishReport(activeIteration, "controller_error");
     }
     return resultFor(session, normalizedPlan);
   } finally {
@@ -707,9 +814,7 @@ async function readWorkflowCopyEvidence(session: SessionStore): Promise<{
     if (!isMissingArtifact(error)) invalidArtifacts.push("workflow-copy-intent.json");
   }
   try {
-    result = WorkflowCopyResultSchema.parse(
-      await session.readJson<unknown>("workflow-copy.json"),
-    );
+    result = WorkflowCopyResultSchema.parse(await session.readJson<unknown>("workflow-copy.json"));
   } catch (error) {
     if (!isMissingArtifact(error)) invalidArtifacts.push("workflow-copy.json");
   }
@@ -762,32 +867,23 @@ async function readIterationEvidence(session: SessionStore): Promise<IterationEv
   for (const operationPath of operationArtifacts) {
     let intent: DevelopIterationIntent;
     try {
-      intent = DevelopIterationIntentSchema.parse(
-        await session.readJson<unknown>(operationPath),
-      );
+      intent = DevelopIterationIntentSchema.parse(await session.readJson<unknown>(operationPath));
     } catch {
       invalidArtifacts.push(operationPath);
       status = "contradictory";
       continue;
     }
-    const checkpointPath = join(
-      "checkpoints",
-      `iteration-${intent.iteration}-before.json`,
-    );
+    const checkpointPath = join("checkpoints", `iteration-${intent.iteration}-before.json`);
     const readbackPath = `backend-readback-iteration-${intent.iteration}.json`;
     let checkpoint: CheckpointEvidence | undefined;
     let readback: DevelopReadbackEvidence | undefined;
     try {
-      checkpoint = CheckpointEvidenceSchema.parse(
-        await session.readJson<unknown>(checkpointPath),
-      );
+      checkpoint = CheckpointEvidenceSchema.parse(await session.readJson<unknown>(checkpointPath));
     } catch (error) {
       if (!isMissingArtifact(error)) invalidArtifacts.push(checkpointPath);
     }
     try {
-      readback = DevelopReadbackEvidenceSchema.parse(
-        await session.readJson<unknown>(readbackPath),
-      );
+      readback = DevelopReadbackEvidenceSchema.parse(await session.readJson<unknown>(readbackPath));
     } catch (error) {
       if (!isMissingArtifact(error)) invalidArtifacts.push(readbackPath);
     }
@@ -962,7 +1058,10 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
     );
   }
 
-  let targetPhotoId = recordedCopy?.catalog_id ?? intent?.source.catalog_id ?? options.photoId ??
+  let targetPhotoId =
+    recordedCopy?.catalog_id ??
+    intent?.source.catalog_id ??
+    options.photoId ??
     session.currentManifest.source.raw_path;
   const expectedOverride = recordedCopy?.catalog_id ?? intent?.source.catalog_id;
   if (options.photoId && expectedOverride && options.photoId !== expectedOverride) {
@@ -1030,8 +1129,7 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
           !workflowCopyResultIsComplete(effectiveResult)
         ) {
           evidenceStatus = "insufficient";
-          reason =
-            effectiveResult.reason ?? "workflow_copy_reconciliation_evidence_insufficient";
+          reason = effectiveResult.reason ?? "workflow_copy_reconciliation_evidence_insufficient";
         } else {
           copyCreationReconciled = true;
           effectiveCopy = effectiveResult.copy;
@@ -1055,10 +1153,7 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
             ),
           });
           if (!copyEvidence.verification) {
-            await session.writeJson(
-              "workflow-copy-verification.json",
-              effectiveVerification,
-            );
+            await session.writeJson("workflow-copy-verification.json", effectiveVerification);
           }
           evidenceStatus = verified ? "consistent" : "contradictory";
           reason = verified
@@ -1095,19 +1190,13 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
     if (evidenceStatus !== "contradictory" && iterationEvidence.status === "contradictory") {
       evidenceStatus = "contradictory";
       reason = "develop_iteration_evidence_contradictory";
-    } else if (
-      evidenceStatus === "consistent" &&
-      iterationEvidence.status === "insufficient"
-    ) {
+    } else if (evidenceStatus === "consistent" && iterationEvidence.status === "insufficient") {
       evidenceStatus = "insufficient";
       reason = "develop_iteration_outcome_uncertain";
     } else if (
       evidenceStatus === "consistent" &&
       iterationEvidence.lastReadback &&
-      !sameDevelopSettings(
-        current.develop_settings,
-        iterationEvidence.lastReadback.read_back,
-      )
+      !sameDevelopSettings(current.develop_settings, iterationEvidence.lastReadback.read_back)
     ) {
       evidenceStatus = "contradictory";
       reason = "develop_iteration_readback_contradicts_backend";
