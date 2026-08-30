@@ -1334,6 +1334,14 @@ Cloud-analyzer checkpoint:
   tests, and check, lint, build, and the fixed-base `git diff --check` all
   returned exit 0 after the stricter capability gate and documentation sync.
 
+## 2026-08-30 - T08 PhotoAgent publication permission boundary
+
+- The first PhotoAgent T08 push attempt made no remote change because Git
+  rejected the shared worktree with `detected dubious ownership`. No global
+  `safe.directory` exception was added; the retry uses only a command-local
+  `-c safe.directory=D:/photo/_agent_workspace/git-worktrees/photo-agent-roadmap-integration`
+  override.
+
 ## 2026-08-30 - T08 final safety invariant and dual-axis review
 
 - Static recovery invariant check passed: `recoverSession` contains the
