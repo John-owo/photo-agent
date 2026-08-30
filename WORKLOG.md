@@ -1649,6 +1649,15 @@ Cloud-analyzer checkpoint:
 - Updated the evidence pack final matrix: T09 AC1 is now PASS based on the
   hosted run; T09 AC2 and T08 live recovery remain blocked on Lightroom.
 
+## 2026-08-30 - T09 hosted CI evidence update verification
+
+- Pushed the evidence-pack update as `ba4444c` with a normal non-force push.
+  Hosted run `33316433174` completed successfully for that exact commit;
+  install, check, lint, test, build, and example all passed.
+- The only hosted annotation remains GitHub's Node.js 20 deprecation notice
+  for the v4 checkout/setup actions. No code, photo, Lightroom checkout, PR,
+  or issue state was changed by this verification.
+
 ## 2026-08-30 - T09 hosted evidence-pack verification
 
 - Added the hosted CI run link and result to the final acceptance matrix,
