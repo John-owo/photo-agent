@@ -1184,3 +1184,197 @@ Cloud-analyzer checkpoint:
   branch to the local origin fetch refspec. Final local verification resolves
   HEAD and upstream to `95db02c0e62ee9ac2195b7b17b3ff8fa59f1ca60` and reports
   a clean branch tracking `origin/codex/roadmap-integration`.
+
+## 2026-08-30 - T08 acceptance and baseline
+
+- Read current GitHub issue #13. T08 requires resume/recovery to reuse the
+  recorded Workflow Copy, never create another copy while creation outcome is
+  uncertain, read actual backend state without blindly retrying a
+  non-idempotent mutation, and retain Copy/Checkpoint evidence when stopping at
+  `REVIEW_REQUIRED`.
+- Targeted baseline `npm.cmd test -- tests/workflow.test.ts` passed 1 file / 22
+  tests. Existing recovery coverage reads a caller/default photo id but does not
+  yet reconcile the persisted Workflow Copy identity or the uncertain
+  copy-creation intent boundary.
+- The first post-implementation `npm.cmd run check` failed with one TypeScript
+  unused-import error for `BackendPhotoState` in `src/workflow.ts`. The import
+  was introduced during the narrow T08 recovery implementation but not needed;
+  it was removed before further verification.
+- Added strict durable schemas for Workflow Copy intent/verification,
+  per-iteration Develop intent, and non-overwriting recovery evidence. The
+  workflow now records the exact Copy/Master identity and operation id before
+  Copy creation, then records each Copy-targeted checkpoint name, requested
+  settings, target identity, and operation id before non-idempotent Develop
+  work.
+- Recovery now uses the recorded Copy catalog id and UUID instead of path-only
+  identity, validates its Master relationship against actual backend readback,
+  rejects a conflicting `photoId` override before backend access, and writes a
+  unique report under `recovery/` without overwriting prior Copy, Checkpoint,
+  readback, or error evidence. When only Copy-creation intent exists, it reads
+  the recorded Master identity, does not call Copy creation again, and records
+  the outcome as insufficient/`REVIEW_REQUIRED`.
+- Added four public workflow T08 regressions for response loss after Copy side
+  effect, exact recorded-Copy recovery, contradictory backend identity, and a
+  conflicting recovery override. The existing legacy recovery test now reads
+  the unique recovery report contract.
+- After the unused import repair, `npm.cmd run check` passed. Main-agent rerun
+  `npm.cmd test -- tests/workflow.test.ts` passed 1 file / 26 tests after the
+  final Workflow Copy verification-evidence strengthening.
+- Full `npm.cmd test` passed 3 files / 52 tests: 16 backend-handshake, 26
+  workflow, and 10 milestone tests. `npm.cmd run build` completed with exit 0.
+  The first parallel lint result returned output without a final exit code, so
+  it was not counted; the explicit standalone `npm.cmd run lint` rerun completed
+  with exit 0.
+- `git diff --check` completed successfully with only the repository's normal
+  LF-to-CRLF working-copy warnings. `npm.cmd run format:check` failed on the
+  pre-existing repository-wide formatting baseline: Prettier listed 45 files,
+  including many untouched source, config, documentation, fixture, and test
+  files. No whole-file formatting or line-ending normalization was applied;
+  lint, TypeScript, build, targeted tests, full tests, and diff checks remain
+  green.
+- First TypeScript check after the initial Spec-review repairs failed because
+  `exactOptionalPropertyTypes` could not narrow two separate `Array.at(-1)`
+  calls when constructing optional `lastReadback`. Storing the value once and
+  conditionally spreading that narrowed local repaired the type boundary; the
+  failed command is not counted as verification.
+
+## 2026-08-30 - T08 two-axis review repair
+
+- Standards review against fixed base `1a89983` reported no hard violation and
+  one judgement-call duplication risk: Master/Copy identity relationships were
+  re-expressed in the execute and recovery branches. Extracted shared exact
+  identity, recorded-Master, Copy/Master, and Copy-result predicates to keep the
+  safety contract from drifting.
+- Spec review reported two blockers. First, response loss after Copy creation
+  stopped after Master readback without using the same operation id to recover
+  the actual Copy identity. Second, recovery listed Develop operation and
+  Checkpoint artifact names but did not parse them or compare saved readback to
+  actual backend state.
+- Repaired Copy recovery to require `readback_before_retry` plus
+  `exclusive_backend` semantics, read and verify the recorded Master first,
+  reconcile with the exact persisted operation id, persist the returned Copy,
+  then read and verify its catalog id, UUID, Master relation, source path, and
+  inherited Develop state. The report distinguishes reconciliation from retry;
+  no new operation id is generated and no Develop mutation is retried.
+- Added strict per-iteration Checkpoint and Develop-readback schemas. Recovery
+  now validates operation id, target identity, checkpoint name, requested
+  settings, and saved readback relationships, then compares the latest complete
+  Develop readback with actual Copy state. Missing Checkpoint/readback evidence
+  is `insufficient`; invalid or mismatched evidence is `contradictory`.
+- Updated English/Traditional Chinese recovery documentation and v0.1 status.
+  Added/strengthened regression coverage for same-id Copy response-loss
+  reconciliation, uncertain Checkpoint outcome, uncertain Develop outcome,
+  exact completed Copy readback, contradictory identity, and override refusal.
+- Post-repair `npm.cmd run check` passed and targeted
+  `npm.cmd test -- tests/workflow.test.ts` passed 1 file / 28 tests.
+
+## 2026-08-30 - T08 usage-limit handoff
+
+- Created the compact continuation handoff at
+  `D:\photo\_agent_workspace\photo-agent-t08-handoff-20260830.md`; it records
+  the exact worktree/base/commits, verified commands, known format baseline,
+  review status, blocker, and targeted next steps so the next agent does not
+  need to reread this worklog's history.
+- Latest full verification remains green: `npm.cmd test` 3 files/54 tests,
+  `npm.cmd run check`, `npm.cmd run lint`, `npm.cmd run build`, and
+  `git diff 1a89983...HEAD --check`; `npm.cmd run format:check` remains the
+  pre-existing 45-file baseline failure and was not normalized.
+- T08 is intentionally not complete. Standards review found a hard safety
+  violation at `src/workflow.ts:998-1010`: recovery calls mutating
+  `createWorkflowCopy` while AGENTS.md requires read-only recovery. The next
+  agent must replace this with a true read-only reconciliation capability (or
+  fail closed at `REVIEW_REQUIRED`) and rerun both review axes. No push or
+  issue transition was performed.
+
+## 2026-08-30 - T08 continuation baseline
+
+- Re-read the T08 handoff and targeted the PhotoAgent roadmap integration
+  worktree plus the separate Lightroom MCP integration worktree; both were
+  clean before edits. The configured `D:\photo\lightroom-mcp-john` checkout was
+  not modified.
+- Baseline `npm.cmd test -- tests/workflow.test.ts` passed 1 file / 28 tests.
+  Baseline `npm.cmd test -- tests/backend-handshake.test.ts` passed 1 file / 16
+  tests. These tests still encode the unsafe pre-fix recovery expectation that
+  uncertain Copy creation is recovered through `create_workflow_copy`.
+
+## 2026-08-30 - T08 read-only Copy reconciliation repair
+
+- Added the explicit read-only `reconcileWorkflowCopy` adapter capability and
+  `reconcile_workflow_copy` operation semantics. Recovery now handshakes only
+  the read operation, checks that the optional reconciliation capability is
+  truly read-only/idempotent/resumable, and never calls `createWorkflowCopy`.
+- Recovery uses the persisted Master identity and operation ID for the
+  read-only query, then validates the returned Copy catalog ID/UUID, Copy to
+  Master relationship, source path, and inherited Develop state through actual
+  backend readback. A missing capability or incomplete read result remains
+  `REVIEW_REQUIRED` with `insufficient` evidence; existing evidence is not
+  overwritten.
+- The Lightroom integration worktree now exposes the corresponding
+  `reconcile_virtual_copy` catalog query backed by the existing operation-marker
+  scan. Its contract is read-only and its handler does not change selection or
+  call `createVirtualCopies`; the configured `D:\photo\lightroom-mcp-john`
+  checkout remains untouched.
+- Added workflow, adapter, MCP contract, and Lua regression coverage. Targeted
+  and full verification after this repair remains pending.
+- `npm.cmd run check` passed after the read-only reconciliation changes.
+
+## 2026-08-30 - T08 read-only reconciliation targeted regression verification
+
+- `npm.cmd test -- tests/workflow.test.ts tests/backend-handshake.test.ts`
+  passed: 2 files / 46 tests (29 workflow, 17 handshake). This confirms the
+  uncertain Workflow Copy path uses `reconcile_workflow_copy` and does not
+  call a mutating creation method, while the legacy-capability case fails
+  closed at `REVIEW_REQUIRED`.
+- Full `npm.cmd test` passed: 3 files / 56 tests (workflow 29, handshake 17,
+  milestones 10).
+- Full verification after the repair passed: `npm.cmd run check`,
+  `npm.cmd run lint`, `npm.cmd run build`, and
+  `git diff 1a89983be2bf5628451619b508f1a60ee06f1d2b --check` (all exit 0).
+- Final post-edit rerun passed: full `npm.cmd test` remained 3 files / 56
+  tests, and check, lint, build, and the fixed-base `git diff --check` all
+  returned exit 0 after the stricter capability gate and documentation sync.
+
+## 2026-08-30 - T08 PhotoAgent publication permission boundary
+
+- The first PhotoAgent T08 push attempt made no remote change because Git
+  rejected the shared worktree with `detected dubious ownership`. No global
+  `safe.directory` exception was added; the retry uses only a command-local
+  `-c safe.directory=D:/photo/_agent_workspace/git-worktrees/photo-agent-roadmap-integration`
+  override.
+
+## 2026-08-30 - T08 final safety invariant and dual-axis review
+
+- Static recovery invariant check passed: `recoverSession` contains the
+  read-only `reconcileWorkflowCopy` path and contains none of the forbidden
+  mutating backend methods `createWorkflowCopy`, `createCheckpoint`,
+  `applyGlobalAdjustment`, or `renderPreview`.
+- Standards review against fixed base
+  `1a89983be2bf5628451619b508f1a60ee06f1d2b`, the active worktree rules, and
+  the nearest project instructions passed with no P1/P2 findings. The scope
+  is limited to T08 recovery, the backend contract/adapter, tests, docs, and
+  append-only evidence; no photo, catalog, remote, or configured-checkout
+  mutation was introduced.
+- Spec review against the T08 handoff and issue #13 acceptance criteria
+  passed: uncertain Workflow Copy creation is reconciled only through the
+  read-only capability or stopped at `REVIEW_REQUIRED`; identity, UUID,
+  Copy/Master relation, path, and inherited Develop state are read back; and
+  existing recovery evidence is retained. Develop and Checkpoint uncertain
+  outcomes remain non-retryable.
+- A first fixed-base review command was mistakenly run from `D:\photo` and
+  failed with `fatal: not a git repository`; the same review was immediately
+  rerun with command-local `git -C` in the active worktree and passed. No file
+  was changed by the failed command.
+- Live Lightroom execution of the new endpoint and human creative QA remain
+  explicitly unverified downstream gates; they are not represented as test
+  evidence for this local T08 code review.
+- Final post-review `git diff 1a89983be2bf5628451619b508f1a60ee06f1d2b
+  --check` exited 0. Git emitted only the known LF-to-CRLF working-copy
+  normalization warnings; no whitespace errors were reported.
+
+## 2026-08-30 - T08 PhotoAgent remote ref inspection
+
+- An escalated `git ls-remote origin` inspection failed before contacting the
+  remote because the shared worktree was rejected as a repository under that
+  execution context. No remote change resulted. The same read-only query is
+  being rerun with the command-local `safe.directory` override; no global Git
+  configuration will be changed.

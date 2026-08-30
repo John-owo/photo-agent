@@ -58,7 +58,10 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
 - Never blindly retry a Lightroom mutation after a timeout. Read back backend
   state first; if reconciliation is uncertain, stop at `REVIEW_REQUIRED`.
 - After an interruption, `recover` only reads back state and reconciles the
-  session; it never retries a mutation automatically.
+  session; it never retries a mutation automatically. It targets the persisted
+  Workflow Copy catalog identity when one is known, writes a new immutable
+  recovery report for each attempt, and retains operation and Checkpoint
+  evidence for review.
 - A single-photo apply reads and verifies the Master first, then lazily creates
   one session-marked Workflow Copy only when apply is approved and the plan has
   an executable adjustment. Checkpoints, Develop mutation, read-back, and render
@@ -201,6 +204,21 @@ node dist/src/cli.js recover `
   --session 'C:\path\to\.photo-agent\sessions\<session-id>' `
   --backend lightroom
 ```
+
+If Copy creation may have succeeded but no persistent Copy identity was
+returned, recovery first reads the recorded Master, then calls the backend's
+explicitly read-only `reconcile_workflow_copy` query with the same stable
+operation ID and verifies that exactly one persistent Copy identity is returned.
+If that read-only capability is unavailable or its evidence is insufficient,
+recovery stops at `REVIEW_REQUIRED`; it never calls `create_virtual_copy` again.
+When a Copy identity is already recorded, recovery reads that exact catalog ID
+and verifies its UUID and Master relationship. Develop mutations and
+Checkpoints are never retried. Each run writes a separate JSON report under
+`recovery/`, leaving the original Copy, operation, Checkpoint, read-back, and
+error artifacts intact. The report parses each iteration's operation intent,
+Checkpoint, and saved read-back, then compares the last completed read-back to
+the actual Copy state; missing evidence is `insufficient` and mismatches are
+`contradictory`.
 
 ## XMP fallback
 

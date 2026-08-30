@@ -119,21 +119,129 @@ export const BackendPhotoStateSchema = z.object({
   identity: BackendPhotoIdentitySchema.optional(),
 });
 
+export const WorkflowCopyCandidateSchema = z
+  .object({
+    catalog_id: z.string().min(1),
+    uuid: z.string().min(1),
+    master_id: z.string().min(1).optional(),
+    master_uuid: z.string().min(1).optional(),
+    is_virtual_copy: z.boolean(),
+  })
+  .strict();
+
 export const WorkflowCopyResultSchema = z
   .object({
     operation_id: z.string().min(1),
     result: z.enum(["created", "reconciled", "REVIEW_REQUIRED"]),
     partial: z.boolean(),
+    marker: z.string().min(1).optional(),
     source: BackendPhotoIdentitySchema.optional(),
     master: BackendPhotoIdentitySchema.optional(),
     copy: BackendPhotoIdentitySchema.optional(),
+    candidates: z.array(WorkflowCopyCandidateSchema).optional(),
+    candidate_count: z.number().int().nonnegative().optional(),
     selection_restoration: z
       .object({
-        status: z.enum(["not_needed", "restored", "failed"]),
+        status: z.enum(["not_needed", "restored", "not_attempted", "failed"]),
         verified: z.boolean(),
       })
       .strict(),
     reason: z.string().optional(),
+  })
+  .strict();
+
+export const WorkflowCopyIntentSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    operation_id: z.string().min(1),
+    phase: z.literal("started"),
+    source: BackendPhotoIdentitySchema,
+  })
+  .strict();
+
+export const WorkflowCopyVerificationSchema = z
+  .object({
+    operation_id: z.string().min(1),
+    verified: z.boolean(),
+    master: BackendPhotoIdentitySchema,
+    copy: BackendPhotoIdentitySchema.nullable(),
+    inherited_develop_state: z.boolean(),
+  })
+  .strict();
+
+export const DevelopIterationIntentSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    operation_id: z.string().min(1),
+    kind: z.literal("develop_iteration"),
+    phase: z.literal("started"),
+    iteration: z.number().int().positive(),
+    target: BackendPhotoIdentitySchema,
+    checkpoint_name: z.string().min(1),
+    requested_settings: z.record(
+      z.string(),
+      z.union([z.number(), z.string(), z.boolean()]),
+    ),
+  })
+  .strict();
+
+export const CheckpointEvidenceSchema = z
+  .object({
+    iteration: z.number().int().positive(),
+    operation_id: z.string().min(1),
+    target: BackendPhotoIdentitySchema,
+    checkpoint_name: z.string().min(1),
+    checkpoint: z
+      .object({
+        name: z.string().min(1),
+        raw: z.unknown(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const DevelopReadbackEvidenceSchema = z
+  .object({
+    iteration: z.number().int().positive(),
+    operation_id: z.string().min(1),
+    target: BackendPhotoIdentitySchema,
+    checkpoint_name: z.string().min(1),
+    requested: z.record(z.string(), z.union([z.number(), z.string(), z.boolean()])),
+    read_back: z.record(z.string(), z.union([z.number(), z.string(), z.boolean()])),
+  })
+  .strict();
+
+export const RecoveryEvidenceSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    recovered_at: z.string().datetime(),
+    interrupted_state: z.string().min(1),
+    evidence_status: z.enum([
+      "consistent",
+      "contradictory",
+      "insufficient",
+      "readback_failed",
+    ]),
+    reason: z.string().min(1),
+    requested_photo_id: z.string().min(1).optional(),
+    target_photo_id: z.string().min(1).optional(),
+    workflow_copy_intent: WorkflowCopyIntentSchema.nullable(),
+    workflow_copy: WorkflowCopyResultSchema.nullable(),
+    workflow_copy_verification: WorkflowCopyVerificationSchema.nullable(),
+    checkpoint_artifacts: z.array(z.string().min(1)),
+    operation_artifacts: z.array(z.string().min(1)),
+    readback_artifacts: z.array(z.string().min(1)),
+    operation_evidence_status: z.enum([
+      "none",
+      "consistent",
+      "insufficient",
+      "contradictory",
+    ]),
+    invalid_artifacts: z.array(z.string().min(1)),
+    read_back: BackendPhotoStateSchema.nullable(),
+    copy_creation_reconciled: z.boolean(),
+    copy_creation_retried: z.literal(false),
+    mutation_retried: z.literal(false),
   })
   .strict();
 

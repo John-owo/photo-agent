@@ -15,6 +15,7 @@ import {
 import {
   assertBackendOperations,
   validateBackendCapabilityManifest,
+  WORKFLOW_COPY_RECONCILIATION_OPERATION,
   type BackendHandshakeRequirements,
 } from "./backend-handshake.js";
 import { writeFixtureJpeg } from "./preview.js";
@@ -68,6 +69,7 @@ const LIGHTROOM_TOOL_OPERATIONS = {
   create_develop_preset: "create_checkpoint",
   export_photos: "render_preview",
   create_virtual_copy: "create_workflow_copy",
+  reconcile_virtual_copy: WORKFLOW_COPY_RECONCILIATION_OPERATION,
 } as const;
 
 const LIGHTROOM_HANDSHAKE_REQUIREMENTS: BackendHandshakeRequirements = {
@@ -89,6 +91,7 @@ export const LIGHTROOM_CAPABILITIES = BackendCapabilityManifestSchema.parse({
   capabilities: [
     "read_current_edit",
     "create_workflow_copy",
+    WORKFLOW_COPY_RECONCILIATION_OPERATION,
     "apply_global_adjustment",
     "render_preview",
     "create_checkpoint",
@@ -103,6 +106,18 @@ export const LIGHTROOM_CAPABILITIES = BackendCapabilityManifestSchema.parse({
       requires_active_selection: false,
       requires_editor_foreground: false,
       concurrency: "parallel_safe",
+      retry_policy: "automatic",
+      safe_to_resume: true,
+    },
+    [WORKFLOW_COPY_RECONCILIATION_OPERATION]: {
+      supported: true,
+      side_effect: "read_only",
+      idempotent: true,
+      reversible: "true_undo",
+      scope: "catalog",
+      requires_active_selection: false,
+      requires_editor_foreground: false,
+      concurrency: "exclusive_backend",
       retry_policy: "automatic",
       safe_to_resume: true,
     },
@@ -164,6 +179,7 @@ export const MOCK_CAPABILITIES = BackendCapabilityManifestSchema.parse({
   capabilities: [
     "read_current_edit",
     "create_workflow_copy",
+    WORKFLOW_COPY_RECONCILIATION_OPERATION,
     "apply_global_adjustment",
     "render_preview",
     "create_checkpoint",
@@ -361,6 +377,67 @@ export class MockBackend implements BackendAdapter {
     });
   }
 
+  async reconcileWorkflowCopy(
+    sourcePhotoId: string,
+    expectedSourceUuid: string,
+    operationId: string,
+  ): Promise<WorkflowCopyResult> {
+    this.requireOperation(WORKFLOW_COPY_RECONCILIATION_OPERATION);
+    this.calls.push(WORKFLOW_COPY_RECONCILIATION_OPERATION);
+    const masterId = this.masterPhotoId ?? sourcePhotoId;
+    if (sourcePhotoId !== masterId || expectedSourceUuid !== this.masterUuid) {
+      throw new Error("Mock Workflow Copy reconciliation source identity mismatch");
+    }
+    const copyId = this.copyByOperation.get(operationId);
+    if (!copyId || !this.copies.has(copyId)) {
+      return WorkflowCopyResultSchema.parse({
+        operation_id: operationId,
+        result: "REVIEW_REQUIRED",
+        partial: false,
+        selection_restoration: { status: "not_needed", verified: true },
+        reason: "No Workflow Copy matched the persisted operation marker",
+      });
+    }
+    return this.buildWorkflowCopyResult(operationId, "reconciled", masterId, copyId);
+  }
+
+  private buildWorkflowCopyResult(
+    operationId: string,
+    result: "created" | "reconciled",
+    masterId: string,
+    copyId: string,
+  ): WorkflowCopyResult {
+    const copy = this.copies.get(copyId);
+    if (!copy) throw new Error(`Mock Workflow Copy is missing: ${copyId}`);
+    return WorkflowCopyResultSchema.parse({
+      operation_id: operationId,
+      result,
+      partial: false,
+      source: {
+        catalog_id: masterId,
+        uuid: this.masterUuid,
+        master_id: masterId,
+        master_uuid: this.masterUuid,
+        is_virtual_copy: false,
+      },
+      master: {
+        catalog_id: masterId,
+        uuid: this.masterUuid,
+        master_id: masterId,
+        master_uuid: this.masterUuid,
+        is_virtual_copy: false,
+      },
+      copy: {
+        catalog_id: copyId,
+        uuid: copy.uuid,
+        master_id: masterId,
+        master_uuid: this.masterUuid,
+        is_virtual_copy: true,
+      },
+      selection_restoration: { status: "restored", verified: true },
+    });
+  }
+
   async createWorkflowCopy(
     sourcePhotoId: string,
     expectedSourceUuid: string,
@@ -368,8 +445,8 @@ export class MockBackend implements BackendAdapter {
   ): Promise<WorkflowCopyResult> {
     this.requireOperation("create_workflow_copy");
     this.calls.push("create_workflow_copy");
-    this.masterPhotoId ??= sourcePhotoId;
-    if (sourcePhotoId !== this.masterPhotoId || expectedSourceUuid !== this.masterUuid) {
+    const masterId = (this.masterPhotoId ??= sourcePhotoId);
+    if (sourcePhotoId !== masterId || expectedSourceUuid !== this.masterUuid) {
       throw new Error("Mock Workflow Copy source identity mismatch");
     }
     const existingId = this.copyByOperation.get(operationId);
@@ -382,34 +459,12 @@ export class MockBackend implements BackendAdapter {
       });
       this.copyByOperation.set(operationId, copyId);
     }
-    const copy = this.copies.get(copyId)!;
-    return WorkflowCopyResultSchema.parse({
-      operation_id: operationId,
-      result: existingId ? "reconciled" : "created",
-      partial: false,
-      source: {
-        catalog_id: this.masterPhotoId,
-        uuid: this.masterUuid,
-        master_id: this.masterPhotoId,
-        master_uuid: this.masterUuid,
-        is_virtual_copy: false,
-      },
-      master: {
-        catalog_id: this.masterPhotoId,
-        uuid: this.masterUuid,
-        master_id: this.masterPhotoId,
-        master_uuid: this.masterUuid,
-        is_virtual_copy: false,
-      },
-      copy: {
-        catalog_id: copyId,
-        uuid: copy.uuid,
-        master_id: this.masterPhotoId,
-        master_uuid: this.masterUuid,
-        is_virtual_copy: true,
-      },
-      selection_restoration: { status: "restored", verified: true },
-    });
+    return this.buildWorkflowCopyResult(
+      operationId,
+      existingId ? "reconciled" : "created",
+      masterId,
+      copyId,
+    );
   }
 
   async createCheckpoint(
@@ -630,6 +685,111 @@ export class LightroomMcpAdapter implements BackendAdapter {
     });
   }
 
+  async reconcileWorkflowCopy(
+    sourcePhotoId: string,
+    expectedSourceUuid: string,
+    operationId: string,
+  ): Promise<WorkflowCopyResult> {
+    this.requireOperation(WORKFLOW_COPY_RECONCILIATION_OPERATION);
+    await this.ensurePluginReady();
+    const raw = await this.call<unknown>("reconcile_virtual_copy", {
+      source_photo_id: sourcePhotoId,
+      expected_source_uuid: expectedSourceUuid,
+      operation_id: operationId,
+    });
+    return this.parseWorkflowCopyResult(raw);
+  }
+
+  private parseWorkflowCopyResult(raw: unknown): WorkflowCopyResult {
+    const record = asRecord(raw);
+    const source = asRecord(record.source);
+    const master = asRecord(record.master);
+    const copy = asRecord(record.copy);
+    const masterId =
+      (typeof master.catalog_id === "string" && master.catalog_id) ||
+      (typeof source.catalog_id === "string" && source.catalog_id);
+    const masterUuid =
+      (typeof master.uuid === "string" && master.uuid) ||
+      (typeof source.uuid === "string" && source.uuid);
+    const sourceIdentity =
+      typeof source.catalog_id === "string" &&
+      typeof source.uuid === "string" &&
+      typeof masterId === "string" &&
+      typeof masterUuid === "string"
+        ? {
+            catalog_id: source.catalog_id,
+            uuid: source.uuid,
+            master_id:
+              typeof source.master_id === "string" ? source.master_id : masterId,
+            master_uuid:
+              typeof source.master_uuid === "string" ? source.master_uuid : masterUuid,
+            is_virtual_copy: source.is_virtual_copy,
+          }
+        : undefined;
+    const masterIdentity =
+      typeof masterId === "string" &&
+      typeof masterUuid === "string" &&
+      typeof master.is_virtual_copy === "boolean"
+        ? {
+            catalog_id: masterId,
+            uuid: masterUuid,
+            master_id: typeof master.master_id === "string" ? master.master_id : masterId,
+            master_uuid:
+              typeof master.master_uuid === "string" ? master.master_uuid : masterUuid,
+            is_virtual_copy: master.is_virtual_copy,
+          }
+        : undefined;
+    const copyMasterId =
+      typeof copy.master_id === "string" ? copy.master_id : masterId;
+    const copyMasterUuid =
+      typeof copy.master_uuid === "string" ? copy.master_uuid : masterUuid;
+    const copyIdentity =
+      typeof copy.catalog_id === "string" &&
+      typeof copy.uuid === "string" &&
+      typeof copyMasterId === "string" &&
+      typeof copyMasterUuid === "string"
+        ? {
+            catalog_id: copy.catalog_id,
+            uuid: copy.uuid,
+            master_id: copyMasterId,
+            master_uuid: copyMasterUuid,
+            is_virtual_copy: copy.is_virtual_copy,
+          }
+        : undefined;
+    const candidates = Array.isArray(record.candidates)
+      ? record.candidates.map((candidate) => {
+          const value = asRecord(candidate);
+          return {
+            catalog_id: value.catalog_id,
+            uuid: value.uuid,
+            ...(typeof value.master_id === "string" ? { master_id: value.master_id } : {}),
+            ...(typeof value.master_uuid === "string" ? { master_uuid: value.master_uuid } : {}),
+            is_virtual_copy: value.is_virtual_copy,
+          };
+        })
+      : undefined;
+    return WorkflowCopyResultSchema.parse({
+      operation_id: record.operation_id,
+      result: record.result,
+      partial: record.partial ?? false,
+      ...(typeof record.marker === "string" ? { marker: record.marker } : {}),
+      ...(sourceIdentity ? { source: sourceIdentity } : {}),
+      ...(masterIdentity ? { master: masterIdentity } : {}),
+      ...(copyIdentity ? { copy: copyIdentity } : {}),
+      ...(candidates
+        ? {
+            candidates,
+            candidate_count:
+              typeof record.candidate_count === "number"
+                ? record.candidate_count
+                : candidates.length,
+          }
+        : {}),
+      selection_restoration: record.selection_restoration,
+      ...(typeof record.reason === "string" ? { reason: record.reason } : {}),
+    });
+  }
+
   async createWorkflowCopy(
     sourcePhotoId: string,
     expectedSourceUuid: string,
@@ -641,52 +801,7 @@ export class LightroomMcpAdapter implements BackendAdapter {
       expected_source_uuid: expectedSourceUuid,
       operation_id: operationId,
     });
-    const record = asRecord(raw);
-    const source = asRecord(record.source);
-    const master = asRecord(record.master);
-    const copy = asRecord(record.copy);
-    const masterId = master.catalog_id ?? source.catalog_id;
-    const masterUuid = master.uuid ?? source.uuid;
-    return WorkflowCopyResultSchema.parse({
-      operation_id: record.operation_id,
-      result: record.result,
-      partial: record.partial ?? false,
-      ...(typeof source.catalog_id === "string" && typeof source.uuid === "string"
-        ? {
-            source: {
-              catalog_id: source.catalog_id,
-              uuid: source.uuid,
-              master_id: masterId,
-              master_uuid: masterUuid,
-              is_virtual_copy: source.is_virtual_copy,
-            },
-          }
-        : {}),
-      ...(typeof masterId === "string" && typeof masterUuid === "string"
-        ? {
-            master: {
-              catalog_id: masterId,
-              uuid: masterUuid,
-              master_id: masterId,
-              master_uuid: masterUuid,
-              is_virtual_copy: false,
-            },
-          }
-        : {}),
-      ...(typeof copy.catalog_id === "string" && typeof copy.uuid === "string"
-        ? {
-            copy: {
-              catalog_id: copy.catalog_id,
-              uuid: copy.uuid,
-              master_id: masterId,
-              master_uuid: masterUuid,
-              is_virtual_copy: copy.is_virtual_copy,
-            },
-          }
-        : {}),
-      selection_restoration: record.selection_restoration,
-      ...(typeof record.reason === "string" ? { reason: record.reason } : {}),
-    });
+    return this.parseWorkflowCopyResult(raw);
   }
 
   async createCheckpoint(

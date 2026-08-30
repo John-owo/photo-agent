@@ -5,6 +5,7 @@ import type {
   BackendCapabilityManifestSchema,
   BackendPhotoIdentitySchema,
   BackendPhotoStateSchema,
+  CheckpointEvidenceSchema,
   CullingDecisionSchema,
   EvaluationResultSchema,
   LightingClassificationSchema,
@@ -18,7 +19,12 @@ import type {
   ShootReviewFileSchema,
   PropagationPlanSchema,
   SourceAssetPairSchema,
+  DevelopIterationIntentSchema,
+  DevelopReadbackEvidenceSchema,
+  RecoveryEvidenceSchema,
+  WorkflowCopyIntentSchema,
   WorkflowCopyResultSchema,
+  WorkflowCopyVerificationSchema,
 } from "./schemas.js";
 
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
@@ -28,7 +34,13 @@ export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;
 export type BackendPhotoIdentity = z.infer<typeof BackendPhotoIdentitySchema>;
+export type CheckpointEvidence = z.infer<typeof CheckpointEvidenceSchema>;
+export type DevelopIterationIntent = z.infer<typeof DevelopIterationIntentSchema>;
+export type DevelopReadbackEvidence = z.infer<typeof DevelopReadbackEvidenceSchema>;
+export type RecoveryEvidence = z.infer<typeof RecoveryEvidenceSchema>;
+export type WorkflowCopyIntent = z.infer<typeof WorkflowCopyIntentSchema>;
 export type WorkflowCopyResult = z.infer<typeof WorkflowCopyResultSchema>;
+export type WorkflowCopyVerification = z.infer<typeof WorkflowCopyVerificationSchema>;
 export type EvaluationResult = z.infer<typeof EvaluationResultSchema>;
 export type CullingDecision = z.infer<typeof CullingDecisionSchema>;
 export type LightingClassification = z.infer<typeof LightingClassificationSchema>;
@@ -95,6 +107,11 @@ export type BackendAdapter = {
   handshake(): Promise<BackendCapabilityManifest>;
   close(): Promise<void>;
   readCurrentEdit(photoId: string): Promise<BackendPhotoState>;
+  reconcileWorkflowCopy(
+    sourcePhotoId: string,
+    expectedSourceUuid: string,
+    operationId: string,
+  ): Promise<WorkflowCopyResult>;
   createWorkflowCopy(
     sourcePhotoId: string,
     expectedSourceUuid: string,

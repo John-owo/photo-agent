@@ -36,6 +36,8 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
 - 預設的 `--provider codex` 路徑只建立本機交接資料，不會呼叫視覺模型 API；OpenAI provider 必須明確選取才會啟用。
 - Lightroom mutation 發生 timeout 後絕不盲目重試；會先讀回 backend 狀態，若無法確定是否已套用，就停在 `REVIEW_REQUIRED`。
 - 中斷後使用 `recover` 只會讀回狀態並 reconcile session，不會自動重試 mutation。
+  已知 Workflow Copy 身分時會鎖定記錄的 catalog ID／UUID；每次 recovery 另存一份
+  report，保留原有 operation 與 Checkpoint 證據。
 - 單張 apply 會先唯讀並驗證 Master；只有明確允許 apply 且計畫含可執行調整時，
   才建立一份帶 session 標記的 Workflow Copy。checkpoint、Develop mutation、讀回與
   render 只會指向已驗證的 Copy。dry-run／no-op 不會建立 Copy；輸入已是 Virtual
@@ -160,6 +162,16 @@ node dist/src/cli.js recover `
   --session 'C:\path\to\.photo-agent\sessions\<session-id>' `
   --backend lightroom
 ```
+
+若 Copy 可能已建立、但回應中斷前尚未持久化 Copy 身分，recovery 會保留相同的
+operation intent，先讀回記錄的 Master，再以相同 operation ID 呼叫明確標示為唯讀的
+`reconcile_workflow_copy` 查詢，並驗證只得到同一份 persistent Copy。若 backend 沒有
+這項唯讀能力，或讀回證據不足，就停在 `REVIEW_REQUIRED`，不會再呼叫
+`create_virtual_copy`。若已有記錄，則只讀該 catalog ID，核對 Copy UUID 與 Master 關係。Develop mutation 與 Checkpoint
+不會重送。每次執行會在 `recovery/` 新增獨立 JSON report，不覆寫原本的 Copy、
+operation、Checkpoint、read-back 或錯誤證據。report 會解析每輪 operation intent、
+Checkpoint 與已保存的 read-back，再把最後完成狀態和實際 Copy 比對；缺少證據標為
+`insufficient`，互相衝突則標為 `contradictory`。
 
 ## XMP fallback
 
