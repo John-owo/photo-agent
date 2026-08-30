@@ -31,7 +31,7 @@ function usage(): string {
     "budget flags: --max-elapsed-ms <ms> --max-renders <n> --max-evaluator-calls <n> --max-total-tokens <n> --max-cost-usd <usd>",
     "photo-agent recover --session <SESSION_DIR> --backend <mock|lightroom> [--photo-id <ID>]",
     "photo-agent export-xmp --raw <RAW> --intent-file <JSON> --current-settings <JSON> --output <XMP>",
-    "photo-agent shoot --root <SHOOT_DIR> [--session-root <DIR>] [--analysis-file <REVIEW_JSON> | --analyzer openai --allow-cloud-preview]",
+    "photo-agent shoot --root <SHOOT_DIR> [--session-root <DIR>] [--high-value-asset-id <ID> ...] [--analysis-file <REVIEW_JSON> | --analyzer openai --allow-cloud-preview]",
     "photo-agent shoot --resume <SESSION_DIR> [--analysis-file <REVIEW_JSON> | --analyzer openai --allow-cloud-preview]",
   ].join("\n");
 }
@@ -303,6 +303,7 @@ async function shoot(argv: string[]): Promise<number> {
         type: "string",
         default: process.env.PHOTO_AGENT_SESSION_ROOT ?? ".photo-agent/shoots",
       },
+      "high-value-asset-id": { type: "string", multiple: true },
     },
     allowPositionals: false,
     strict: true,
@@ -337,6 +338,9 @@ async function shoot(argv: string[]): Promise<number> {
         sessionRoot: parsed.values["session-root"],
         analyzer,
         allowCloudPreview: parsed.values["allow-cloud-preview"],
+        ...(parsed.values["high-value-asset-id"]
+          ? { highValueAssetIds: parsed.values["high-value-asset-id"] }
+          : {}),
       });
   console.log(
     JSON.stringify(
@@ -346,6 +350,7 @@ async function shoot(argv: string[]): Promise<number> {
         clusters: result.manifest.clusters.length,
         duplicate_groups: result.manifest.duplicate_groups.length,
         burst_groups: result.manifest.burst_groups.length,
+        near_duplicate_groups: result.manifest.near_duplicate_groups.length,
         report: resolve(result.sessionDir, "manifest.json"),
       },
       null,

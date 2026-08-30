@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, extname, join, parse, relative, resolve } from "node:path";
+import { dirname, extname, join, parse, relative, resolve, sep } from "node:path";
 
 import {
   PropagationPlanSchema,
@@ -12,6 +12,8 @@ import {
 import { sha256File } from "./ingest.js";
 import { createSanitizedPreview } from "./preview.js";
 import { PARAMETER_REGISTRY_VERSION, selectPropagatableOperations } from "./parameter-registry.js";
+import { readShootMetadata } from "./shoot-metadata.js";
+import { buildNearDuplicateGroups, rankAssetIds } from "./shoot-grouping.js";
 import type {
   CullingDecision,
   LightingClassification,
@@ -20,6 +22,7 @@ import type {
   ShootAnalyzer,
   ShootAsset,
   ShootDecision,
+  ShootIngestionError,
   ShootManifest,
   ShootPlan,
   ShootReviewFile,
@@ -39,6 +42,7 @@ const RAW_EXTENSIONS = new Set([
   ".srw",
 ]);
 const PREVIEW_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
+const MIN_AUTO_REJECT_CONFIDENCE = 0.65;
 
 async function walkFiles(root: string, current = root): Promise<string[]> {
   const files: string[] = [];
@@ -51,8 +55,51 @@ async function walkFiles(root: string, current = root): Promise<string[]> {
   return files;
 }
 
+function relativePath(root: string, path: string): string {
+  return relative(root, path).split(sep).join("/");
+}
+
+function normalizeRelativePath(path: string): string {
+  return path.replaceAll("\\", "/").toLowerCase();
+}
+
 function assetId(relativeRawPath: string): string {
-  return createHash("sha256").update(relativeRawPath.toLowerCase()).digest("hex").slice(0, 16);
+  return createHash("sha256").update(relativeRawPath).digest("hex");
+}
+
+async function safeHash(
+  path: string,
+  source: ShootIngestionError["source"],
+  errors: ShootIngestionError[],
+): Promise<string | undefined> {
+  try {
+    return await sha256File(path);
+  } catch (error) {
+    errors.push({
+      source,
+      stage: "hash",
+      message:
+        "Failed to hash " + path + ": " + (error instanceof Error ? error.message : String(error)),
+    });
+    return undefined;
+  }
+}
+
+function enforceCullingSafety(decision: CullingDecision, asset: ShootAsset): CullingDecision {
+  if (
+    decision.selection_status !== "reject" ||
+    (decision.confidence >= MIN_AUTO_REJECT_CONFIDENCE && asset.high_value !== true)
+  ) {
+    return decision;
+  }
+  const reason = asset.high_value
+    ? "Configured high-value asset cannot be automatically rejected"
+    : "Reject confidence " + decision.confidence + " is below " + MIN_AUTO_REJECT_CONFIDENCE;
+  return {
+    ...decision,
+    selection_status: "review",
+    rationale: reason + "; manual review required. " + decision.rationale,
+  };
 }
 
 export async function indexShoot(rootInput: string): Promise<ShootAsset[]> {
@@ -61,8 +108,8 @@ export async function indexShoot(rootInput: string): Promise<ShootAsset[]> {
   for (const path of await walkFiles(root)) {
     const extension = extname(path).toLowerCase();
     if (!RAW_EXTENSIONS.has(extension) && !PREVIEW_EXTENSIONS.has(extension)) continue;
-    const relativePath = relative(root, path);
-    const key = join(dirname(relativePath), parse(relativePath).name).toLowerCase();
+    const pathRelativeToRoot = relativePath(root, path);
+    const key = join(dirname(pathRelativeToRoot), parse(pathRelativeToRoot).name).toLowerCase();
     const group = groups.get(key) ?? { raws: [], previews: [] };
     if (RAW_EXTENSIONS.has(extension)) group.raws.push(path);
     else group.previews.push(path);
@@ -71,24 +118,36 @@ export async function indexShoot(rootInput: string): Promise<ShootAsset[]> {
 
   const assets: ShootAsset[] = [];
   for (const group of groups.values()) {
-    for (const rawPath of group.raws.sort()) {
-      const relativeRawPath = relative(root, rawPath);
+    for (const rawPath of group.raws.sort((left, right) =>
+      relativePath(root, left).localeCompare(relativePath(root, right)),
+    )) {
+      const relativeRawPath = relativePath(root, rawPath);
       const unambiguous = group.raws.length === 1 && group.previews.length === 1;
       const previewPath = unambiguous ? group.previews[0] : undefined;
+      const ingestionErrors: ShootIngestionError[] = [];
+      const rawSha = await safeHash(rawPath, "raw", ingestionErrors);
+      const previewSha = previewPath
+        ? await safeHash(previewPath, "preview", ingestionErrors)
+        : undefined;
+      const metadataResult = await readShootMetadata(rawPath, previewPath);
+      ingestionErrors.push(...metadataResult.errors);
       assets.push({
         id: assetId(relativeRawPath),
         relative_raw_path: relativeRawPath,
         raw_path: rawPath,
         ...(previewPath
           ? {
-              relative_preview_path: relative(root, previewPath),
+              relative_preview_path: relativePath(root, previewPath),
               preview_path: previewPath,
-              preview_sha256: await sha256File(previewPath),
+              ...(previewSha !== undefined ? { preview_sha256: previewSha } : {}),
             }
           : {}),
-        raw_sha256: await sha256File(rawPath),
+        ...(rawSha !== undefined ? { raw_sha256: rawSha } : {}),
+        ...metadataResult.metadata,
         source_confidence:
           group.previews.length === 0 ? "missing_preview" : unambiguous ? "high" : "ambiguous",
+        high_value: false,
+        ingestion_errors: ingestionErrors,
       });
     }
   }
@@ -121,20 +180,55 @@ export class ConservativeShootAnalyzer implements ShootAnalyzer {
 export class ReviewedShootAnalyzer implements ShootAnalyzer {
   readonly requiresCloudPreview = false;
 
+  private readonly reviewDecisions: ShootReviewFile["decisions"];
   private readonly byId = new Map<string, ShootReviewFile["decisions"][number]>();
   private readonly byPath = new Map<string, ShootReviewFile["decisions"][number]>();
 
   constructor(review: ShootReviewFile) {
+    this.reviewDecisions = review.decisions;
     for (const decision of review.decisions) {
       if (decision.asset_id) this.byId.set(decision.asset_id, decision);
       if (decision.relative_raw_path) {
-        this.byPath.set(decision.relative_raw_path.toLowerCase(), decision);
+        this.byPath.set(normalizeRelativePath(decision.relative_raw_path), decision);
       }
     }
   }
 
+  validateAssets(assets: ShootAsset[]): void {
+    const assetsById = new Map(assets.map((asset) => [asset.id, asset]));
+    const assetsByPath = new Map(
+      assets.map((asset) => [normalizeRelativePath(asset.relative_raw_path), asset]),
+    );
+    const seen = new Set<string>();
+    for (const decision of this.reviewDecisions) {
+      const byId = decision.asset_id ? assetsById.get(decision.asset_id) : undefined;
+      const byPath = decision.relative_raw_path
+        ? assetsByPath.get(normalizeRelativePath(decision.relative_raw_path))
+        : undefined;
+      if (decision.asset_id && !byId) {
+        throw new Error("Review file references unknown asset id: " + decision.asset_id);
+      }
+      if (decision.relative_raw_path && !byPath) {
+        throw new Error(
+          "Review file references unknown relative path: " + decision.relative_raw_path,
+        );
+      }
+      if (byId && byPath && byId.id !== byPath.id) {
+        throw new Error("Review file asset id and relative path identify different assets");
+      }
+      const resolved = byId ?? byPath;
+      if (!resolved) throw new Error("Review file decision does not identify an indexed asset");
+      if (seen.has(resolved.id)) {
+        throw new Error("Review file contains duplicate decision for asset: " + resolved.id);
+      }
+      seen.add(resolved.id);
+    }
+  }
+
   private decision(asset: ShootAsset): ShootReviewFile["decisions"][number] | undefined {
-    return this.byId.get(asset.id) ?? this.byPath.get(asset.relative_raw_path.toLowerCase());
+    return (
+      this.byId.get(asset.id) ?? this.byPath.get(normalizeRelativePath(asset.relative_raw_path))
+    );
   }
 
   async cull(asset: ShootAsset): Promise<CullingDecision> {
@@ -185,6 +279,7 @@ async function readDecision(path: string): Promise<ShootDecision | undefined> {
 function duplicateGroups(assets: ShootAsset[]): ShootManifest["duplicate_groups"] {
   return Object.entries(
     assets.reduce<Record<string, string[]>>((groups, asset) => {
+      if (!asset.raw_sha256) return groups;
       (groups[asset.raw_sha256] ??= []).push(asset.id);
       return groups;
     }, {}),
@@ -193,7 +288,10 @@ function duplicateGroups(assets: ShootAsset[]): ShootManifest["duplicate_groups"
     .map(([sha256, asset_ids]) => ({ sha256, asset_ids }));
 }
 
-function burstGroups(assets: ShootAsset[]): ShootManifest["burst_groups"] {
+function burstGroups(
+  assets: ShootAsset[],
+  decisions: ShootDecision[],
+): ShootManifest["burst_groups"] {
   const candidates = new Map<string, Array<{ sequence: number; id: string }>>();
   for (const asset of assets) {
     const relativePath = asset.relative_raw_path;
@@ -217,6 +315,13 @@ function burstGroups(assets: ShootAsset[]): ShootManifest["burst_groups"] {
             .slice(0, 16),
           asset_ids: run.map((item) => item.id),
           basis: "filename_sequence",
+          ranked_asset_ids: rankAssetIds(
+            run.map((item) => item.id),
+            decisions,
+            assets,
+          ),
+          ranking_rationale:
+            "Ranked by explicit culling status, confidence, and stable relative path; grouping is review-only.",
         });
       }
       run = [];
@@ -230,28 +335,75 @@ function burstGroups(assets: ShootAsset[]): ShootManifest["burst_groups"] {
   return groups;
 }
 
-function clustersFor(decisions: ShootDecision[]): ShootManifest["clusters"] {
+function clustersFor(
+  decisions: ShootDecision[],
+  assets: ShootAsset[],
+): {
+  clusters: ShootManifest["clusters"];
+  unclustered_asset_ids: string[];
+} {
+  const assetsById = new Map(assets.map((asset) => [asset.id, asset]));
   const clusterGroups = new Map<string, string[]>();
+  const unclustered = new Set<string>();
   for (const decision of decisions) {
     const key = decision.lighting.lighting_type;
+    if (
+      decision.state === "failed" ||
+      decision.lighting.confidence < MIN_AUTO_REJECT_CONFIDENCE ||
+      key === "mixed" ||
+      key === "unknown"
+    ) {
+      unclustered.add(decision.asset_id);
+      continue;
+    }
     const members = clusterGroups.get(key) ?? [];
     members.push(decision.asset_id);
     clusterGroups.set(key, members);
   }
-  return [...clusterGroups.entries()].map(([lighting_type, member_ids], index) => ({
-    cluster_id: `cluster-${String(index + 1).padStart(3, "0")}`,
-    lighting_type,
-    member_ids,
-    representative_id:
-      decisions
+  const clusters = [...clusterGroups.entries()].map(([lighting_type, member_ids], index) => {
+    const members = decisions.filter((decision) => member_ids.includes(decision.asset_id));
+    const outlierIds = members
+      .filter((decision) => {
+        const asset = assetsById.get(decision.asset_id);
+        return (
+          decision.state === "failed" ||
+          decision.culling.selection_status === "review" ||
+          decision.culling.selection_status === "reject" ||
+          decision.culling.confidence < MIN_AUTO_REJECT_CONFIDENCE ||
+          !asset ||
+          asset.source_confidence !== "high" ||
+          asset.ingestion_errors.length > 0
+        );
+      })
+      .map((decision) => decision.asset_id);
+    const outlierSet = new Set(outlierIds);
+    const representative =
+      members
         .filter(
-          (item) =>
-            member_ids.includes(item.asset_id) &&
-            (item.culling.selection_status === "select" ||
-              item.culling.selection_status === "keep"),
+          (decision) =>
+            !outlierSet.has(decision.asset_id) &&
+            (decision.culling.selection_status === "select" ||
+              decision.culling.selection_status === "keep"),
         )
-        .sort((a, b) => b.culling.confidence - a.culling.confidence)[0]?.asset_id ?? null,
-  }));
+        .sort((left, right) => right.culling.confidence - left.culling.confidence)[0]?.asset_id ??
+      null;
+    return {
+      cluster_id: "cluster-" + String(index + 1).padStart(3, "0"),
+      lighting_type,
+      member_ids,
+      representative_id: representative,
+      confidence:
+        members.reduce((sum, decision) => sum + decision.lighting.confidence, 0) /
+        Math.max(members.length, 1),
+      strategy:
+        "lighting:" + lighting_type + "; edit and accept one representative before propagation",
+      outlier_ids: outlierIds,
+    };
+  });
+  return {
+    clusters,
+    unclustered_asset_ids: [...unclustered].sort(),
+  };
 }
 
 async function writeShootReports(
@@ -262,13 +414,17 @@ async function writeShootReports(
   resumedJobs: number,
   analyzedJobs: number,
 ): Promise<ShootManifest> {
-  const clusters = clustersFor(decisions);
+  const clustered = clustersFor(decisions, plan.assets);
+  const clusters = clustered.clusters;
+  const nearDuplicateGroups = await buildNearDuplicateGroups(plan.assets, decisions);
   const manifest = ShootManifestSchema.parse({
     ...plan,
     decisions,
     duplicate_groups: duplicateGroups(plan.assets),
-    burst_groups: burstGroups(plan.assets),
+    burst_groups: burstGroups(plan.assets, decisions),
+    near_duplicate_groups: nearDuplicateGroups,
     clusters,
+    unclustered_asset_ids: clustered.unclustered_asset_ids,
     summary: {
       input: plan.assets.length,
       select: decisions.filter((item) => item.culling.selection_status === "select").length,
@@ -283,7 +439,8 @@ async function writeShootReports(
   });
   await writeJsonAtomic(join(sessionDir, "manifest.json"), manifest);
   await writeJsonAtomic(join(sessionDir, "clusters.json"), clusters);
-  const header = "asset_id,raw,preview,status,confidence,lighting,rationale";
+  const header =
+    "asset_id,raw,preview,status,confidence,lighting,technical_evidence,aesthetic_evidence,rationale";
   const assetsById = new Map(plan.assets.map((asset) => [asset.id, asset]));
   const rows = decisions.map((decision) => {
     const asset = assetsById.get(decision.asset_id)!;
@@ -294,6 +451,8 @@ async function writeShootReports(
       decision.culling.selection_status,
       String(decision.culling.confidence),
       decision.lighting.lighting_type,
+      decision.culling.evidence?.technical.join(" | ") ?? "",
+      decision.culling.evidence?.aesthetic.join(" | ") ?? "",
       decision.culling.rationale,
     ]
       .map(csvCell)
@@ -303,10 +462,25 @@ async function writeShootReports(
   return manifest;
 }
 
+function applyHighValueConfiguration(assets: ShootAsset[], configuredIds: string[]): ShootAsset[] {
+  const highValueIds = new Set(configuredIds);
+  const knownIds = new Set(assets.map((asset) => asset.id));
+  const unknownIds = [...highValueIds].filter((assetId) => !knownIds.has(assetId));
+  if (unknownIds.length > 0) {
+    throw new Error("Unknown high-value asset ids: " + unknownIds.join(", "));
+  }
+  return assets.map((asset) => ({ ...asset, high_value: highValueIds.has(asset.id) }));
+}
+
 export async function createShootSession(options: {
   shootRoot: string;
   sessionRoot: string;
+  highValueAssetIds?: string[];
 }): Promise<{ sessionDir: string; plan: ShootPlan }> {
+  const assets = applyHighValueConfiguration(
+    await indexShoot(options.shootRoot),
+    options.highValueAssetIds ?? [],
+  );
   const sessionId = `${new Date().toISOString().replaceAll(":", "-")}-${randomUUID().slice(0, 8)}`;
   const sessionDir = join(resolve(options.sessionRoot), sessionId);
   await mkdir(join(sessionDir, "jobs"), { recursive: true });
@@ -316,7 +490,7 @@ export async function createShootSession(options: {
     shoot_root: resolve(options.shootRoot),
     created_at: new Date().toISOString(),
     mode: "dry_run",
-    assets: await indexShoot(options.shootRoot),
+    assets,
   });
   await writeJsonAtomic(join(sessionDir, "shoot-plan.json"), plan);
   return { sessionDir, plan };
@@ -332,6 +506,7 @@ export async function resumeShootDryRun(options: {
   const plan = ShootPlanSchema.parse(
     JSON.parse(await readFile(join(sessionDir, "shoot-plan.json"), "utf8")),
   );
+  options.analyzer.validateAssets?.(plan.assets);
   if (options.analyzer.requiresCloudPreview && !options.allowCloudPreview) {
     throw new Error("This shoot analyzer requires --allow-cloud-preview; no image was sent");
   }
@@ -349,7 +524,8 @@ export async function resumeShootDryRun(options: {
     }
     let decision: ShootDecision;
     try {
-      const analyzer = asset.preview_path ? options.analyzer : conservative;
+      const previewHasErrors = asset.ingestion_errors.some((item) => item.source === "preview");
+      const analyzer = asset.preview_path && !previewHasErrors ? options.analyzer : conservative;
       let analysisAsset = asset;
       if (asset.preview_path && analyzer.requiresCloudPreview) {
         const sanitizedPath = join(sessionDir, "inputs", `${asset.id}.jpg`);
@@ -362,7 +538,7 @@ export async function resumeShootDryRun(options: {
       ]);
       decision = ShootDecisionSchema.parse({
         asset_id: asset.id,
-        culling,
+        culling: enforceCullingSafety(culling, asset),
         lighting,
         state: "completed",
       });
@@ -399,11 +575,16 @@ export async function runShootDryRun(options: {
   sessionRoot: string;
   analyzer: ShootAnalyzer;
   allowCloudPreview?: boolean;
+  highValueAssetIds?: string[];
 }): Promise<{ sessionDir: string; manifest: ShootManifest }> {
   if (options.analyzer.requiresCloudPreview && !options.allowCloudPreview) {
     throw new Error("This shoot analyzer requires --allow-cloud-preview; no session was created");
   }
-  const created = await createShootSession(options);
+  const created = await createShootSession({
+    shootRoot: options.shootRoot,
+    sessionRoot: options.sessionRoot,
+    ...(options.highValueAssetIds ? { highValueAssetIds: options.highValueAssetIds } : {}),
+  });
   return resumeShootDryRun({
     sessionDir: created.sessionDir,
     analyzer: options.analyzer,
@@ -438,6 +619,10 @@ export function createSafePropagationPlan(options: {
   const excluded: PropagationPlan["excluded"] = [];
   for (const assetId of cluster.member_ids) {
     if (assetId === cluster.representative_id) continue;
+    if (cluster.outlier_ids.includes(assetId)) {
+      excluded.push({ asset_id: assetId, reason: "cluster_outlier" });
+      continue;
+    }
     const asset = assetsById.get(assetId);
     if (!asset) {
       excluded.push({ asset_id: assetId, reason: "unknown_asset" });
@@ -446,6 +631,8 @@ export function createSafePropagationPlan(options: {
     const decision = decisionsById.get(assetId);
     if (asset.source_confidence !== "high") {
       excluded.push({ asset_id: assetId, reason: `source_${asset.source_confidence}` });
+    } else if (asset.ingestion_errors.length > 0) {
+      excluded.push({ asset_id: assetId, reason: "ingestion_errors" });
     } else if (
       !decision ||
       (decision.culling.selection_status !== "select" &&

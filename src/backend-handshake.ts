@@ -15,6 +15,7 @@ export const WORKFLOW_COPY_RECONCILIATION_OPERATION = "reconcile_workflow_copy" 
 
 export const PROPAGATION_OPERATIONS = [
   "read_current_edit",
+  "create_workflow_copy",
   "create_checkpoint",
   "apply_global_adjustment",
 ] as const;

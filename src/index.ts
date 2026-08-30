@@ -5,6 +5,8 @@ export * from "./batch-edit.js";
 export * from "./delivery.js";
 export * from "./evaluation.js";
 export * from "./shoot-analyzers.js";
+export * from "./shoot-metadata.js";
+export * from "./shoot-grouping.js";
 export * from "./ingest.js";
 export * from "./preview.js";
 export * from "./parameter-registry.js";

@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import { MockBackend } from "../src/backends.js";
 import { applyPropagationPlan, runRepresentativeEdits } from "../src/batch-edit.js";
 import {
+  ConservativeShootAnalyzer,
   createSafePropagationPlan,
   createShootSession,
   indexShoot,
@@ -209,7 +210,7 @@ describe("v0.3 shoot workflow", () => {
       allowCloudPreview: true,
     });
     expect(result.manifest.summary.analyzed_jobs).toBe(1);
-    expect(receivedPath).toMatch(/inputs[\\/][a-f0-9]{16}\.jpg$/);
+    expect(receivedPath).toMatch(/inputs[\\/][a-f0-9]{64}\.jpg$/);
     expect((await readFile(receivedPath)).length).toBeGreaterThan(0);
   });
 
@@ -230,6 +231,159 @@ describe("v0.3 shoot workflow", () => {
     expect(
       assets.find((item) => item.relative_raw_path === "ambiguous.NEF")?.source_confidence,
     ).toBe("ambiguous");
+  });
+
+  it("preserves local metadata and non-ASCII relative paths", async () => {
+    const root = await mkdtemp(join(tmpdir(), "photo-agent-v03-metadata-"));
+    const folder = join(root, "婚禮");
+    await mkdir(folder, { recursive: true });
+    const { raw } = await pair(folder, "相片_0001");
+    await writeFile(
+      raw + ".xmp",
+      '<x:xmpmeta><rdf:Description tiff:Make="NIKON CORPORATION" tiff:Model="NIKON Z 8" exif:DateTimeOriginal="2026:08:31 12:34:56" aux:Lens="NIKKOR Z 24-70mm f/2.8 S" /></x:xmpmeta>',
+      "utf8",
+    );
+    const [asset] = await indexShoot(root);
+    expect(asset?.relative_raw_path).toBe("婚禮/相片_0001.NEF");
+    expect(asset?.capture_time).toBe("2026:08:31 12:34:56");
+    expect(asset?.camera).toBe("NIKON CORPORATION NIKON Z 8");
+    expect(asset?.lens).toBe("NIKKOR Z 24-70mm f/2.8 S");
+    expect(asset?.width).toBe(1);
+    expect(asset?.height).toBe(1);
+    expect(asset?.ingestion_errors).toEqual([]);
+  });
+
+  it("isolates corrupt previews while completing readable assets", async () => {
+    const root = await mkdtemp(join(tmpdir(), "photo-agent-v03-corrupt-"));
+    await pair(root, "readable");
+    await writeFile(join(root, "corrupt.NEF"), "corrupt raw", "utf8");
+    await writeFile(join(root, "corrupt.JPG"), "not an image", "utf8");
+    const calls: string[] = [];
+    const result = await runShootDryRun({
+      shootRoot: root,
+      sessionRoot: join(root, "sessions"),
+      analyzer: {
+        cull: async (asset) => {
+          calls.push(asset.relative_raw_path);
+          return { selection_status: "select", confidence: 0.9, rationale: "readable fixture" };
+        },
+        classify: async () => ({
+          lighting_type: "daylight",
+          confidence: 0.9,
+          rationale: "readable fixture",
+        }),
+      },
+    });
+    const corrupt = result.manifest.assets.find(
+      (asset) => asset.relative_raw_path === "corrupt.NEF",
+    );
+    expect(corrupt?.ingestion_errors.some((item) => item.source === "preview")).toBe(true);
+    expect(result.manifest.summary.input).toBe(2);
+    expect(result.manifest.summary.select).toBe(1);
+    expect(result.manifest.summary.review).toBe(1);
+    expect(result.manifest.summary.failed).toBe(0);
+    expect(calls).toEqual(["readable.NEF"]);
+  });
+
+  it("keeps low-confidence and configured high-value rejects in review", async () => {
+    const root = await mkdtemp(join(tmpdir(), "photo-agent-v03-culling-policy-"));
+    await pair(root, "ordinary");
+    await pair(root, "important");
+    const indexed = await indexShoot(root);
+    const importantId = indexed.find((asset) => asset.relative_raw_path === "important.NEF")?.id;
+    expect(importantId).toBeTruthy();
+    const result = await runShootDryRun({
+      shootRoot: root,
+      sessionRoot: join(root, "sessions"),
+      analyzer: {
+        cull: async (asset) => ({
+          selection_status: "reject",
+          confidence: asset.relative_raw_path.startsWith("ordinary") ? 0.4 : 0.95,
+          rationale: "policy fixture",
+          evidence: { technical: ["fixture sharpness"], aesthetic: ["fixture value"] },
+        }),
+        classify: async () => ({
+          lighting_type: "daylight",
+          confidence: 0.9,
+          rationale: "policy fixture",
+        }),
+      },
+      highValueAssetIds: [importantId!],
+    });
+    expect(result.manifest.summary.reject).toBe(0);
+    expect(result.manifest.summary.review).toBe(2);
+    expect(result.manifest.assets.find((asset) => asset.id === importantId)?.high_value).toBe(true);
+    expect(
+      result.manifest.decisions.every((item) => item.culling.selection_status === "review"),
+    ).toBe(true);
+    expect(result.manifest.decisions[0]?.culling.evidence).toEqual({
+      technical: ["fixture sharpness"],
+      aesthetic: ["fixture value"],
+    });
+  });
+
+  it("leaves weak lighting unclustered and marks culling outliers", async () => {
+    const root = await mkdtemp(join(tmpdir(), "photo-agent-v03-cluster-boundaries-"));
+    await pair(root, "good");
+    await pair(root, "outlier");
+    await pair(root, "mixed");
+    await pair(root, "weak");
+    const result = await runShootDryRun({
+      shootRoot: root,
+      sessionRoot: join(root, "sessions"),
+      analyzer: {
+        cull: async (asset) => ({
+          selection_status: asset.relative_raw_path === "outlier.NEF" ? "review" : "keep",
+          confidence: asset.relative_raw_path === "outlier.NEF" ? 0.5 : 0.9,
+          rationale: "cluster boundary fixture",
+        }),
+        classify: async (asset) => ({
+          lighting_type:
+            asset.relative_raw_path === "mixed.NEF"
+              ? "mixed"
+              : asset.relative_raw_path === "weak.NEF"
+                ? "daylight"
+                : "daylight",
+          confidence: asset.relative_raw_path === "weak.NEF" ? 0.4 : 0.9,
+          rationale: "cluster boundary fixture",
+        }),
+      },
+    });
+    const daylight = result.manifest.clusters.find(
+      (cluster) => cluster.lighting_type === "daylight",
+    );
+    expect(daylight?.member_ids).toHaveLength(2);
+    expect(daylight?.outlier_ids).toHaveLength(1);
+    expect(daylight?.representative_id).toBeTruthy();
+    expect(result.manifest.unclustered_asset_ids).toHaveLength(2);
+    expect(result.manifest.unclustered_asset_ids).toEqual(
+      expect.arrayContaining([
+        result.manifest.assets.find((asset) => asset.relative_raw_path === "mixed.NEF")?.id,
+        result.manifest.assets.find((asset) => asset.relative_raw_path === "weak.NEF")?.id,
+      ]),
+    );
+  });
+
+  it("reports exact duplicate RAW content without cleanup authority", async () => {
+    const root = await mkdtemp(join(tmpdir(), "photo-agent-v03-duplicates-"));
+    const first = join(root, "first");
+    const second = join(root, "second");
+    await mkdir(first, { recursive: true });
+    await mkdir(second, { recursive: true });
+    await pair(first, "same");
+    await pair(second, "same");
+    const result = await runShootDryRun({
+      shootRoot: root,
+      sessionRoot: join(root, "sessions"),
+      analyzer: new ConservativeShootAnalyzer(),
+    });
+    expect(result.manifest.duplicate_groups).toHaveLength(1);
+    expect(result.manifest.duplicate_groups[0]?.asset_ids).toHaveLength(2);
+    expect(new Set(result.manifest.duplicate_groups[0]?.asset_ids).size).toBe(2);
+    expect(result.manifest.near_duplicate_groups).toHaveLength(1);
+    expect(result.manifest.near_duplicate_groups[0]?.ranked_asset_ids).toHaveLength(2);
+    expect(await access(join(first, "same.NEF"))).toBeUndefined();
+    expect(await access(join(second, "same.NEF"))).toBeUndefined();
   });
 
   it("processes 120 pairs with isolated jobs and a resumable report layout", async () => {
@@ -261,6 +415,9 @@ describe("v0.3 shoot workflow", () => {
     expect(result.manifest.summary.failed).toBe(1);
     expect(result.manifest.decisions).toHaveLength(120);
     expect(result.manifest.burst_groups).toHaveLength(1);
+    expect(result.manifest.burst_groups[0]?.ranked_asset_ids).toHaveLength(120);
+    expect(result.manifest.burst_groups[0]?.ranking_rationale).toContain("culling status");
+    expect(result.manifest.near_duplicate_groups.length).toBeGreaterThan(0);
     expect(await readFile(join(result.sessionDir, "culling.csv"), "utf8")).toContain(
       "selection_status".replace("selection_", ""),
     );
@@ -355,6 +512,7 @@ describe("v0.3 shoot workflow", () => {
     expect(propagation.operation_parameters).toEqual(["exposure_ev"]);
     expect(propagation.targets).toHaveLength(2);
     expect(propagation.excluded).toHaveLength(1);
+    expect(propagation.excluded[0]?.reason).toBe("cluster_outlier");
     expect(propagation.requires_explicit_apply).toBe(true);
 
     const representatives = await runRepresentativeEdits({
@@ -369,6 +527,47 @@ describe("v0.3 shoot workflow", () => {
     });
     expect(representatives).toHaveLength(1);
     expect(representatives[0]?.state).toBe("ACCEPTED");
+    const resumedRepresentatives = await runRepresentativeEdits({
+      manifest: result.manifest,
+      sessionRoot: join(root, "representatives"),
+      providerFactory: () => {
+        throw new Error("accepted representative must not be rerun");
+      },
+      backendFactory: () => {
+        throw new Error("accepted representative backend must not be recreated");
+      },
+      apply: true,
+      allowCloudPreview: false,
+      maxIterations: 3,
+    });
+    expect(resumedRepresentatives[0]?.state).toBe("ACCEPTED");
+    expect(resumedRepresentatives[0]?.result?.state).toBe("ACCEPTED");
+    const representativeJobPath = join(root, "representatives", "jobs", "cluster-001.json");
+    const runningJob = JSON.parse(await readFile(representativeJobPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    runningJob.state = "RUNNING";
+    runningJob.workflow_session_root = join(root, "missing-workflow-root");
+    delete runningJob.result;
+    await writeFile(representativeJobPath, JSON.stringify(runningJob), "utf8");
+    const interruptedRepresentatives = await runRepresentativeEdits({
+      manifest: result.manifest,
+      sessionRoot: join(root, "representatives"),
+      providerFactory: () => {
+        throw new Error("incomplete representative must not be rerun");
+      },
+      backendFactory: () => {
+        throw new Error("incomplete representative backend must not be recreated");
+      },
+      apply: true,
+      allowCloudPreview: false,
+      maxIterations: 3,
+    });
+    expect(interruptedRepresentatives[0]?.state).toBe("REVIEW_REQUIRED");
+    expect(interruptedRepresentatives[0]?.reason).toBe(
+      "incomplete_representative_requires_recovery",
+    );
     await expect(
       applyPropagationPlan({
         manifest: result.manifest,
@@ -376,8 +575,48 @@ describe("v0.3 shoot workflow", () => {
         sessionDir: result.sessionDir,
         backendFactory: (asset) => new MockBackend(asset.raw_path),
         confirmApply: false,
+        representativeResults: representatives,
       }),
     ).rejects.toThrow("confirmApply=true");
+    await expect(
+      applyPropagationPlan({
+        manifest: result.manifest,
+        plan: propagation,
+        sessionDir: result.sessionDir,
+        backendFactory: (asset) => new MockBackend(asset.raw_path),
+        confirmApply: true,
+        representativeResults: [],
+      }),
+    ).rejects.toThrow("ACCEPTED representative");
+    const forgedOperationsPlan = {
+      ...propagation,
+      operation_parameters: [...propagation.operation_parameters, "temperature_k" as const],
+      targets: propagation.targets.map((target) => ({
+        ...target,
+        operations: [
+          ...target.operations,
+          {
+            parameter: "temperature_k" as const,
+            mode: "delta" as const,
+            value: 250,
+            confidence: 0.9,
+            rationale: "forged context-sensitive operation",
+          },
+        ],
+      })),
+    };
+    await expect(
+      applyPropagationPlan({
+        manifest: result.manifest,
+        plan: forgedOperationsPlan,
+        sessionDir: result.sessionDir,
+        backendFactory: () => {
+          throw new Error("registry rejection must happen before backend creation");
+        },
+        confirmApply: true,
+        representativeResults: representatives,
+      }),
+    ).rejects.toThrow("not authorized by the parameter registry");
     const propagationBackends: MockBackend[] = [];
     const applied = await applyPropagationPlan({
       manifest: result.manifest,
@@ -389,6 +628,7 @@ describe("v0.3 shoot workflow", () => {
         return backend;
       },
       confirmApply: true,
+      representativeResults: representatives,
     });
     expect(applied.map((item) => item.state)).toEqual(["APPLIED", "APPLIED"]);
     expect(propagationBackends).toHaveLength(2);
@@ -397,12 +637,66 @@ describe("v0.3 shoot workflow", () => {
         "connect",
         "handshake",
         "read_current_edit",
+        "create_workflow_copy",
+        "read_current_edit",
         "create_checkpoint",
         "apply_global_adjustment",
         "read_current_edit",
         "close",
       ]);
     }
+    expect(applied.every((item) => item.workflow_copy_verified === true)).toBe(true);
+    const stoppedBackends: MockBackend[] = [];
+    const stopped = await applyPropagationPlan({
+      manifest: result.manifest,
+      plan: propagation,
+      sessionDir: result.sessionDir,
+      backendFactory: (asset) => {
+        const backend = new MockBackend(asset.raw_path);
+        stoppedBackends.push(backend);
+        if (stoppedBackends.length === 1) {
+          backend.createWorkflowCopy = async (
+            _sourcePhotoId,
+            _expectedSourceUuid,
+            operationId,
+          ) => ({
+            operation_id: operationId,
+            result: "REVIEW_REQUIRED",
+            partial: false,
+            selection_restoration: { status: "not_needed", verified: true },
+            reason: "fixture shared uncertainty",
+          });
+        }
+        return backend;
+      },
+      confirmApply: true,
+      representativeResults: representatives,
+    });
+    expect(stopped.map((item) => item.state)).toEqual(["REVIEW_REQUIRED", "REVIEW_REQUIRED"]);
+    expect(stopped[1]?.reason).toContain("shared_backend_uncertainty");
+    expect(stoppedBackends).toHaveLength(1);
+
+    const closeFailureBackends: MockBackend[] = [];
+    const closeFailure = await applyPropagationPlan({
+      manifest: result.manifest,
+      plan: propagation,
+      sessionDir: result.sessionDir,
+      backendFactory: (asset) => {
+        const backend = new MockBackend(asset.raw_path);
+        backend.close = async () => {
+          backend.calls.push("close_failure");
+          throw new Error("fixture close uncertainty");
+        };
+        closeFailureBackends.push(backend);
+        return backend;
+      },
+      confirmApply: true,
+      representativeResults: representatives,
+    });
+    expect(closeFailure.map((item) => item.state)).toEqual(["REVIEW_REQUIRED", "REVIEW_REQUIRED"]);
+    expect(closeFailure[0]?.reason).toContain("backend_close_failed:fixture close uncertainty");
+    expect(closeFailure[1]?.reason).toContain("shared_backend_uncertainty");
+    expect(closeFailureBackends).toHaveLength(1);
   });
 
   it("uses a schema-validated review file without inventing missing decisions", async () => {
@@ -434,5 +728,50 @@ describe("v0.3 shoot workflow", () => {
     expect(
       result.manifest.clusters.find((item) => item.lighting_type === "shade")?.representative_id,
     ).toBeTruthy();
+  });
+
+  it("rejects unknown, duplicate, and mismatched reviewed asset references", async () => {
+    const root = await mkdtemp(join(tmpdir(), "photo-agent-v03-review-validation-"));
+    await pair(root, "REVIEW_A");
+    await pair(root, "REVIEW_B");
+    const created = await createShootSession({
+      shootRoot: root,
+      sessionRoot: join(root, "sessions"),
+    });
+    const [first, second] = created.plan.assets;
+    expect(first).toBeTruthy();
+    expect(second).toBeTruthy();
+    const decision = {
+      culling: { selection_status: "keep", confidence: 0.9, rationale: "validated" },
+      lighting: { lighting_type: "daylight", confidence: 0.9, rationale: "validated" },
+    };
+    const writeReview = async (name: string, decisions: unknown[]) => {
+      const reviewPath = join(root, name);
+      await writeFile(reviewPath, JSON.stringify({ schema_version: "0.3.0", decisions }), "utf8");
+      return loadReviewedShootAnalyzer(reviewPath);
+    };
+    await expect(
+      resumeShootDryRun({
+        sessionDir: created.sessionDir,
+        analyzer: await writeReview("unknown.json", [{ ...decision, asset_id: "missing" }]),
+      }),
+    ).rejects.toThrow("unknown asset id");
+    await expect(
+      resumeShootDryRun({
+        sessionDir: created.sessionDir,
+        analyzer: await writeReview("duplicate.json", [
+          { ...decision, asset_id: first!.id },
+          { ...decision, relative_raw_path: first!.relative_raw_path },
+        ]),
+      }),
+    ).rejects.toThrow("duplicate decision");
+    await expect(
+      resumeShootDryRun({
+        sessionDir: created.sessionDir,
+        analyzer: await writeReview("mismatch.json", [
+          { ...decision, asset_id: first!.id, relative_raw_path: second!.relative_raw_path },
+        ]),
+      }),
+    ).rejects.toThrow("different assets");
   });
 });

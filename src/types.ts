@@ -20,6 +20,7 @@ import type {
   PreviewPolicySchema,
   SemanticIntentPlanSchema,
   SessionManifestSchema,
+  ShootIngestionErrorSchema,
   ShootAssetSchema,
   ShootDecisionSchema,
   ShootManifestSchema,
@@ -31,9 +32,11 @@ import type {
   DevelopIterationIntentSchema,
   DevelopReadbackEvidenceSchema,
   RecoveryEvidenceSchema,
+  RepresentativeJobSchema,
   WorkflowCopyIntentSchema,
   WorkflowCopyResultSchema,
   WorkflowCopyVerificationSchema,
+  WorkflowResultSchema,
 } from "./schemas.js";
 
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
@@ -49,6 +52,7 @@ export type CheckpointEvidence = z.infer<typeof CheckpointEvidenceSchema>;
 export type DevelopIterationIntent = z.infer<typeof DevelopIterationIntentSchema>;
 export type DevelopReadbackEvidence = z.infer<typeof DevelopReadbackEvidenceSchema>;
 export type RecoveryEvidence = z.infer<typeof RecoveryEvidenceSchema>;
+export type RepresentativeJob = z.infer<typeof RepresentativeJobSchema>;
 export type WorkflowCopyIntent = z.infer<typeof WorkflowCopyIntentSchema>;
 export type WorkflowCopyResult = z.infer<typeof WorkflowCopyResultSchema>;
 export type WorkflowCopyVerification = z.infer<typeof WorkflowCopyVerificationSchema>;
@@ -63,6 +67,7 @@ export type WorkflowBudget = z.infer<typeof WorkflowBudgetSchema>;
 export type CullingDecision = z.infer<typeof CullingDecisionSchema>;
 export type LightingClassification = z.infer<typeof LightingClassificationSchema>;
 export type ShootAsset = z.infer<typeof ShootAssetSchema>;
+export type ShootIngestionError = z.infer<typeof ShootIngestionErrorSchema>;
 export type ShootDecision = z.infer<typeof ShootDecisionSchema>;
 export type ShootManifest = z.infer<typeof ShootManifestSchema>;
 export type ShootPlan = z.infer<typeof ShootPlanSchema>;
@@ -173,6 +178,7 @@ export type ShootAnalyzer = {
   readonly requiresCloudPreview?: boolean;
   cull(asset: ShootAsset): Promise<CullingDecision>;
   classify(asset: ShootAsset): Promise<LightingClassification>;
+  validateAssets?(assets: ShootAsset[]): void;
 };
 
 export type WorkflowOptions = {
@@ -189,12 +195,4 @@ export type WorkflowOptions = {
   budget?: WorkflowBudgetOptions;
 };
 
-export type WorkflowResult = {
-  sessionDir: string;
-  state: JobState;
-  manifest: SessionManifest;
-  normalizedPlan: NormalizedEditPlan;
-  renderPath?: string;
-  handoffPath?: string;
-  iterations?: number;
-};
+export type WorkflowResult = z.infer<typeof WorkflowResultSchema>;

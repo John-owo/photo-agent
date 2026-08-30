@@ -1974,3 +1974,237 @@ Cloud-analyzer checkpoint:
 - T14 therefore remains pending the explicit Lightroom connection and human
   render gate. Existing mock/automated evidence is not recorded as live or
   human acceptance.
+
+## 2026-08-31 - roadmap frontier audit
+
+- Read-only `gh issue list --repo John-owo/photo-agent --state open --limit 40
+  --json number,title,body` refreshed the remote dependency graph. T11/T12/
+  T13/T16 remain open behind v0.1 gate #4; T14 remains blocked by those local
+  gates; T17 and later v0.3 tickets remain behind the v0.2 gate #5 or their
+  stated predecessor tickets. No remote issue, milestone, or repository state
+  was changed.
+- The next work therefore stays local and evidence-limited: audit the existing
+  v0.3 shoot/index implementation against its ticket acceptance criteria and
+  only add fail-closed tests or implementation where the local contract is
+  independently testable. Live Lightroom and human visual acceptance remain
+  out of scope until the connection is actually available.
+
+## 2026-08-31 - T18 ingestion hardening implementation
+
+- Added optional shoot metadata fields for dimensions, capture time, camera, and
+  lens. Preview metadata is read locally with `sharp`; common EXIF and XMP
+  fields are preserved without sending metadata to a provider.
+- Changed shoot indexing to isolate per-file hash and metadata failures in
+  `ingestion_errors`, keep the asset in the manifest, skip unavailable hashes
+  when forming exact duplicate groups, and use stable slash-separated relative
+  paths for asset identity. Corrupt preview metadata now forces conservative
+  review for that asset; propagation and representative editing exclude any
+  asset with ingestion errors.
+- No photo, RAW, sidecar, Lightroom, remote issue, milestone, push, merge, or
+  issue-closure state was changed. Verification follows below.
+- Formatting verification/update: `npx.cmd prettier --write src\\schemas.ts
+  src\\types.ts src\\index.ts src\\batch.ts src\\batch-edit.ts
+  src\\shoot-metadata.ts` completed successfully; `schemas.ts`, `batch.ts`, and
+  `shoot-metadata.ts` were formatted.
+- The first `npm.cmd run check` failed with an optional `ingestion_errors`
+  narrowing error in `batch-edit.ts` and an invalid `sharp.Metadata` namespace
+  type reference. The metadata processing was kept inside the inferred Sharp
+  call scope and optional error arrays are now narrowed before use.
+- Follow-up `npx.cmd prettier --write src\\shoot-metadata.ts
+  src\\batch-edit.ts` passed with exit code 0 and made no further formatting
+  changes.
+- `npm.cmd run check` now passes with exit code 0 after the narrowing/type fixes.
+- Added v0.3 regression coverage for non-ASCII paths plus XMP/dimension metadata,
+  corrupt-preview isolation, exact duplicate reporting, and source-file
+  preservation. `npx.cmd prettier --write tests\\milestones.test.ts` passed with
+  exit code 0.
+- The first targeted `npm.cmd test -- tests/milestones.test.ts` run failed in
+  the new duplicate test because `ConservativeShootAnalyzer` was not imported;
+  the other 12 tests passed. This was a test import defect only.
+- Added the missing test import; the follow-up `npx.cmd prettier --write
+  tests\\milestones.test.ts` passed with no formatting changes.
+- Follow-up `npm.cmd test -- tests/milestones.test.ts` passed: 13/13 tests,
+  including the new metadata, corrupt-preview, duplicate, and non-ASCII path
+  coverage.
+- `npm.cmd run lint` passed with exit code 0. Targeted
+  `npx.cmd prettier --check src\\schemas.ts src\\types.ts src\\index.ts
+  src\\batch.ts src\\batch-edit.ts src\\shoot-metadata.ts
+  tests\\milestones.test.ts` also passed; all listed files match Prettier.
+- Full `npm.cmd test` passed: 4 files and 70 tests, including all prior v0.1/
+  v0.2 coverage plus the new v0.3 ingestion cases.
+- Continued the local v0.3 contract: culling decisions now preserve separate
+  technical/aesthetic evidence, downgrade low-confidence or configured
+  high-value rejects to `review`, and persist the high-value flag. Burst groups
+  now carry ranked IDs and rationale; preview-similarity near-duplicate groups
+  are review-only. Reviewed analyzers validate unknown, duplicate, and
+  mismatched asset references before creating jobs.
+- Added regression coverage for the culling policy, evidence fields, ranked
+  groups, near-duplicate reporting, and review-reference validation. No source
+  photo, Lightroom, or remote issue state was changed.
+- Formatting update: `npx.cmd prettier --write src\\schemas.ts src\\types.ts
+  src\\index.ts src\\batch.ts src\\batch-edit.ts src\\shoot-metadata.ts
+  src\\shoot-grouping.ts tests\\milestones.test.ts` completed successfully;
+  `schemas.ts`, `batch.ts`, `shoot-grouping.ts`, and the milestone tests were
+  reformatted.
+- The first post-T19/T20/T21 `npm.cmd run check` failed because a Zod default
+  made the new culling evidence field required in the TypeScript analyzer
+  interface, breaking existing fixture analyzers. The field remains optional at
+  the input boundary while explicit analyzers can persist it; the failure did
+  not change source or external state.
+- `npx.cmd prettier --write src\\schemas.ts` passed with no further formatting
+  changes after the schema correction.
+- Follow-up `npm.cmd run check` passed with exit code 0.
+- Targeted `npm.cmd test -- tests\\milestones.test.ts` passed: 15/15 tests.
+  The v0.3 suite now covers culling evidence/policy, ranked burst and
+  near-duplicate groups, review reference validation, and prior resume/safety
+  behavior.
+- `npm.cmd run lint`, targeted `npx.cmd prettier --check` for all changed
+  source/tests, and `git diff --check` all passed with exit code 0. Git emitted
+  only the repository's normal LF-to-CRLF warnings.
+- Full `npm.cmd test` passed: 4 files and 72 tests. The 120-pair v0.3 test also
+  passed with the new preview-similarity grouping enabled.
+- `npm.cmd run build` passed with exit code 0; generated TypeScript output stayed
+  in ignored `dist` and no source/photo state changed.
+- Updated `docs\\implementation\\v0.3.md` to document the metadata/error
+  boundary, culling evidence/policy, ranked review-only groups, and validated
+  review references. The document continues to distinguish automated evidence
+  from unverified subjective and live Lightroom gates.
+- Added a repeatable `--high-value-asset-id <ID>` option to the shoot CLI and
+  included near-duplicate group counts in its report summary. A first patch put
+  the option in the wrong CLI subcommand; targeted inspection caught it and the
+  option was moved to `shoot` before verification. `npx.cmd prettier --write
+  src\\cli.ts src\\batch.ts src\\schemas.ts src\\shoot-grouping.ts
+  tests\\milestones.test.ts` passed with exit code 0.
+- Follow-up `npm.cmd run check` passed with exit code 0 after the CLI option
+  placement correction.
+- Strengthened T17 identity evidence by using the full SHA-256 of the
+  normalized, case-preserving relative RAW path for asset IDs instead of a
+  truncated prefix; the duplicate test now asserts distinct IDs for repeated
+  filenames in different folders. Updated the one test regex that referenced
+  the old 16-character input filename.
+- Added fail-closed uniqueness validation for persisted shoot asset IDs and
+  normalized relative RAW paths, and asserted persistence of configured
+  high-value asset state in the manifest.
+- `npx.cmd prettier --write src\\batch.ts src\\cli.ts src\\schemas.ts
+  src\\shoot-grouping.ts tests\\milestones.test.ts
+  docs\\implementation\\v0.3.md` passed with exit code 0; only the schema and
+  milestone test needed formatting changes.
+- `npm.cmd run check` passed with exit code 0 after the full asset-ID and
+  culling/grouping changes.
+- Full `npm.cmd test` passed again: 4 files and 72 tests.
+- Read-only `gh issue view` for #25 (T22), #26 (T23), #27 (T24), and #28 (T25)
+  refreshed the next dependency chain. T22 requires weak-boundary review,
+  cluster strategy/confidence/outliers; T23 requires an accepted representative
+  before propagation; T24 requires per-target Workflow Copy/readback and
+  shared-uncertainty stop behavior; T25 requires durable incomplete-job
+  reconciliation. No remote issue or repository state was changed.
+- Implemented the local T22-T24 safety boundaries: weak/mixed/unknown lighting
+  is reported in `unclustered_asset_ids`, cluster confidence/strategy/outliers
+  are persisted, and outliers cannot enter propagation; propagation now requires
+  a persisted ACCEPTED representative result, creates and verifies one
+  Workflow Copy per target, reads back the copy, and stops remaining targets on
+  shared/uncertain backend state. Added mock tests for refusal, copy evidence,
+  and shared failure isolation. No Lightroom or photo state was changed.
+- `npx.cmd prettier --write src\\backend-handshake.ts src\\batch-edit.ts
+  src\\batch.ts src\\schemas.ts tests\\milestones.test.ts` passed with exit
+  code 0.
+- `npm.cmd run check` passed with exit code 0 after the cluster and
+  Workflow-Copy propagation changes.
+- Targeted `npm.cmd test -- tests\\milestones.test.ts` passed: 16/16 tests,
+  including weak-lighting unclustered boundaries, ACCEPTED-representative
+  gating, per-target Workflow Copy evidence, and shared-uncertainty stopping.
+- Full `npm.cmd test` passed: 4 files and 73 tests.
+- Added durable representative job records under the representative session
+  root: `RUNNING` is written before execution, terminal results retain the
+  complete workflow result, accepted jobs are skipped on resume, and an
+  interrupted `RUNNING` job is escalated to recovery instead of retried. The
+  persisted record is schema-validated.
+- `npx.cmd prettier --write src\\schemas.ts src\\types.ts src\\batch-edit.ts
+  tests\\milestones.test.ts` passed with exit code 0 and made no formatting
+  changes.
+- The first T25 type check failed because the manually declared
+  `WorkflowResult` optional-property shape differed from the new persisted Zod
+  output under `exactOptionalPropertyTypes`. `WorkflowResult` now uses the
+  schema-inferred type directly; the type alias-only fix did not touch runtime
+  or external state.
+- `npx.cmd prettier --write src\\types.ts src\\batch-edit.ts src\\schemas.ts`
+  passed with exit code 0 and made no formatting changes.
+- Follow-up `npm.cmd run check` passed with exit code 0 after switching to the
+  schema-inferred persisted workflow result type.
+- Targeted `npm.cmd test -- tests\\milestones.test.ts` passed: 16/16 tests with
+  durable representative-job writes and Workflow Copy propagation enabled.
+- Extended the milestone test to prove accepted representative jobs are
+  skipped without recreating provider/backend state, while a manually seeded
+  `RUNNING` job returns `REVIEW_REQUIRED` and is not retried.
+- `npx.cmd prettier --write tests\\milestones.test.ts` passed with exit code 0
+  and made no formatting changes.
+- Follow-up `npm.cmd test -- tests\\milestones.test.ts` passed: 16/16 tests,
+  including accepted-job resume and interrupted-job recovery escalation.
+- Tightened T25 artifact handling: a missing representative job is eligible for
+  first execution, but an unreadable or schema-invalid existing job now throws
+  instead of being treated as absent and potentially re-running an uncertain
+  workflow.
+- `npx.cmd prettier --write src\\batch-edit.ts` passed with exit code 0 and
+  made no formatting changes after the artifact-read correction.
+- Parallel verification passed: `npm.cmd run check` exit code 0 and targeted
+  `npm.cmd test -- tests\\milestones.test.ts` 16/16 tests.
+- Extended T25 recovery: a persisted `RUNNING` representative job now locates
+  its latest workflow session and invokes the existing readback-only recovery
+  path when available; no session still escalates without a backend call.
+- `npx.cmd prettier --write src\\batch-edit.ts` passed with exit code 0 after
+  the recovery-path update.
+- `npm.cmd run check` passed with exit code 0 after adding durable-job recovery
+  discovery.
+- The first T25 resume test after enabling automatic recovery expected the
+  no-session reason, but its seeded `RUNNING` job still pointed at an existing
+  terminal session; the implementation correctly attempted recovery and the
+  throwing fixture backend produced `representative_recovery_failed`. The test
+  fixture was corrected to point at a missing workflow root for the intended
+  no-session boundary.
+- `npx.cmd prettier --write tests\\milestones.test.ts` passed with exit code 0
+  and made no formatting changes after the fixture correction.
+- Follow-up `npm.cmd test -- tests\\milestones.test.ts` passed: 16/16 tests.
+- T24 propagation apply now schema-validates and fail-closes on an unsupported
+  or missing registry version, cluster/representative mismatch, duplicate or
+  out-of-scope targets, target path mismatch, and operations not authorized by
+  the T16 registry. This protects the backend boundary even when a persisted
+  propagation plan is manually altered; no external state was changed.
+- Added a milestone test proving a forged context-sensitive `temperature_k`
+  operation is rejected before a propagation backend is created.
+- `npm.cmd run check` passed with exit code 0 after T24 apply-boundary hardening.
+- `npm.cmd test -- tests\\milestones.test.ts` passed: 16/16 tests.
+- Full verification passed for `npm.cmd test` (4 files, 73 tests),
+  `npm.cmd run lint`, and `npm.cmd run build`.
+- `npx.cmd prettier --check .` exited 1 because the repository baseline has
+  30 pre-existing formatting warnings across unrelated files (including the
+  existing WORKLOG and project configuration/docs); no bulk formatting was
+  applied. A changed-file-only check is required for final verification.
+- Changed-file-only `npx.cmd prettier --check` passed for v0.3 docs, all
+  modified/new source files, and `tests\\milestones.test.ts`.
+- Pre-commit `git diff --check` passed; Git only emitted the repository's
+  existing LF-to-CRLF working-copy warnings and reported no whitespace errors.
+- Reviewed the T18-T25 diff for scope: changes remain inside the PhotoAgent
+  source/tests/docs and this worklog; no Lightroom catalog, photo asset,
+  remote issue, branch, or deployment state was changed.
+- Staged the intended T18-T25 source, test, docs, and worklog files explicitly;
+  `git diff --cached --check` passed with no whitespace errors and the staged
+  stat contains 12 files, including the two new metadata/grouping modules.
+- `npx.cmd prettier --check src\\batch-edit.ts tests\\milestones.test.ts`
+  passed with exit code 0.
+- Re-ran the T24 boundary after adding plan-scope validation: `npm.cmd run
+  check` passed with exit code 0; `npm.cmd test --
+  tests\\milestones.test.ts` passed 16/16; and the focused Prettier check
+  passed with exit code 0.
+- Hardened propagation cleanup: a backend `close()` failure now converts the
+  current result to `REVIEW_REQUIRED`, records the close uncertainty, and
+  stops later targets instead of throwing away the result after a possible
+  mutation.
+- Added a mock test for close failure and shared-batch stop behavior.
+- `npx.cmd prettier --write src\\batch-edit.ts tests\\milestones.test.ts`
+  completed; only the test file needed formatting.
+- `npm.cmd run check` passed with exit code 0 after close-failure handling.
+- `npm.cmd test -- tests\\milestones.test.ts` passed: 16/16 tests.
+- A targeted read of `src/parameter-registry.ts` was attempted while reviewing
+  T24 authority boundaries; the terminal output was truncated by the display
+  limit, with no file or external state changed. A narrower read is required
+  before making any registry-enforcement edit.

@@ -475,10 +475,54 @@ export const SessionManifestSchema = z.object({
   }),
 });
 
+export const WorkflowResultSchema = z
+  .object({
+    sessionDir: z.string().min(1),
+    state: z.enum([
+      "PENDING",
+      "ANALYZING",
+      "CODEX_INPUT_REQUIRED",
+      "PLAN_READY",
+      "APPLYING",
+      "RENDERING",
+      "EVALUATING",
+      "REFINING",
+      "ACCEPTED",
+      "REVIEW_REQUIRED",
+      "FAILED",
+      "CANCELLED",
+    ]),
+    manifest: SessionManifestSchema,
+    normalizedPlan: NormalizedEditPlanSchema,
+    renderPath: z.string().min(1).optional(),
+    handoffPath: z.string().min(1).optional(),
+    iterations: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+export const RepresentativeJobSchema = z
+  .object({
+    schema_version: z.literal("0.3.0"),
+    cluster_id: z.string().min(1),
+    representative_id: z.string().min(1).nullable(),
+    state: z.enum(["ACCEPTED", "REVIEW_REQUIRED", "FAILED", "RUNNING"]),
+    workflow_session_root: z.string().min(1).optional(),
+    result: WorkflowResultSchema.optional(),
+    reason: z.string().min(1).optional(),
+  })
+  .strict();
+
 export const CullingDecisionSchema = z.object({
   selection_status: z.enum(["select", "keep", "reject", "review"]),
   confidence: z.number().min(0).max(1),
   rationale: z.string().min(1).max(2000),
+  evidence: z
+    .object({
+      technical: z.array(z.string().min(1).max(500)),
+      aesthetic: z.array(z.string().min(1).max(500)),
+    })
+    .strict()
+    .optional(),
 });
 
 export const LightingClassificationSchema = z.object({
@@ -486,6 +530,14 @@ export const LightingClassificationSchema = z.object({
   confidence: z.number().min(0).max(1),
   rationale: z.string().min(1).max(2000),
 });
+
+export const ShootIngestionErrorSchema = z
+  .object({
+    source: z.enum(["raw", "preview", "sidecar"]),
+    stage: z.enum(["hash", "metadata"]),
+    message: z.string().min(1).max(2000),
+  })
+  .strict();
 
 export const ShootAnalysisSchema = z.object({
   culling: CullingDecisionSchema,
@@ -498,12 +550,22 @@ export const ShootAssetSchema = z.object({
   raw_path: z.string().min(1),
   relative_preview_path: z.string().min(1).optional(),
   preview_path: z.string().min(1).optional(),
-  raw_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  raw_sha256: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .optional(),
   preview_sha256: z
     .string()
     .regex(/^[a-f0-9]{64}$/)
     .optional(),
+  capture_time: z.string().min(1).optional(),
+  camera: z.string().min(1).optional(),
+  lens: z.string().min(1).optional(),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
   source_confidence: z.enum(["high", "ambiguous", "missing_preview"]),
+  high_value: z.boolean().default(false),
+  ingestion_errors: z.array(ShootIngestionErrorSchema).default([]),
 });
 
 export const ShootDecisionSchema = z.object({
@@ -514,30 +576,57 @@ export const ShootDecisionSchema = z.object({
   error: z.string().optional(),
 });
 
-export const ShootPlanSchema = z.object({
-  schema_version: z.literal("0.3.0"),
-  session_id: z.string().min(1),
-  shoot_root: z.string().min(1),
-  created_at: z.string().datetime(),
-  mode: z.literal("dry_run"),
-  assets: z.array(ShootAssetSchema),
-});
+export const ShootPlanSchema = z
+  .object({
+    schema_version: z.literal("0.3.0"),
+    session_id: z.string().min(1),
+    shoot_root: z.string().min(1),
+    created_at: z.string().datetime(),
+    mode: z.literal("dry_run"),
+    assets: z.array(ShootAssetSchema),
+  })
+  .superRefine((plan, context) => {
+    const ids = new Set<string>();
+    const paths = new Set<string>();
+    for (const [index, asset] of plan.assets.entries()) {
+      if (ids.has(asset.id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["assets", index, "id"],
+          message: "Duplicate shoot asset id",
+        });
+      }
+      ids.add(asset.id);
+      const normalizedPath = asset.relative_raw_path.replaceAll("\\", "/").toLowerCase();
+      if (paths.has(normalizedPath)) {
+        context.addIssue({
+          code: "custom",
+          path: ["assets", index, "relative_raw_path"],
+          message: "Duplicate shoot relative RAW path",
+        });
+      }
+      paths.add(normalizedPath);
+    }
+  });
 
-export const ShootReviewFileSchema = z.object({
-  schema_version: z.literal("0.3.0"),
-  decisions: z.array(
-    z
-      .object({
-        asset_id: z.string().min(1).optional(),
-        relative_raw_path: z.string().min(1).optional(),
-        culling: CullingDecisionSchema,
-        lighting: LightingClassificationSchema,
-      })
-      .refine((value) => value.asset_id !== undefined || value.relative_raw_path !== undefined, {
-        message: "Each reviewed decision requires asset_id or relative_raw_path",
-      }),
-  ),
-});
+export const ShootReviewFileSchema = z
+  .object({
+    schema_version: z.literal("0.3.0"),
+    decisions: z.array(
+      z
+        .object({
+          asset_id: z.string().min(1).optional(),
+          relative_raw_path: z.string().min(1).optional(),
+          culling: CullingDecisionSchema,
+          lighting: LightingClassificationSchema,
+        })
+        .strict()
+        .refine((value) => value.asset_id !== undefined || value.relative_raw_path !== undefined, {
+          message: "Each reviewed decision requires asset_id or relative_raw_path",
+        }),
+    ),
+  })
+  .strict();
 
 export const ShootManifestSchema = z.object({
   schema_version: z.literal("0.3.0"),
@@ -555,16 +644,33 @@ export const ShootManifestSchema = z.object({
       group_id: z.string().min(1),
       asset_ids: z.array(z.string()).min(2),
       basis: z.literal("filename_sequence"),
+      ranked_asset_ids: z.array(z.string()).min(2).optional(),
+      ranking_rationale: z.string().min(1).optional(),
     }),
   ),
+  near_duplicate_groups: z
+    .array(
+      z.object({
+        group_id: z.string().min(1),
+        asset_ids: z.array(z.string()).min(2),
+        basis: z.literal("preview_similarity"),
+        ranked_asset_ids: z.array(z.string()).min(2),
+        ranking_rationale: z.string().min(1),
+      }),
+    )
+    .default([]),
   clusters: z.array(
     z.object({
       cluster_id: z.string().min(1),
       lighting_type: z.string().min(1),
       member_ids: z.array(z.string()),
       representative_id: z.string().nullable(),
+      confidence: z.number().min(0).max(1).default(0),
+      strategy: z.string().min(1).default("manual_review_required"),
+      outlier_ids: z.array(z.string()).default([]),
     }),
   ),
+  unclustered_asset_ids: z.array(z.string()).default([]),
   summary: z.object({
     input: z.number().int().nonnegative(),
     select: z.number().int().nonnegative(),
