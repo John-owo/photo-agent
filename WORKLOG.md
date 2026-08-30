@@ -2195,6 +2195,8 @@ Cloud-analyzer checkpoint:
 - Post-commit `git status --short --branch` was clean on `codex/roadmap-t09`;
   recent commits were `61c6102` (worklog verification), `32ddd4d` (T18-T25
   implementation), and `c7f4694` (T12 budgets).
+- Final `git status --porcelain=v1 -b` and `git diff --exit-code` were clean on
+  `codex/roadmap-t09`; the latest commit is `30beb53`.
 - `npx.cmd prettier --check src\\batch-edit.ts tests\\milestones.test.ts`
   passed with exit code 0.
 - Re-ran the T24 boundary after adding plan-scope validation: `npm.cmd run
