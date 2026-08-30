@@ -1634,3 +1634,25 @@ Cloud-analyzer checkpoint:
   branch is published, and no Lightroom evidence can be collected until
   Lightroom Classic, the MCP plugin, and a non-critical validated test photo
   are available for a human-supervised run.
+
+## 2026-08-30 - T09 hosted CI publication and first green run
+
+- Immediately before publication, `codex/roadmap-t09` was clean at
+  `e7d3ba492cbdc54ac5adeaf657bedb4de52fdbc0`. The first sandbox push failed
+  because outbound GitHub access was blocked; the authorized normal
+  non-force retry succeeded and created the remote branch.
+- Read-only GitHub status showed no PR and started hosted CI run
+  `33316341500` for `e7d3ba4`. `gh run watch --exit-status` completed green in
+  23 seconds: `npm ci`, check, lint, test, build, and example all passed.
+  GitHub emitted only the Node.js 20 deprecation annotation for the v4 action
+  wrappers. No force push, merge, issue transition, or PR creation occurred.
+- Updated the evidence pack final matrix: T09 AC1 is now PASS based on the
+  hosted run; T09 AC2 and T08 live recovery remain blocked on Lightroom.
+
+## 2026-08-30 - T09 hosted evidence-pack verification
+
+- Added the hosted CI run link and result to the final acceptance matrix,
+  changed T09 AC1 to PASS, and kept AC2 and T08 live recovery blocked.
+- Targeted `npx.cmd prettier --check
+  docs/acceptance/t09-clean-clone-and-live-evidence.md` passed. `git diff
+  --check` passed with only the known LF-to-CRLF warnings.

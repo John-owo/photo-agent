@@ -17,13 +17,13 @@ separates reproducible repository checks from Lightroom and human gates.
 
 ## Final acceptance matrix — 2026-08-30
 
-| Acceptance item                                                           | Result                            | Evidence boundary                                                                                                                                                                    |
-| ------------------------------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| T09 AC1 — clean-clone CI and documented example                           | FAIL / BLOCKED                    | The workflow and local detached clean clone pass install, check, lint, tests, build, and example. No remote branch, PR, or hosted CI run exists for `codex/roadmap-t09`.             |
-| T09 AC2 — live Lightroom E2E, human render, and source preservation       | FAIL / BLOCKED                    | No current Lightroom process or MCP listener was available. No live Workflow Copy mutation, Copy-to-Master validation, render inspection, or RAW/sidecar preservation record exists. |
-| T09 AC3 — preset export boundary                                          | PASS with experimental limitation | No stable preset guarantee is claimed; export → re-import → round-trip remains required before any preset compatibility claim.                                                       |
-| T08 code-level read-only recovery invariant                               | PASS                              | The reviewed implementation and automated tests keep recovery read-only and fail closed to `REVIEW_REQUIRED`.                                                                        |
-| T08 live recovery: exact Copy reuse, duplicate prevention, no blind retry | FAIL / BLOCKED                    | No real interrupted Lightroom/MCP run was available for live identity read-back and duplicate-prevention evidence. The clean-clone recovery is simulated only.                       |
+| Acceptance item                                                           | Result                            | Evidence boundary                                                                                                                                                                                                                   |
+| ------------------------------------------------------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T09 AC1 — clean-clone CI and documented example                           | PASS                              | Hosted run [33316341500](https://github.com/John-owo/photo-agent/actions/runs/33316341500) passed install, check, lint, tests, build, and example for `codex/roadmap-t09` at `e7d3ba4`; the local detached clean clone also passed. |
+| T09 AC2 — live Lightroom E2E, human render, and source preservation       | FAIL / BLOCKED                    | No current Lightroom process or MCP listener was available. No live Workflow Copy mutation, Copy-to-Master validation, render inspection, or RAW/sidecar preservation record exists.                                                |
+| T09 AC3 — preset export boundary                                          | PASS with experimental limitation | No stable preset guarantee is claimed; export → re-import → round-trip remains required before any preset compatibility claim.                                                                                                      |
+| T08 code-level read-only recovery invariant                               | PASS                              | The reviewed implementation and automated tests keep recovery read-only and fail closed to `REVIEW_REQUIRED`.                                                                                                                       |
+| T08 live recovery: exact Copy reuse, duplicate prevention, no blind retry | FAIL / BLOCKED                    | No real interrupted Lightroom/MCP run was available for live identity read-back and duplicate-prevention evidence. The clean-clone recovery is simulated only.                                                                      |
 
 The matrix uses `FAIL / BLOCKED` where required evidence is absent; it does not
 convert an unrun external or human gate into a pass.
@@ -40,6 +40,11 @@ npm.cmd test
 npm.cmd run build
 npm.cmd run example
 ```
+
+The first hosted run for the published branch completed successfully:
+[CI run 33316341500](https://github.com/John-owo/photo-agent/actions/runs/33316341500).
+Its only annotation was GitHub's Node.js 20 deprecation notice for the v4
+checkout/setup actions; no job step failed.
 
 `npm run example` creates a non-delivery synthetic `.NEF` and a 1×1 JPEG in a
 per-run scratch directory under `_agent_workspace` for the configured worktree,
@@ -101,9 +106,8 @@ not listening in the current environment. Therefore no Lightroom UI action,
 live MCP request, catalog mutation, source mutation, render inspection, or
 human visual acceptance is claimed by this pass. The prior read/render and
 Workflow Copy artifacts remain historical evidence; they are not silently
-relabelled as a PhotoAgent T09 end-to-end run. A read-only GitHub check also
-found no remote `codex/roadmap-t09` ref, no PR, and no hosted CI run; Issue #14
-remains open.
+relabelled as a PhotoAgent T09 end-to-end run. The branch is now published and
+the hosted CI run above is green. No PR was created and Issue #14 remains open.
 
 The XMP fallback and any preset-export workflow remain experimental. A stable
 preset claim requires a real export followed by import into a disposable
