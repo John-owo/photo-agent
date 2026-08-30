@@ -1819,3 +1819,18 @@ Cloud-analyzer checkpoint:
 - Final status remains limited to the intended `WORKLOG.md` and T09 acceptance
   pack changes; no generated build or example fixture was added to the Git
   worktree. Git emitted only the known LF-to-CRLF normalization warnings.
+
+## 2026-08-30 - T09 evidence publication and hosted CI
+
+- Committed the live evidence update as `43016a3`
+  (`docs: record T09 live acceptance evidence`). The first normal
+  `git push origin codex/roadmap-t09` was rejected by Git's dubious-ownership
+  guard before any remote write; a retry using a one-command
+  `safe.directory` override succeeded without changing global Git settings.
+- Hosted CI run [33318780835](https://github.com/John-owo/photo-agent/actions/runs/33318780835)
+  for commit `43016a38a95b8804a3ef6bd182b446b11d14027e` completed successfully.
+  Its verify job passed `npm ci`, check, lint, tests, build, and example. The
+  only annotation was GitHub's Node.js 20 deprecation notice for checkout/setup
+  action versions; no job step failed.
+- The remote branch is `origin/codex/roadmap-t09` at `43016a3`. No merge, PR,
+  or Issue #14 status change was performed.
