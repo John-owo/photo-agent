@@ -7,6 +7,7 @@ import {
   RECOVERY_OPERATIONS,
   requireBackendHandshake,
   SINGLE_PHOTO_OPERATIONS,
+  WORKFLOW_COPY_RECONCILIATION_OPERATION,
 } from "./backend-handshake.js";
 import { ingestPair } from "./ingest.js";
 import { createSanitizedPreview } from "./preview.js";
@@ -35,6 +36,7 @@ import {
 } from "./schemas.js";
 import type {
   BackendAdapter,
+  BackendCapabilityManifest,
   BackendPhotoIdentity,
   CheckpointEvidence,
   DevelopIterationIntent,
@@ -120,6 +122,24 @@ function workflowCopyResultIsComplete(result: WorkflowCopyResult): boolean {
     result.copy !== undefined &&
     result.selection_restoration.status !== "failed" &&
     result.selection_restoration.verified
+  );
+}
+
+function supportsReadOnlyWorkflowCopyReconciliation(
+  manifest: BackendCapabilityManifest,
+): boolean {
+  const semantics = manifest.operations[WORKFLOW_COPY_RECONCILIATION_OPERATION];
+  return Boolean(
+    manifest.capabilities.includes(WORKFLOW_COPY_RECONCILIATION_OPERATION) &&
+      semantics?.supported === true &&
+      semantics.side_effect === "read_only" &&
+      semantics.idempotent &&
+      semantics.scope === "catalog" &&
+      !semantics.requires_active_selection &&
+      !semantics.requires_editor_foreground &&
+      semantics.concurrency === "exclusive_backend" &&
+      semantics.retry_policy === "automatic" &&
+      semantics.safe_to_resume,
   );
 }
 
@@ -833,7 +853,8 @@ async function markRecoveryReview(
 /**
  * Reconcile a session left behind by a process crash. Develop mutations are
  * never retried. An uncertain Workflow Copy creation is first read back at the
- * recorded Master and then reconciled with the same stable operation id.
+ * recorded Master and then reconciled with the same stable operation id through
+ * a read-only backend query.
  */
 export async function recoverSession(options: RecoverSessionOptions): Promise<WorkflowResult> {
   const session = await SessionStore.open(options.sessionDir);
@@ -966,13 +987,7 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
     );
     await options.backend.connect();
     connected = true;
-    const needsCopyReconciliation = Boolean(intent && !recordedCopy);
-    const backendManifest = await requireBackendHandshake(
-      options.backend,
-      needsCopyReconciliation
-        ? ([...RECOVERY_OPERATIONS, "create_workflow_copy"] as const)
-        : RECOVERY_OPERATIONS,
-    );
+    const backendManifest = await requireBackendHandshake(options.backend, RECOVERY_OPERATIONS);
     await session.updateManifest({
       backend: { name: backendManifest.backend, version: backendManifest.version },
     });
@@ -991,31 +1006,37 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
       if (!sourceMatches) {
         evidenceStatus = "contradictory";
         reason = "workflow_copy_intent_source_contradicts_backend";
+      } else if (!supportsReadOnlyWorkflowCopyReconciliation(backendManifest)) {
+        evidenceStatus = "insufficient";
+        reason = "workflow_copy_read_only_reconciliation_unavailable";
       } else {
-        const semantics = backendManifest.operations.create_workflow_copy;
-        if (
-          !semantics ||
-          semantics.retry_policy !== "readback_before_retry" ||
-          semantics.concurrency !== "exclusive_backend"
-        ) {
-          throw new Error(
-            "Workflow Copy reconciliation requires readback_before_retry and exclusive_backend semantics",
-          );
-        }
         const sourceState = current;
-        effectiveResult = await options.backend.createWorkflowCopy(
+        effectiveResult = await options.backend.reconcileWorkflowCopy(
           intent.source.catalog_id,
           intent.source.uuid,
           intent.operation_id,
         );
-        copyCreationReconciled = true;
-        await session.writeJson("workflow-copy.json", effectiveResult);
-        if (!workflowCopyResultMatchesIntent(effectiveResult, intent) || !effectiveResult.copy) {
+        const resultMatchesIntent = workflowCopyResultMatchesIntent(effectiveResult, intent);
+        if (!resultMatchesIntent) {
           evidenceStatus = "contradictory";
           reason = "workflow_copy_reconciliation_returned_contradictory_identity";
+        } else if (effectiveResult.result === "created") {
+          evidenceStatus = "contradictory";
+          reason = "workflow_copy_reconciliation_returned_mutating_result";
+        } else if (
+          effectiveResult.result !== "reconciled" ||
+          effectiveResult.partial ||
+          !effectiveResult.copy ||
+          !workflowCopyResultIsComplete(effectiveResult)
+        ) {
+          evidenceStatus = "insufficient";
+          reason =
+            effectiveResult.reason ?? "workflow_copy_reconciliation_evidence_insufficient";
         } else {
+          copyCreationReconciled = true;
           effectiveCopy = effectiveResult.copy;
           targetPhotoId = effectiveCopy.catalog_id;
+          if (!recordedResult) await session.writeJson("workflow-copy.json", effectiveResult);
           current = await options.backend.readCurrentEdit(targetPhotoId);
           const verified =
             current.photo_id === effectiveCopy.catalog_id &&
@@ -1033,13 +1054,15 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
               sourceState.develop_settings,
             ),
           });
-          await session.writeJson(
-            "workflow-copy-verification.json",
-            effectiveVerification,
-          );
+          if (!copyEvidence.verification) {
+            await session.writeJson(
+              "workflow-copy-verification.json",
+              effectiveVerification,
+            );
+          }
           evidenceStatus = verified ? "consistent" : "contradictory";
           reason = verified
-            ? "workflow_copy_creation_reconciled"
+            ? "workflow_copy_creation_reconciled_read_only"
             : "workflow_copy_reconciliation_readback_mismatch";
         }
       }

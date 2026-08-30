@@ -206,9 +206,11 @@ node dist/src/cli.js recover `
 ```
 
 If Copy creation may have succeeded but no persistent Copy identity was
-returned, recovery first reads the recorded Master, then reconciles the backend
-with the same stable operation ID and verifies that exactly one persistent Copy
-identity is returned. It never creates a second Copy with a new operation ID.
+returned, recovery first reads the recorded Master, then calls the backend's
+explicitly read-only `reconcile_workflow_copy` query with the same stable
+operation ID and verifies that exactly one persistent Copy identity is returned.
+If that read-only capability is unavailable or its evidence is insufficient,
+recovery stops at `REVIEW_REQUIRED`; it never calls `create_virtual_copy` again.
 When a Copy identity is already recorded, recovery reads that exact catalog ID
 and verifies its UUID and Master relationship. Develop mutations and
 Checkpoints are never retried. Each run writes a separate JSON report under

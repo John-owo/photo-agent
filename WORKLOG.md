@@ -1285,3 +1285,80 @@ Cloud-analyzer checkpoint:
   agent must replace this with a true read-only reconciliation capability (or
   fail closed at `REVIEW_REQUIRED`) and rerun both review axes. No push or
   issue transition was performed.
+
+## 2026-08-30 - T08 continuation baseline
+
+- Re-read the T08 handoff and targeted the PhotoAgent roadmap integration
+  worktree plus the separate Lightroom MCP integration worktree; both were
+  clean before edits. The configured `D:\photo\lightroom-mcp-john` checkout was
+  not modified.
+- Baseline `npm.cmd test -- tests/workflow.test.ts` passed 1 file / 28 tests.
+  Baseline `npm.cmd test -- tests/backend-handshake.test.ts` passed 1 file / 16
+  tests. These tests still encode the unsafe pre-fix recovery expectation that
+  uncertain Copy creation is recovered through `create_workflow_copy`.
+
+## 2026-08-30 - T08 read-only Copy reconciliation repair
+
+- Added the explicit read-only `reconcileWorkflowCopy` adapter capability and
+  `reconcile_workflow_copy` operation semantics. Recovery now handshakes only
+  the read operation, checks that the optional reconciliation capability is
+  truly read-only/idempotent/resumable, and never calls `createWorkflowCopy`.
+- Recovery uses the persisted Master identity and operation ID for the
+  read-only query, then validates the returned Copy catalog ID/UUID, Copy to
+  Master relationship, source path, and inherited Develop state through actual
+  backend readback. A missing capability or incomplete read result remains
+  `REVIEW_REQUIRED` with `insufficient` evidence; existing evidence is not
+  overwritten.
+- The Lightroom integration worktree now exposes the corresponding
+  `reconcile_virtual_copy` catalog query backed by the existing operation-marker
+  scan. Its contract is read-only and its handler does not change selection or
+  call `createVirtualCopies`; the configured `D:\photo\lightroom-mcp-john`
+  checkout remains untouched.
+- Added workflow, adapter, MCP contract, and Lua regression coverage. Targeted
+  and full verification after this repair remains pending.
+- `npm.cmd run check` passed after the read-only reconciliation changes.
+
+## 2026-08-30 - T08 read-only reconciliation targeted regression verification
+
+- `npm.cmd test -- tests/workflow.test.ts tests/backend-handshake.test.ts`
+  passed: 2 files / 46 tests (29 workflow, 17 handshake). This confirms the
+  uncertain Workflow Copy path uses `reconcile_workflow_copy` and does not
+  call a mutating creation method, while the legacy-capability case fails
+  closed at `REVIEW_REQUIRED`.
+- Full `npm.cmd test` passed: 3 files / 56 tests (workflow 29, handshake 17,
+  milestones 10).
+- Full verification after the repair passed: `npm.cmd run check`,
+  `npm.cmd run lint`, `npm.cmd run build`, and
+  `git diff 1a89983be2bf5628451619b508f1a60ee06f1d2b --check` (all exit 0).
+- Final post-edit rerun passed: full `npm.cmd test` remained 3 files / 56
+  tests, and check, lint, build, and the fixed-base `git diff --check` all
+  returned exit 0 after the stricter capability gate and documentation sync.
+
+## 2026-08-30 - T08 final safety invariant and dual-axis review
+
+- Static recovery invariant check passed: `recoverSession` contains the
+  read-only `reconcileWorkflowCopy` path and contains none of the forbidden
+  mutating backend methods `createWorkflowCopy`, `createCheckpoint`,
+  `applyGlobalAdjustment`, or `renderPreview`.
+- Standards review against fixed base
+  `1a89983be2bf5628451619b508f1a60ee06f1d2b`, the active worktree rules, and
+  the nearest project instructions passed with no P1/P2 findings. The scope
+  is limited to T08 recovery, the backend contract/adapter, tests, docs, and
+  append-only evidence; no photo, catalog, remote, or configured-checkout
+  mutation was introduced.
+- Spec review against the T08 handoff and issue #13 acceptance criteria
+  passed: uncertain Workflow Copy creation is reconciled only through the
+  read-only capability or stopped at `REVIEW_REQUIRED`; identity, UUID,
+  Copy/Master relation, path, and inherited Develop state are read back; and
+  existing recovery evidence is retained. Develop and Checkpoint uncertain
+  outcomes remain non-retryable.
+- A first fixed-base review command was mistakenly run from `D:\photo` and
+  failed with `fatal: not a git repository`; the same review was immediately
+  rerun with command-local `git -C` in the active worktree and passed. No file
+  was changed by the failed command.
+- Live Lightroom execution of the new endpoint and human creative QA remain
+  explicitly unverified downstream gates; they are not represented as test
+  evidence for this local T08 code review.
+- Final post-review `git diff 1a89983be2bf5628451619b508f1a60ee06f1d2b
+  --check` exited 0. Git emitted only the known LF-to-CRLF working-copy
+  normalization warnings; no whitespace errors were reported.

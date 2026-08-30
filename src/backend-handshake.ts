@@ -11,6 +11,8 @@ export const SINGLE_PHOTO_OPERATIONS = [
 
 export const RECOVERY_OPERATIONS = ["read_current_edit"] as const;
 
+export const WORKFLOW_COPY_RECONCILIATION_OPERATION = "reconcile_workflow_copy" as const;
+
 export const PROPAGATION_OPERATIONS = [
   "read_current_edit",
   "create_checkpoint",

@@ -4,11 +4,12 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { MockBackend } from "../src/backends.js";
+import { MOCK_CAPABILITIES, MockBackend } from "../src/backends.js";
 import { ingestPair } from "../src/ingest.js";
 import { writeFixtureJpeg } from "../src/preview.js";
 import { CodexProvider, MockProvider } from "../src/providers.js";
 import { acquireMutationLock, SessionStore } from "../src/runtime.js";
+import { BackendCapabilityManifestSchema } from "../src/schemas.js";
 import { translateIntent } from "../src/translator.js";
 import { recoverSession, resumeCodexSession, runSinglePhoto } from "../src/workflow.js";
 import { createXmpSidecar, writeXmpSidecar } from "../src/xmp.js";
@@ -565,7 +566,16 @@ describe("v0.1-alpha contracts", () => {
     const recovered = await recoverSession({ sessionDir: initial.sessionDir, backend });
 
     expect(recovered.state).toBe("REVIEW_REQUIRED");
-    expect(backend.calls.filter((call) => call === "create_workflow_copy")).toHaveLength(1);
+    expect(backend.calls.filter((call) => call === "create_workflow_copy")).toHaveLength(0);
+    expect(backend.calls.filter((call) => call === "reconcile_workflow_copy")).toHaveLength(1);
+    expect(backend.calls).toEqual([
+      "connect",
+      "handshake",
+      "read_current_edit",
+      "reconcile_workflow_copy",
+      "read_current_edit",
+      "close",
+    ]);
     expect(backend.calls).not.toContain("create_checkpoint");
     expect(backend.calls).not.toContain("apply_global_adjustment");
     expect(backend.calls).not.toContain("render_preview");
@@ -593,6 +603,54 @@ describe("v0.1-alpha contracts", () => {
       photo_id: observedCopyIds[0],
       identity: { catalog_id: observedCopyIds[0] },
     });
+  });
+
+  it("fails closed when read-only Workflow Copy reconciliation is unavailable", async () => {
+    const { root, raw, preview } = await fixturePair();
+    const legacyManifest = BackendCapabilityManifestSchema.parse({
+      ...MOCK_CAPABILITIES,
+      capabilities: MOCK_CAPABILITIES.capabilities.filter(
+        (capability) => capability !== "reconcile_workflow_copy",
+      ),
+      operations: Object.fromEntries(
+        Object.entries(MOCK_CAPABILITIES.operations).filter(
+          ([operation]) => operation !== "reconcile_workflow_copy",
+        ),
+      ),
+    });
+    const backend = new MockBackend(raw, { manifest: legacyManifest });
+    const createWorkflowCopy = backend.createWorkflowCopy.bind(backend);
+    backend.createWorkflowCopy = async (sourcePhotoId, expectedSourceUuid, operationId) => {
+      await createWorkflowCopy(sourcePhotoId, expectedSourceUuid, operationId);
+      throw new Error("simulated timeout after Workflow Copy side effect");
+    };
+
+    const initial = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: new MockProvider(),
+      backend,
+      sessionRoot: join(root, "sessions"),
+      apply: true,
+      allowCloudPreview: false,
+    });
+    expect(initial.state).toBe("REVIEW_REQUIRED");
+
+    backend.calls.length = 0;
+    const recovered = await recoverSession({ sessionDir: initial.sessionDir, backend });
+
+    expect(recovered.state).toBe("REVIEW_REQUIRED");
+    expect(backend.calls).toEqual(["connect", "handshake", "read_current_edit", "close"]);
+    expect(backend.calls).not.toContain("create_workflow_copy");
+    expect(backend.calls).not.toContain("reconcile_workflow_copy");
+    const reports = await recoveryReportPaths(initial.sessionDir);
+    const report = JSON.parse(await readFile(reports[0]!, "utf8")) as RecoveryReportFixture;
+    expect(report.evidence_status).toBe("insufficient");
+    expect(report.reason).toMatch(/read.only.*reconcil.*unavailable/i);
+    expect(report.workflow_copy_intent).toMatchObject({ operation_id: expect.any(String) });
+    expect(report.workflow_copy).toBeNull();
+    expect(report.copy_creation_retried).toBe(false);
+    expect(report.mutation_retried).toBe(false);
   });
 
   it("reads the recorded Copy after an uncertain Develop response without retrying it", async () => {

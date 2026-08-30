@@ -164,9 +164,10 @@ node dist/src/cli.js recover `
 ```
 
 若 Copy 可能已建立、但回應中斷前尚未持久化 Copy 身分，recovery 會保留相同的
-operation intent，先讀回記錄的 Master，再用相同 operation ID 要求 backend reconcile，
-並驗證只得到同一份 persistent Copy；不會改用新 ID 建立第二份 Copy。若已有記錄，
-則只讀該 catalog ID，核對 Copy UUID 與 Master 關係。Develop mutation 與 Checkpoint
+operation intent，先讀回記錄的 Master，再以相同 operation ID 呼叫明確標示為唯讀的
+`reconcile_workflow_copy` 查詢，並驗證只得到同一份 persistent Copy。若 backend 沒有
+這項唯讀能力，或讀回證據不足，就停在 `REVIEW_REQUIRED`，不會再呼叫
+`create_virtual_copy`。若已有記錄，則只讀該 catalog ID，核對 Copy UUID 與 Master 關係。Develop mutation 與 Checkpoint
 不會重送。每次執行會在 `recovery/` 新增獨立 JSON report，不覆寫原本的 Copy、
 operation、Checkpoint、read-back 或錯誤證據。report 會解析每輪 operation intent、
 Checkpoint 與已保存的 read-back，再把最後完成狀態和實際 Copy 比對；缺少證據標為

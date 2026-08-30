@@ -107,6 +107,11 @@ export type BackendAdapter = {
   handshake(): Promise<BackendCapabilityManifest>;
   close(): Promise<void>;
   readCurrentEdit(photoId: string): Promise<BackendPhotoState>;
+  reconcileWorkflowCopy(
+    sourcePhotoId: string,
+    expectedSourceUuid: string,
+    operationId: string,
+  ): Promise<WorkflowCopyResult>;
   createWorkflowCopy(
     sourcePhotoId: string,
     expectedSourceUuid: string,

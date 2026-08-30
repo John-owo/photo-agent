@@ -136,6 +136,11 @@ async function inMemoryLightroom(
       tools: [
         listedTool("get_selected_photos"),
         listedTool("get_photo_metadata"),
+        listedTool("reconcile_virtual_copy", {
+          ...readSemantics,
+          scope: "catalog",
+          concurrency: "exclusive_backend",
+        }),
         listedTool("create_virtual_copy", {
           ...readSemantics,
           side_effect: "mutating",
@@ -213,6 +218,36 @@ async function inMemoryLightroom(
                 is_virtual_copy: true,
               },
               selection_restoration: { status: "restored", verified: true },
+            }),
+          },
+        ],
+      };
+    }
+    if (name === "reconcile_virtual_copy") {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              operation_id: "photoagent-vc-test-001",
+              result: "reconciled",
+              partial: false,
+              source: {
+                catalog_id: "100",
+                uuid: "uuid-master",
+                is_virtual_copy: false,
+              },
+              master: {
+                catalog_id: "100",
+                uuid: "uuid-master",
+                is_virtual_copy: false,
+              },
+              copy: {
+                catalog_id: "101",
+                uuid: "uuid-copy",
+                is_virtual_copy: true,
+              },
+              selection_restoration: { status: "not_needed", verified: true },
             }),
           },
         ],
@@ -445,6 +480,41 @@ describe("versioned backend handshake", () => {
       "create_virtual_copy",
       "get_photo_metadata",
     ]);
+
+    await fixture.adapter.close();
+    await fixture.close();
+  });
+
+  it("maps read-only Workflow Copy reconciliation without using the create tool", async () => {
+    const fixture = await inMemoryLightroom("0.10.7");
+    await fixture.adapter.connect();
+    await fixture.adapter.handshake();
+
+    const reconciled = await fixture.adapter.reconcileWorkflowCopy(
+      "100",
+      "uuid-master",
+      "photoagent-vc-test-001",
+    );
+
+    expect(reconciled).toMatchObject({
+      operation_id: "photoagent-vc-test-001",
+      result: "reconciled",
+      partial: false,
+      copy: {
+        catalog_id: "101",
+        uuid: "uuid-copy",
+        master_id: "100",
+        master_uuid: "uuid-master",
+        is_virtual_copy: true,
+      },
+      selection_restoration: { status: "not_needed", verified: true },
+    });
+    expect(fixture.calls).toEqual([
+      "list_tools",
+      "get_selected_photos",
+      "reconcile_virtual_copy",
+    ]);
+    expect(fixture.calls).not.toContain("create_virtual_copy");
 
     await fixture.adapter.close();
     await fixture.close();

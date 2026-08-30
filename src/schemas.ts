@@ -119,17 +119,30 @@ export const BackendPhotoStateSchema = z.object({
   identity: BackendPhotoIdentitySchema.optional(),
 });
 
+export const WorkflowCopyCandidateSchema = z
+  .object({
+    catalog_id: z.string().min(1),
+    uuid: z.string().min(1),
+    master_id: z.string().min(1).optional(),
+    master_uuid: z.string().min(1).optional(),
+    is_virtual_copy: z.boolean(),
+  })
+  .strict();
+
 export const WorkflowCopyResultSchema = z
   .object({
     operation_id: z.string().min(1),
     result: z.enum(["created", "reconciled", "REVIEW_REQUIRED"]),
     partial: z.boolean(),
+    marker: z.string().min(1).optional(),
     source: BackendPhotoIdentitySchema.optional(),
     master: BackendPhotoIdentitySchema.optional(),
     copy: BackendPhotoIdentitySchema.optional(),
+    candidates: z.array(WorkflowCopyCandidateSchema).optional(),
+    candidate_count: z.number().int().nonnegative().optional(),
     selection_restoration: z
       .object({
-        status: z.enum(["not_needed", "restored", "failed"]),
+        status: z.enum(["not_needed", "restored", "not_attempted", "failed"]),
         verified: z.boolean(),
       })
       .strict(),
