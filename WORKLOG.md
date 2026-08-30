@@ -1658,6 +1658,13 @@ Cloud-analyzer checkpoint:
   for the v4 checkout/setup actions. No code, photo, Lightroom checkout, PR,
   or issue state was changed by this verification.
 
+## 2026-08-30 - T09 latest hosted CI verification
+
+- The final published worklog commit `d9cd945` triggered hosted run
+  `33316474321`, which completed successfully. Its install, check, lint, test,
+  build, and example steps all passed; the same Node.js 20 deprecation notice
+  was the only annotation.
+
 ## 2026-08-30 - T09 hosted evidence-pack verification
 
 - Added the hosted CI run link and result to the final acceptance matrix,
