@@ -1606,3 +1606,20 @@ Cloud-analyzer checkpoint:
   preservation, and real preset export/re-import remain pending external or
   manual gates. No issue transition, merge, push, or Lightroom mutation was
   performed in this pass.
+
+## 2026-08-30 - T09 final acceptance preflight
+
+- Read-only GitHub checks, with the required network escalation after the
+  sandbox socket restriction, returned no run for `codex/roadmap-t09`, no PR,
+  and Issue #14 still `OPEN`. A command-local `git ls-remote` found no remote
+  branch ref for `codex/roadmap-t09`; no push was performed.
+- Read-only Lightroom preflight found no Lightroom process and no listeners on
+  ports 58763/58764. The configured server/plugin files exist. A command-local
+  `safe.directory` inspection confirmed the separate
+  `D:\photo\lightroom-mcp-john` checkout is dirty on
+  `codex/project-boundary-docs` at `46d3543`; it was not modified.
+- Targeted recovery inspection confirmed `recoverSession` uses the read-only
+  reconciliation path and the two-file T08 regression run passed 46 tests.
+- Extended the T09 evidence pack with an explicit final acceptance matrix for
+  T09 AC1/AC2/AC3 and T08 live recovery, plus the current GitHub/Lightroom
+  blocker state. The matrix does not promote absent live evidence to PASS.
