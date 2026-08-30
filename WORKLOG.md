@@ -1623,3 +1623,14 @@ Cloud-analyzer checkpoint:
 - Extended the T09 evidence pack with an explicit final acceptance matrix for
   T09 AC1/AC2/AC3 and T08 live recovery, plus the current GitHub/Lightroom
   blocker state. The matrix does not promote absent live evidence to PASS.
+
+## 2026-08-30 - T09 acceptance stop boundary
+
+- Committed the final acceptance matrix and preflight record as
+  `7449f25` (`docs: record T09 acceptance blockers`). Final branch status was
+  clean on `codex/roadmap-t09`; fixed-base `git diff 4b74878...HEAD --check`
+  passed.
+- Stopped at the external acceptance boundary: no hosted CI can run until the
+  branch is published, and no Lightroom evidence can be collected until
+  Lightroom Classic, the MCP plugin, and a non-critical validated test photo
+  are available for a human-supervised run.
