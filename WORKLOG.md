@@ -1589,3 +1589,20 @@ Cloud-analyzer checkpoint:
   --check` passed with only the known LF-to-CRLF warnings. The second Spec
   review found no scope creep and retained hosted-CI, simulated-recovery,
   Lightroom/human, and preset round-trip boundaries as partial or pending.
+
+## 2026-08-30 - T09 final review and clean-clone record
+
+- Final detached clean clone at commit `9270a2f` installed 247 packages with
+  `npm.cmd ci` using the task-local cache, then passed `npm.cmd run check`,
+  `npm.cmd run lint`, full `npm.cmd test` (3 files / 56 tests),
+  `npm.cmd run build`, and `npm.cmd run example`. The example reported
+  `ACCEPTED`, `REVIEW_REQUIRED` recovery, a readable render, and preserved
+  source bytes; its worktree remained clean.
+- Final Standards review passed with no new documented-standard violations or
+  baseline smells. Final Spec review found no scope creep or incorrect claims;
+  it confirmed the local implementation and the explicit boundary that
+  simulated recovery is not live crash/MCP-disconnect proof.
+- Hosted CI execution, live Lightroom E2E, human render inspection, live source
+  preservation, and real preset export/re-import remain pending external or
+  manual gates. No issue transition, merge, push, or Lightroom mutation was
+  performed in this pass.
