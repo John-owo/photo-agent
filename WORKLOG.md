@@ -1267,3 +1267,21 @@ Cloud-analyzer checkpoint:
   exact completed Copy readback, contradictory identity, and override refusal.
 - Post-repair `npm.cmd run check` passed and targeted
   `npm.cmd test -- tests/workflow.test.ts` passed 1 file / 28 tests.
+
+## 2026-08-30 - T08 usage-limit handoff
+
+- Created the compact continuation handoff at
+  `D:\photo\_agent_workspace\photo-agent-t08-handoff-20260830.md`; it records
+  the exact worktree/base/commits, verified commands, known format baseline,
+  review status, blocker, and targeted next steps so the next agent does not
+  need to reread this worklog's history.
+- Latest full verification remains green: `npm.cmd test` 3 files/54 tests,
+  `npm.cmd run check`, `npm.cmd run lint`, `npm.cmd run build`, and
+  `git diff 1a89983...HEAD --check`; `npm.cmd run format:check` remains the
+  pre-existing 45-file baseline failure and was not normalized.
+- T08 is intentionally not complete. Standards review found a hard safety
+  violation at `src/workflow.ts:998-1010`: recovery calls mutating
+  `createWorkflowCopy` while AGENTS.md requires read-only recovery. The next
+  agent must replace this with a true read-only reconciliation capability (or
+  fail closed at `REVIEW_REQUIRED`) and rerun both review axes. No push or
+  issue transition was performed.
