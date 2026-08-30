@@ -2197,6 +2197,13 @@ Cloud-analyzer checkpoint:
   implementation), and `c7f4694` (T12 budgets).
 - Final `git status --porcelain=v1 -b` and `git diff --exit-code` were clean on
   `codex/roadmap-t09`; the latest commit is `30beb53`.
+- Created the handoff artifact at
+  `D:\photo\_agent_workspace\lightroom\handoffs\photo-agent-roadmap-t09-continuation-20260831.md`.
+  It records the T18-T25 local scope, exact verification evidence, T14 live
+  gate boundary, and the next safe continuation steps.
+- Read back the handoff file after creation; it exists under the approved
+  `_agent_workspace\\lightroom\\handoffs` location and contains the expected
+  branch, commit, verification, boundary, and next-step sections.
 - `npx.cmd prettier --check src\\batch-edit.ts tests\\milestones.test.ts`
   passed with exit code 0.
 - Re-ran the T24 boundary after adding plan-scope validation: `npm.cmd run
