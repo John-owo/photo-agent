@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { MIN_EVALUATION_CONFIDENCE, planFingerprint, renderFingerprint } from "./evaluation.js";
@@ -21,14 +23,25 @@ import {
   writeCodexAnalysisRequest,
 } from "./providers.js";
 import { acquireMutationLock, SessionStore } from "./runtime.js";
-import { EvaluationResultSchema } from "./schemas.js";
+import {
+  DevelopIterationIntentSchema,
+  EvaluationResultSchema,
+  RecoveryEvidenceSchema,
+  WorkflowCopyIntentSchema,
+  WorkflowCopyResultSchema,
+  WorkflowCopyVerificationSchema,
+} from "./schemas.js";
 import type {
   BackendAdapter,
   EditEvaluator,
   NormalizedEditPlan,
   ProviderResult,
+  RecoveryEvidence,
   SourceAssetPair,
   WorkflowOptions,
+  WorkflowCopyIntent,
+  WorkflowCopyResult,
+  WorkflowCopyVerification,
   WorkflowResult,
 } from "./types.js";
 
@@ -197,11 +210,13 @@ async function executePlan(
       return resultFor(session, normalizedPlan);
     }
     const operationId = `photoagent-vc-${session.currentManifest.session_id}`;
-    await session.writeJson("workflow-copy-intent.json", {
+    const workflowCopyIntent = WorkflowCopyIntentSchema.parse({
+      schema_version: "0.1.0",
       operation_id: operationId,
-      source_photo_id: master.identity.catalog_id,
-      expected_source_uuid: master.identity.uuid,
+      phase: "started",
+      source: master.identity,
     });
+    await session.writeJson("workflow-copy-intent.json", workflowCopyIntent);
     sideEffectStarted = true;
     const workflowCopy = await options.backend.createWorkflowCopy(
       master.identity.catalog_id,
@@ -253,7 +268,7 @@ async function executePlan(
       copyIdentity.master_uuid === master.identity.uuid &&
       samePath(copyState.path, master.path) &&
       sameDevelopSettings(copyState.develop_settings, master.develop_settings);
-    await session.writeJson("workflow-copy-verification.json", {
+    const workflowCopyVerification = WorkflowCopyVerificationSchema.parse({
       operation_id: operationId,
       verified: copyVerified,
       master: master.identity,
@@ -263,6 +278,7 @@ async function executePlan(
         master.develop_settings,
       ),
     });
+    await session.writeJson("workflow-copy-verification.json", workflowCopyVerification);
     if (!copyVerified) {
       await session.transition("REVIEW_REQUIRED", {
         reason: "workflow_copy_identity_or_inheritance_mismatch",
@@ -299,23 +315,50 @@ async function executePlan(
           ? initialSettings
           : resolveLightroomSettings(current.develop_settings, activePlan);
       const checkpointName = `PhotoAgent_${session.currentManifest.session_id}_iteration_${iteration}_before`;
+      const iterationOperationId = `photoagent-iteration-${session.currentManifest.session_id}-${iteration}`;
       await session.transition("APPLYING", { checkpoint: checkpointName, iteration });
+      const iterationIntent = DevelopIterationIntentSchema.parse({
+        schema_version: "0.1.0",
+        operation_id: iterationOperationId,
+        kind: "develop_iteration",
+        phase: "started",
+        iteration,
+        target: copyIdentity,
+        checkpoint_name: checkpointName,
+        requested_settings: settings,
+      });
+      await session.writeJson(`operations/iteration-${iteration}-intent.json`, iterationIntent);
       const checkpoint = await options.backend.createCheckpoint(
         activePhotoId,
         checkpointName,
         LIGHTROOM_CHECKPOINT_KEYS,
       );
-      await session.writeJson(`checkpoints/iteration-${iteration}-before.json`, checkpoint);
-      if (iteration === 1) await session.writeJson("checkpoints/before.json", checkpoint);
+      const checkpointEvidence = {
+        operation_id: iterationOperationId,
+        target: copyIdentity,
+        checkpoint_name: checkpointName,
+        checkpoint,
+      };
+      await session.writeJson(
+        `checkpoints/iteration-${iteration}-before.json`,
+        checkpointEvidence,
+      );
+      if (iteration === 1) await session.writeJson("checkpoints/before.json", checkpointEvidence);
       sideEffectStarted = true;
       await options.backend.applyGlobalAdjustment(activePhotoId, settings);
       const readBack = await options.backend.readCurrentEdit(activePhotoId);
       await session.writeJson(`backend-readback-iteration-${iteration}.json`, {
+        operation_id: iterationOperationId,
+        target: copyIdentity,
+        checkpoint_name: checkpointName,
         requested: settings,
         read_back: readBack.develop_settings,
       });
       if (iteration === 1) {
         await session.writeJson("backend-readback.json", {
+          operation_id: iterationOperationId,
+          target: copyIdentity,
+          checkpoint_name: checkpointName,
           requested: settings,
           read_back: readBack.develop_settings,
         });
@@ -576,6 +619,83 @@ export type RecoverSessionOptions = {
   photoId?: string;
 };
 
+function isMissingArtifact(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+async function readWorkflowCopyEvidence(session: SessionStore): Promise<{
+  intent?: WorkflowCopyIntent;
+  result?: WorkflowCopyResult;
+  verification?: WorkflowCopyVerification;
+  invalidArtifacts: string[];
+}> {
+  let intent: WorkflowCopyIntent | undefined;
+  let result: WorkflowCopyResult | undefined;
+  let verification: WorkflowCopyVerification | undefined;
+  const invalidArtifacts: string[] = [];
+  try {
+    intent = WorkflowCopyIntentSchema.parse(
+      await session.readJson<unknown>("workflow-copy-intent.json"),
+    );
+  } catch (error) {
+    if (!isMissingArtifact(error)) invalidArtifacts.push("workflow-copy-intent.json");
+  }
+  try {
+    result = WorkflowCopyResultSchema.parse(
+      await session.readJson<unknown>("workflow-copy.json"),
+    );
+  } catch (error) {
+    if (!isMissingArtifact(error)) invalidArtifacts.push("workflow-copy.json");
+  }
+  try {
+    verification = WorkflowCopyVerificationSchema.parse(
+      await session.readJson<unknown>("workflow-copy-verification.json"),
+    );
+  } catch (error) {
+    if (!isMissingArtifact(error)) invalidArtifacts.push("workflow-copy-verification.json");
+  }
+  return {
+    ...(intent ? { intent } : {}),
+    ...(result ? { result } : {}),
+    ...(verification ? { verification } : {}),
+    invalidArtifacts,
+  };
+}
+
+async function listJsonArtifacts(session: SessionStore, directory: string): Promise<string[]> {
+  const names = await readdir(join(session.dir, directory)).catch((error: unknown) => {
+    if (isMissingArtifact(error)) return [];
+    throw error;
+  });
+  return names
+    .filter((name) => name.endsWith(".json"))
+    .sort()
+    .map((name) => join(directory, name));
+}
+
+async function writeRecoveryEvidence(
+  session: SessionStore,
+  evidence: RecoveryEvidence,
+): Promise<string> {
+  const relativePath = join(
+    "recovery",
+    `recovery-${new Date().toISOString().replaceAll(":", "-")}-${randomUUID().slice(0, 8)}.json`,
+  );
+  await session.writeJson(relativePath, RecoveryEvidenceSchema.parse(evidence));
+  return relativePath;
+}
+
+async function markRecoveryReview(
+  session: SessionStore,
+  details: Record<string, unknown>,
+): Promise<void> {
+  if (session.currentState === "REVIEW_REQUIRED") {
+    await session.appendEvent("REVIEW_REQUIRED", details);
+    return;
+  }
+  await session.transition("REVIEW_REQUIRED", details);
+}
+
 /**
  * Reconcile a session left behind by a process crash. This function never
  * retries a mutation. If the backend may have been touched, it only reads
@@ -588,18 +708,21 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
     .catch(() => emptyPlan());
   const state = session.currentState;
 
-  if (
-    state === "ACCEPTED" ||
-    state === "REVIEW_REQUIRED" ||
-    state === "FAILED" ||
-    state === "CANCELLED"
-  ) {
+  if (state === "ACCEPTED" || state === "FAILED" || state === "CANCELLED") {
     return resultFor(session, normalizedPlan);
   }
   if (state === "CODEX_INPUT_REQUIRED") {
     return resultFor(session, normalizedPlan);
   }
-  if (state === "PENDING" || state === "ANALYZING" || state === "PLAN_READY") {
+  const copyEvidence = await readWorkflowCopyEvidence(session);
+  const hasCopyEvidence = Boolean(copyEvidence.intent || copyEvidence.result);
+  if (state === "REVIEW_REQUIRED" && !hasCopyEvidence) {
+    return resultFor(session, normalizedPlan);
+  }
+  if (
+    (state === "PENDING" || state === "ANALYZING" || state === "PLAN_READY") &&
+    !hasCopyEvidence
+  ) {
     await session.transition("REVIEW_REQUIRED", {
       reason: "recovered_before_backend_mutation",
       interrupted_state: state,
@@ -607,7 +730,103 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
     return resultFor(session, normalizedPlan);
   }
 
-  const photoId = options.photoId ?? session.currentManifest.source.raw_path;
+  const checkpointArtifacts = await listJsonArtifacts(session, "checkpoints");
+  const operationArtifacts = await listJsonArtifacts(session, "operations");
+  const evidenceBase = {
+    schema_version: "0.1.0" as const,
+    interrupted_state: state,
+    workflow_copy_intent: copyEvidence.intent ?? null,
+    workflow_copy: copyEvidence.result ?? null,
+    workflow_copy_verification: copyEvidence.verification ?? null,
+    checkpoint_artifacts: checkpointArtifacts,
+    operation_artifacts: operationArtifacts,
+    invalid_artifacts: copyEvidence.invalidArtifacts,
+    copy_creation_retried: false as const,
+    mutation_retried: false as const,
+    ...(options.photoId ? { requested_photo_id: options.photoId } : {}),
+  };
+  const recordWithoutReadback = async (
+    evidenceStatus: RecoveryEvidence["evidence_status"],
+    reason: string,
+    targetPhotoId?: string,
+  ): Promise<WorkflowResult> => {
+    const recoveryPath = await writeRecoveryEvidence(session, {
+      ...evidenceBase,
+      recovered_at: new Date().toISOString(),
+      evidence_status: evidenceStatus,
+      reason,
+      ...(targetPhotoId ? { target_photo_id: targetPhotoId } : {}),
+      read_back: null,
+    });
+    await markRecoveryReview(session, {
+      reason,
+      interrupted_state: state,
+      recovery: recoveryPath,
+    });
+    return resultFor(session, normalizedPlan);
+  };
+
+  if (copyEvidence.invalidArtifacts.length > 0) {
+    return await recordWithoutReadback("contradictory", "invalid_workflow_copy_evidence");
+  }
+  if (copyEvidence.result && !copyEvidence.intent) {
+    return await recordWithoutReadback(
+      "contradictory",
+      "workflow_copy_result_missing_durable_intent",
+    );
+  }
+  const intent = copyEvidence.intent;
+  const recordedResult = copyEvidence.result;
+  const recordedCopy = recordedResult?.copy;
+  const recordedVerification = copyEvidence.verification;
+  if (recordedVerification && (!intent || !recordedResult || !recordedCopy)) {
+    return await recordWithoutReadback(
+      "contradictory",
+      "workflow_copy_verification_missing_identity_evidence",
+    );
+  }
+  if (
+    intent &&
+    recordedResult &&
+    (recordedResult.operation_id !== intent.operation_id ||
+      (recordedResult.source !== undefined &&
+        (recordedResult.source.catalog_id !== intent.source.catalog_id ||
+          recordedResult.source.uuid !== intent.source.uuid ||
+          recordedResult.source.is_virtual_copy)) ||
+      (recordedResult.master !== undefined &&
+        (recordedResult.master.catalog_id !== intent.source.catalog_id ||
+          recordedResult.master.uuid !== intent.source.uuid ||
+          recordedResult.master.is_virtual_copy)) ||
+      (recordedCopy !== undefined &&
+        (recordedCopy.master_id !== intent.source.catalog_id ||
+          recordedCopy.master_uuid !== intent.source.uuid ||
+          !recordedCopy.is_virtual_copy)) ||
+      (recordedVerification !== undefined &&
+        (recordedVerification.operation_id !== intent.operation_id ||
+          recordedVerification.master.catalog_id !== intent.source.catalog_id ||
+          recordedVerification.master.uuid !== intent.source.uuid ||
+          recordedVerification.master.is_virtual_copy ||
+          !recordedVerification.copy ||
+          recordedVerification.copy.catalog_id !== recordedCopy?.catalog_id ||
+          recordedVerification.copy.uuid !== recordedCopy?.uuid)))
+  ) {
+    return await recordWithoutReadback(
+      "contradictory",
+      "workflow_copy_artifacts_contradict_each_other",
+    );
+  }
+
+  const targetPhotoId = recordedCopy?.catalog_id ?? intent?.source.catalog_id ?? options.photoId ??
+    session.currentManifest.source.raw_path;
+  const expectedOverride = recordedCopy?.catalog_id ?? intent?.source.catalog_id;
+  if (options.photoId && expectedOverride && options.photoId !== expectedOverride) {
+    return await recordWithoutReadback(
+      "contradictory",
+      "recovery_photo_id_conflicts_with_recorded_identity",
+      targetPhotoId,
+    );
+  }
+
   let unlock: (() => Promise<void>) | undefined;
   let connected = false;
   try {
@@ -625,35 +844,86 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
     await session.updateManifest({
       backend: { name: backendManifest.backend, version: backendManifest.version },
     });
-    const current = await options.backend.readCurrentEdit(photoId);
-    if (!samePath(current.path, session.currentManifest.source.raw_path)) {
-      throw new Error(
-        `Recovery photo path mismatch; refusing to trust read-back: ${current.path} <> ${session.currentManifest.source.raw_path}`,
-      );
+    const current = await options.backend.readCurrentEdit(targetPhotoId);
+    let evidenceStatus: RecoveryEvidence["evidence_status"] = "insufficient";
+    let reason = "legacy_recovery_without_workflow_copy_evidence";
+    if (recordedCopy && intent) {
+      const identity = current.identity;
+      const copyMatches =
+        current.photo_id === recordedCopy.catalog_id &&
+        identity?.catalog_id === recordedCopy.catalog_id &&
+        identity.uuid === recordedCopy.uuid &&
+        identity.master_id === intent.source.catalog_id &&
+        identity.master_uuid === intent.source.uuid &&
+        identity.is_virtual_copy &&
+        samePath(current.path, session.currentManifest.source.raw_path);
+      const completeResult =
+        recordedResult?.result !== "REVIEW_REQUIRED" &&
+        recordedResult?.partial === false &&
+        recordedResult.source !== undefined &&
+        recordedResult.master !== undefined &&
+        recordedResult.selection_restoration.status !== "failed" &&
+        recordedResult.selection_restoration.verified &&
+        (recordedVerification === undefined ||
+          (recordedVerification.verified &&
+            recordedVerification.inherited_develop_state));
+      evidenceStatus = !copyMatches
+        ? "contradictory"
+        : completeResult
+          ? "consistent"
+          : "insufficient";
+      reason = !copyMatches
+        ? "recorded_workflow_copy_contradicts_backend"
+        : completeResult
+          ? "recorded_workflow_copy_reconciled"
+          : "recorded_workflow_copy_requires_review";
+    } else if (intent) {
+      const identity = current.identity;
+      const sourceMatches =
+        current.photo_id === intent.source.catalog_id &&
+        identity?.catalog_id === intent.source.catalog_id &&
+        identity.uuid === intent.source.uuid &&
+        identity.master_id === intent.source.catalog_id &&
+        identity.master_uuid === intent.source.uuid &&
+        !identity.is_virtual_copy &&
+        samePath(current.path, session.currentManifest.source.raw_path);
+      evidenceStatus = sourceMatches ? "insufficient" : "contradictory";
+      reason = sourceMatches
+        ? "workflow_copy_creation_outcome_uncertain"
+        : "workflow_copy_intent_source_contradicts_backend";
+    } else if (!samePath(current.path, session.currentManifest.source.raw_path)) {
+      evidenceStatus = "contradictory";
+      reason = "legacy_recovery_path_mismatch";
     }
-    await session.writeJson("recovery-readback.json", {
-      interrupted_state: state,
+    const recoveryPath = await writeRecoveryEvidence(session, {
+      ...evidenceBase,
+      recovered_at: new Date().toISOString(),
+      evidence_status: evidenceStatus,
+      reason,
+      target_photo_id: targetPhotoId,
       read_back: current,
     });
-    await session.transition("REVIEW_REQUIRED", {
-      reason: "recovered_after_possible_backend_mutation",
+    await markRecoveryReview(session, {
+      reason,
       interrupted_state: state,
-      readback: "recovery-readback.json",
+      recovery: recoveryPath,
     });
     return resultFor(session, normalizedPlan);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await session.writeJson("error.json", {
-      message,
-      side_effect_started: true,
-      recovery: true,
+    const recoveryPath = await writeRecoveryEvidence(session, {
+      ...evidenceBase,
+      recovered_at: new Date().toISOString(),
+      evidence_status: "readback_failed",
+      reason: `recovery_readback_failed: ${message}`,
+      target_photo_id: targetPhotoId,
+      read_back: null,
     });
-    if (session.currentState !== "REVIEW_REQUIRED") {
-      await session.transition("REVIEW_REQUIRED", {
-        reason: "recovery_readback_failed",
-        error: message,
-      });
-    }
+    await markRecoveryReview(session, {
+      reason: "recovery_readback_failed",
+      error: message,
+      recovery: recoveryPath,
+    });
     return resultFor(session, normalizedPlan);
   } finally {
     if (connected) await options.backend.close();

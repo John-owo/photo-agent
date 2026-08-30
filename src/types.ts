@@ -18,7 +18,11 @@ import type {
   ShootReviewFileSchema,
   PropagationPlanSchema,
   SourceAssetPairSchema,
+  DevelopIterationIntentSchema,
+  RecoveryEvidenceSchema,
+  WorkflowCopyIntentSchema,
   WorkflowCopyResultSchema,
+  WorkflowCopyVerificationSchema,
 } from "./schemas.js";
 
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
@@ -28,7 +32,11 @@ export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;
 export type BackendPhotoIdentity = z.infer<typeof BackendPhotoIdentitySchema>;
+export type DevelopIterationIntent = z.infer<typeof DevelopIterationIntentSchema>;
+export type RecoveryEvidence = z.infer<typeof RecoveryEvidenceSchema>;
+export type WorkflowCopyIntent = z.infer<typeof WorkflowCopyIntentSchema>;
 export type WorkflowCopyResult = z.infer<typeof WorkflowCopyResultSchema>;
+export type WorkflowCopyVerification = z.infer<typeof WorkflowCopyVerificationSchema>;
 export type EvaluationResult = z.infer<typeof EvaluationResultSchema>;
 export type CullingDecision = z.infer<typeof CullingDecisionSchema>;
 export type LightingClassification = z.infer<typeof LightingClassificationSchema>;

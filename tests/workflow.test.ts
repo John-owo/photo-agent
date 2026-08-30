@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -20,6 +20,26 @@ async function fixturePair(): Promise<{ root: string; raw: string; preview: stri
   await writeFile(raw, "synthetic raw fixture", "utf8");
   await writeFixtureJpeg(preview);
   return { root, raw, preview };
+}
+
+type RecoveryReportFixture = {
+  evidence_status: "consistent" | "contradictory" | "insufficient" | "readback_failed";
+  reason: string;
+  workflow_copy_intent: unknown;
+  workflow_copy: unknown | null;
+  checkpoint_artifacts: string[];
+  operation_artifacts: string[];
+  read_back: {
+    photo_id: string;
+    identity?: { catalog_id: string; uuid: string };
+  } | null;
+};
+
+async function recoveryReportPaths(sessionDir: string): Promise<string[]> {
+  return (await readdir(join(sessionDir, "recovery")))
+    .filter((name) => name.endsWith(".json"))
+    .sort()
+    .map((name) => join(sessionDir, "recovery", name));
 }
 
 describe("v0.1-alpha contracts", () => {
@@ -458,9 +478,326 @@ describe("v0.1-alpha contracts", () => {
     expect(result.state).toBe("REVIEW_REQUIRED");
     expect(result.manifest.backend).toEqual({ name: "mock", version: "0.1.0" });
     expect(backend.calls).toEqual(["connect", "handshake", "read_current_edit", "close"]);
-    expect(await readFile(join(session.dir, "recovery-readback.json"), "utf8")).toContain(
-      "interrupted_state",
+    const reports = await recoveryReportPaths(session.dir);
+    expect(reports).toHaveLength(1);
+    const report = JSON.parse(await readFile(reports[0]!, "utf8")) as RecoveryReportFixture & {
+      interrupted_state: string;
+    };
+    expect(report.interrupted_state).toBe("APPLYING");
+    expect(report.evidence_status).toBe("insufficient");
+    expect(report.read_back?.photo_id).toBe(raw);
+  });
+
+  it("records Copy creation intent and never retries when the create response is lost", async () => {
+    const { root, raw, preview } = await fixturePair();
+    const sessionRoot = join(root, "sessions");
+    const backend = new MockBackend(raw);
+    const createWorkflowCopy = backend.createWorkflowCopy.bind(backend);
+    let createdCopyCount = 0;
+    const observedCopyIds: string[] = [];
+    let intentObservedBeforeCreate: unknown;
+    backend.createWorkflowCopy = async (sourcePhotoId, expectedSourceUuid, operationId) => {
+      const sessionEntry = (await readdir(sessionRoot, { withFileTypes: true })).find((entry) =>
+        entry.isDirectory(),
+      );
+      intentObservedBeforeCreate = JSON.parse(
+        await readFile(join(sessionRoot, sessionEntry!.name, "workflow-copy-intent.json"), "utf8"),
+      ) as unknown;
+      const created = await createWorkflowCopy(sourcePhotoId, expectedSourceUuid, operationId);
+      if (created.result === "created") createdCopyCount += 1;
+      if (created.copy) observedCopyIds.push(created.copy.catalog_id);
+      throw new Error("simulated timeout after Workflow Copy side effect");
+    };
+
+    const initial = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: new MockProvider(),
+      backend,
+      sessionRoot,
+      apply: true,
+      allowCloudPreview: false,
+    });
+
+    expect(initial.state).toBe("REVIEW_REQUIRED");
+    expect(createdCopyCount).toBe(1);
+    expect(backend.calls.filter((call) => call === "create_workflow_copy")).toHaveLength(1);
+    const copyIntent = JSON.parse(
+      await readFile(join(initial.sessionDir, "workflow-copy-intent.json"), "utf8"),
+    ) as {
+      operation_id: string;
+      source: Record<string, unknown>;
+    };
+    expect(copyIntent.operation_id).toMatch(/^photoagent-vc-/);
+    expect(copyIntent.source).toEqual({
+      catalog_id: raw,
+      uuid: "mock-master-uuid",
+      master_id: raw,
+      master_uuid: "mock-master-uuid",
+      is_virtual_copy: false,
+    });
+    expect(intentObservedBeforeCreate).toEqual(copyIntent);
+
+    const resumeBackend = new MockBackend(raw);
+    await expect(
+      resumeCodexSession({
+        sessionDir: initial.sessionDir,
+        intentFile: join(initial.sessionDir, "codex-intent.json"),
+        backend: resumeBackend,
+        apply: true,
+        allowCloudPreview: false,
+      }),
+    ).rejects.toThrow("only CODEX_INPUT_REQUIRED sessions can be resumed");
+    expect(resumeBackend.calls).toEqual([]);
+
+    backend.calls.length = 0;
+    backend.operationTargets.length = 0;
+    const recovered = await recoverSession({ sessionDir: initial.sessionDir, backend });
+
+    expect(recovered.state).toBe("REVIEW_REQUIRED");
+    expect(backend.calls).not.toContain("create_workflow_copy");
+    expect(backend.calls).not.toContain("create_checkpoint");
+    expect(backend.calls).not.toContain("apply_global_adjustment");
+    expect(backend.calls).not.toContain("render_preview");
+    expect(backend.operationTargets).toEqual([]);
+    expect(createdCopyCount).toBe(1);
+    expect(new Set(observedCopyIds).size).toBe(1);
+
+    const reports = await recoveryReportPaths(initial.sessionDir);
+    expect(reports).toHaveLength(1);
+    const report = JSON.parse(await readFile(reports[0]!, "utf8")) as RecoveryReportFixture;
+    expect(report.evidence_status).toBe("insufficient");
+    expect(report.reason).toMatch(/workflow[ _]copy.*(unknown|uncertain|incomplete)/i);
+    expect(report.workflow_copy_intent).toEqual(copyIntent);
+    expect(report.workflow_copy).toBeNull();
+    expect(report.checkpoint_artifacts).toEqual([]);
+    expect(report.operation_artifacts).toEqual([]);
+    expect(report.read_back).toMatchObject({
+      photo_id: raw,
+      identity: { catalog_id: raw, uuid: "mock-master-uuid" },
+    });
+  });
+
+  it("recovers the exact recorded Copy without changing durable Copy or checkpoint evidence", async () => {
+    const { root, raw, preview } = await fixturePair();
+    const sessionRoot = join(root, "sessions");
+    const backend = new MockBackend(raw);
+    const readTargets: string[] = [];
+    let intentObservedBeforeCheckpoint: unknown;
+    const readCurrentEdit = backend.readCurrentEdit.bind(backend);
+    const createCheckpoint = backend.createCheckpoint.bind(backend);
+    backend.readCurrentEdit = async (photoId) => {
+      readTargets.push(photoId);
+      return readCurrentEdit(photoId);
+    };
+    backend.createCheckpoint = async (photoId, name, settings) => {
+      const sessionEntry = (await readdir(sessionRoot, { withFileTypes: true })).find((entry) =>
+        entry.isDirectory(),
+      );
+      intentObservedBeforeCheckpoint = JSON.parse(
+        await readFile(
+          join(sessionRoot, sessionEntry!.name, "operations", "iteration-1-intent.json"),
+          "utf8",
+        ),
+      ) as unknown;
+      return createCheckpoint(photoId, name, settings);
+    };
+    const initial = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: new MockProvider(),
+      backend,
+      sessionRoot,
+      apply: true,
+      allowCloudPreview: false,
+    });
+    expect(initial.state).toBe("REVIEW_REQUIRED");
+
+    const copyPath = join(initial.sessionDir, "workflow-copy.json");
+    const copyIntentPath = join(initial.sessionDir, "workflow-copy-intent.json");
+    const operationIntentPath = join(
+      initial.sessionDir,
+      "operations",
+      "iteration-1-intent.json",
     );
+    const checkpointPath = join(
+      initial.sessionDir,
+      "checkpoints",
+      "iteration-1-before.json",
+    );
+    const readbackPath = join(initial.sessionDir, "backend-readback-iteration-1.json");
+    const workflowCopyBytes = await readFile(copyPath);
+    const checkpointBytes = await readFile(checkpointPath);
+    const workflowCopy = JSON.parse(workflowCopyBytes.toString("utf8")) as {
+      copy: {
+        catalog_id: string;
+        uuid: string;
+        master_id: string;
+        master_uuid: string;
+        is_virtual_copy: true;
+      };
+    };
+    const copyIntent = JSON.parse(await readFile(copyIntentPath, "utf8")) as unknown;
+    const operationIntent = JSON.parse(await readFile(operationIntentPath, "utf8")) as {
+      operation_id: string;
+      target: unknown;
+      checkpoint_name: string;
+      requested_settings: Record<string, unknown>;
+    };
+    const checkpoint = JSON.parse(await readFile(checkpointPath, "utf8")) as {
+      operation_id: string;
+    };
+    const readback = JSON.parse(await readFile(readbackPath, "utf8")) as {
+      operation_id: string;
+    };
+    expect(operationIntent.operation_id).toEqual(expect.any(String));
+    expect(operationIntent.target).toEqual(workflowCopy.copy);
+    expect(operationIntent.checkpoint_name).toMatch(/iteration_1_before$/);
+    expect(operationIntent.requested_settings).toMatchObject({ Exposure2012: 0.2 });
+    expect(intentObservedBeforeCheckpoint).toEqual(operationIntent);
+    expect(checkpoint.operation_id).toBe(operationIntent.operation_id);
+    expect(readback.operation_id).toBe(operationIntent.operation_id);
+
+    backend.calls.length = 0;
+    backend.operationTargets.length = 0;
+    readTargets.length = 0;
+    const recovered = await recoverSession({ sessionDir: initial.sessionDir, backend });
+
+    expect(recovered.state).toBe("REVIEW_REQUIRED");
+    expect(readTargets).toEqual([workflowCopy.copy.catalog_id]);
+    expect(readTargets).not.toContain(raw);
+    expect(backend.calls).not.toContain("create_workflow_copy");
+    expect(backend.calls).not.toContain("create_checkpoint");
+    expect(backend.calls).not.toContain("apply_global_adjustment");
+    expect(backend.calls).not.toContain("render_preview");
+    expect(backend.operationTargets).toEqual([]);
+
+    const firstReports = await recoveryReportPaths(initial.sessionDir);
+    expect(firstReports).toHaveLength(1);
+    const firstReportBytes = await readFile(firstReports[0]!);
+    const firstReport = JSON.parse(firstReportBytes.toString("utf8")) as RecoveryReportFixture;
+    expect(firstReport.evidence_status).toBe("consistent");
+    expect(firstReport.reason).toMatch(/recorded.workflow.copy.*(reconcil|consistent)/i);
+    expect(firstReport.workflow_copy_intent).toEqual(copyIntent);
+    expect(firstReport.workflow_copy).toEqual(workflowCopy);
+    expect(firstReport.checkpoint_artifacts).toEqual(
+      expect.arrayContaining([expect.stringMatching(/checkpoints[\\/]iteration-1-before\.json$/)]),
+    );
+    expect(firstReport.operation_artifacts).toEqual(
+      expect.arrayContaining([expect.stringMatching(/operations[\\/]iteration-1-intent\.json$/)]),
+    );
+    expect(firstReport.read_back?.photo_id).toBe(workflowCopy.copy.catalog_id);
+    expect(firstReport.read_back?.identity).toMatchObject({
+      catalog_id: workflowCopy.copy.catalog_id,
+      uuid: workflowCopy.copy.uuid,
+    });
+    expect(await readFile(copyPath)).toEqual(workflowCopyBytes);
+    expect(await readFile(checkpointPath)).toEqual(checkpointBytes);
+
+    await recoverSession({ sessionDir: initial.sessionDir, backend });
+    const secondReports = await recoveryReportPaths(initial.sessionDir);
+    expect(secondReports).toHaveLength(2);
+    expect(secondReports[1]).not.toBe(secondReports[0]);
+    expect(await readFile(firstReports[0]!)).toEqual(firstReportBytes);
+    expect(await readFile(copyPath)).toEqual(workflowCopyBytes);
+    expect(await readFile(checkpointPath)).toEqual(checkpointBytes);
+  });
+
+  it("reports contradictory recorded Copy identity without mutating or overwriting evidence", async () => {
+    const { root, raw, preview } = await fixturePair();
+    const backend = new MockBackend(raw);
+    const initial = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: new MockProvider(),
+      backend,
+      sessionRoot: join(root, "sessions"),
+      apply: true,
+      allowCloudPreview: false,
+    });
+    expect(initial.state).toBe("REVIEW_REQUIRED");
+    const copyPath = join(initial.sessionDir, "workflow-copy.json");
+    const checkpointPath = join(
+      initial.sessionDir,
+      "checkpoints",
+      "iteration-1-before.json",
+    );
+    const copyBytes = await readFile(copyPath);
+    const checkpointBytes = await readFile(checkpointPath);
+    const workflowCopy = JSON.parse(copyBytes.toString("utf8")) as {
+      copy: { catalog_id: string };
+    };
+    const readCurrentEdit = backend.readCurrentEdit.bind(backend);
+    backend.readCurrentEdit = async (photoId) => {
+      const current = await readCurrentEdit(photoId);
+      return {
+        ...current,
+        identity: current.identity
+          ? { ...current.identity, uuid: "contradictory-backend-copy-uuid" }
+          : current.identity,
+      };
+    };
+    backend.calls.length = 0;
+    backend.operationTargets.length = 0;
+
+    const recovered = await recoverSession({ sessionDir: initial.sessionDir, backend });
+
+    expect(recovered.state).toBe("REVIEW_REQUIRED");
+    expect(backend.calls).not.toContain("create_workflow_copy");
+    expect(backend.calls).not.toContain("create_checkpoint");
+    expect(backend.calls).not.toContain("apply_global_adjustment");
+    expect(backend.calls).not.toContain("render_preview");
+    expect(backend.operationTargets).toEqual([]);
+    const reports = await recoveryReportPaths(initial.sessionDir);
+    expect(reports).toHaveLength(1);
+    const report = JSON.parse(await readFile(reports[0]!, "utf8")) as RecoveryReportFixture;
+    expect(report.evidence_status).toBe("contradictory");
+    expect(report.reason).toMatch(/contradict|mismatch/i);
+    expect(report.read_back).toMatchObject({
+      photo_id: workflowCopy.copy.catalog_id,
+      identity: {
+        catalog_id: workflowCopy.copy.catalog_id,
+        uuid: "contradictory-backend-copy-uuid",
+      },
+    });
+    expect(await readFile(copyPath)).toEqual(copyBytes);
+    expect(await readFile(checkpointPath)).toEqual(checkpointBytes);
+  });
+
+  it("fails closed before backend access when recovery photoId contradicts the recorded Copy", async () => {
+    const { root, raw, preview } = await fixturePair();
+    const backend = new MockBackend(raw);
+    const initial = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: new MockProvider(),
+      backend,
+      sessionRoot: join(root, "sessions"),
+      apply: true,
+      allowCloudPreview: false,
+    });
+    expect(initial.state).toBe("REVIEW_REQUIRED");
+    const workflowCopy = JSON.parse(
+      await readFile(join(initial.sessionDir, "workflow-copy.json"), "utf8"),
+    ) as { copy: { catalog_id: string } };
+    backend.calls.length = 0;
+    backend.operationTargets.length = 0;
+
+    const recovered = await recoverSession({
+      sessionDir: initial.sessionDir,
+      backend,
+      photoId: `${workflowCopy.copy.catalog_id}-different`,
+    });
+
+    expect(recovered.state).toBe("REVIEW_REQUIRED");
+    expect(backend.calls).toEqual([]);
+    expect(backend.operationTargets).toEqual([]);
+    const reports = await recoveryReportPaths(initial.sessionDir);
+    expect(reports).toHaveLength(1);
+    const report = JSON.parse(await readFile(reports[0]!, "utf8")) as RecoveryReportFixture;
+    expect(report.evidence_status).toBe("contradictory");
+    expect(report.reason).toMatch(/photo.?id.*recorded.(identity|workflow.copy)/i);
+    expect(report.read_back).toBeNull();
   });
 
   it("writes a deterministic XMP sidecar and refuses overwrite", async () => {

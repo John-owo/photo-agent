@@ -1184,3 +1184,51 @@ Cloud-analyzer checkpoint:
   branch to the local origin fetch refspec. Final local verification resolves
   HEAD and upstream to `95db02c0e62ee9ac2195b7b17b3ff8fa59f1ca60` and reports
   a clean branch tracking `origin/codex/roadmap-integration`.
+
+## 2026-08-30 - T08 acceptance and baseline
+
+- Read current GitHub issue #13. T08 requires resume/recovery to reuse the
+  recorded Workflow Copy, never create another copy while creation outcome is
+  uncertain, read actual backend state without blindly retrying a
+  non-idempotent mutation, and retain Copy/Checkpoint evidence when stopping at
+  `REVIEW_REQUIRED`.
+- Targeted baseline `npm.cmd test -- tests/workflow.test.ts` passed 1 file / 22
+  tests. Existing recovery coverage reads a caller/default photo id but does not
+  yet reconcile the persisted Workflow Copy identity or the uncertain
+  copy-creation intent boundary.
+- The first post-implementation `npm.cmd run check` failed with one TypeScript
+  unused-import error for `BackendPhotoState` in `src/workflow.ts`. The import
+  was introduced during the narrow T08 recovery implementation but not needed;
+  it was removed before further verification.
+- Added strict durable schemas for Workflow Copy intent/verification,
+  per-iteration Develop intent, and non-overwriting recovery evidence. The
+  workflow now records the exact Copy/Master identity and operation id before
+  Copy creation, then records each Copy-targeted checkpoint name, requested
+  settings, target identity, and operation id before non-idempotent Develop
+  work.
+- Recovery now uses the recorded Copy catalog id and UUID instead of path-only
+  identity, validates its Master relationship against actual backend readback,
+  rejects a conflicting `photoId` override before backend access, and writes a
+  unique report under `recovery/` without overwriting prior Copy, Checkpoint,
+  readback, or error evidence. When only Copy-creation intent exists, it reads
+  the recorded Master identity, does not call Copy creation again, and records
+  the outcome as insufficient/`REVIEW_REQUIRED`.
+- Added four public workflow T08 regressions for response loss after Copy side
+  effect, exact recorded-Copy recovery, contradictory backend identity, and a
+  conflicting recovery override. The existing legacy recovery test now reads
+  the unique recovery report contract.
+- After the unused import repair, `npm.cmd run check` passed. Main-agent rerun
+  `npm.cmd test -- tests/workflow.test.ts` passed 1 file / 26 tests after the
+  final Workflow Copy verification-evidence strengthening.
+- Full `npm.cmd test` passed 3 files / 52 tests: 16 backend-handshake, 26
+  workflow, and 10 milestone tests. `npm.cmd run build` completed with exit 0.
+  The first parallel lint result returned output without a final exit code, so
+  it was not counted; the explicit standalone `npm.cmd run lint` rerun completed
+  with exit 0.
+- `git diff --check` completed successfully with only the repository's normal
+  LF-to-CRLF working-copy warnings. `npm.cmd run format:check` failed on the
+  pre-existing repository-wide formatting baseline: Prettier listed 45 files,
+  including many untouched source, config, documentation, fixture, and test
+  files. No whole-file formatting or line-ending normalization was applied;
+  lint, TypeScript, build, targeted tests, full tests, and diff checks remain
+  green.

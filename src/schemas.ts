@@ -137,6 +137,67 @@ export const WorkflowCopyResultSchema = z
   })
   .strict();
 
+export const WorkflowCopyIntentSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    operation_id: z.string().min(1),
+    phase: z.literal("started"),
+    source: BackendPhotoIdentitySchema,
+  })
+  .strict();
+
+export const WorkflowCopyVerificationSchema = z
+  .object({
+    operation_id: z.string().min(1),
+    verified: z.boolean(),
+    master: BackendPhotoIdentitySchema,
+    copy: BackendPhotoIdentitySchema.nullable(),
+    inherited_develop_state: z.boolean(),
+  })
+  .strict();
+
+export const DevelopIterationIntentSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    operation_id: z.string().min(1),
+    kind: z.literal("develop_iteration"),
+    phase: z.literal("started"),
+    iteration: z.number().int().positive(),
+    target: BackendPhotoIdentitySchema,
+    checkpoint_name: z.string().min(1),
+    requested_settings: z.record(
+      z.string(),
+      z.union([z.number(), z.string(), z.boolean()]),
+    ),
+  })
+  .strict();
+
+export const RecoveryEvidenceSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    recovered_at: z.string().datetime(),
+    interrupted_state: z.string().min(1),
+    evidence_status: z.enum([
+      "consistent",
+      "contradictory",
+      "insufficient",
+      "readback_failed",
+    ]),
+    reason: z.string().min(1),
+    requested_photo_id: z.string().min(1).optional(),
+    target_photo_id: z.string().min(1).optional(),
+    workflow_copy_intent: WorkflowCopyIntentSchema.nullable(),
+    workflow_copy: WorkflowCopyResultSchema.nullable(),
+    workflow_copy_verification: WorkflowCopyVerificationSchema.nullable(),
+    checkpoint_artifacts: z.array(z.string().min(1)),
+    operation_artifacts: z.array(z.string().min(1)),
+    invalid_artifacts: z.array(z.string().min(1)),
+    read_back: BackendPhotoStateSchema.nullable(),
+    copy_creation_retried: z.literal(false),
+    mutation_retried: z.literal(false),
+  })
+  .strict();
+
 export const OperationSemanticsSchema = z.object({
   supported: z.boolean(),
   side_effect: z.enum(["read_only", "temporary", "mutating", "delivery_export"]),
