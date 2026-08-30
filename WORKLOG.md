@@ -1232,3 +1232,38 @@ Cloud-analyzer checkpoint:
   files. No whole-file formatting or line-ending normalization was applied;
   lint, TypeScript, build, targeted tests, full tests, and diff checks remain
   green.
+- First TypeScript check after the initial Spec-review repairs failed because
+  `exactOptionalPropertyTypes` could not narrow two separate `Array.at(-1)`
+  calls when constructing optional `lastReadback`. Storing the value once and
+  conditionally spreading that narrowed local repaired the type boundary; the
+  failed command is not counted as verification.
+
+## 2026-08-30 - T08 two-axis review repair
+
+- Standards review against fixed base `1a89983` reported no hard violation and
+  one judgement-call duplication risk: Master/Copy identity relationships were
+  re-expressed in the execute and recovery branches. Extracted shared exact
+  identity, recorded-Master, Copy/Master, and Copy-result predicates to keep the
+  safety contract from drifting.
+- Spec review reported two blockers. First, response loss after Copy creation
+  stopped after Master readback without using the same operation id to recover
+  the actual Copy identity. Second, recovery listed Develop operation and
+  Checkpoint artifact names but did not parse them or compare saved readback to
+  actual backend state.
+- Repaired Copy recovery to require `readback_before_retry` plus
+  `exclusive_backend` semantics, read and verify the recorded Master first,
+  reconcile with the exact persisted operation id, persist the returned Copy,
+  then read and verify its catalog id, UUID, Master relation, source path, and
+  inherited Develop state. The report distinguishes reconciliation from retry;
+  no new operation id is generated and no Develop mutation is retried.
+- Added strict per-iteration Checkpoint and Develop-readback schemas. Recovery
+  now validates operation id, target identity, checkpoint name, requested
+  settings, and saved readback relationships, then compares the latest complete
+  Develop readback with actual Copy state. Missing Checkpoint/readback evidence
+  is `insufficient`; invalid or mismatched evidence is `contradictory`.
+- Updated English/Traditional Chinese recovery documentation and v0.1 status.
+  Added/strengthened regression coverage for same-id Copy response-loss
+  reconciliation, uncertain Checkpoint outcome, uncertain Develop outcome,
+  exact completed Copy readback, contradictory identity, and override refusal.
+- Post-repair `npm.cmd run check` passed and targeted
+  `npm.cmd test -- tests/workflow.test.ts` passed 1 file / 28 tests.

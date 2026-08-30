@@ -29,6 +29,11 @@ type RecoveryReportFixture = {
   workflow_copy: unknown | null;
   checkpoint_artifacts: string[];
   operation_artifacts: string[];
+  readback_artifacts: string[];
+  operation_evidence_status: "none" | "consistent" | "insufficient" | "contradictory";
+  copy_creation_reconciled: boolean;
+  copy_creation_retried: false;
+  mutation_retried: false;
   read_back: {
     photo_id: string;
     identity?: { catalog_id: string; uuid: string };
@@ -494,9 +499,11 @@ describe("v0.1-alpha contracts", () => {
     const backend = new MockBackend(raw);
     const createWorkflowCopy = backend.createWorkflowCopy.bind(backend);
     let createdCopyCount = 0;
+    let createCalls = 0;
     const observedCopyIds: string[] = [];
     let intentObservedBeforeCreate: unknown;
     backend.createWorkflowCopy = async (sourcePhotoId, expectedSourceUuid, operationId) => {
+      createCalls += 1;
       const sessionEntry = (await readdir(sessionRoot, { withFileTypes: true })).find((entry) =>
         entry.isDirectory(),
       );
@@ -506,7 +513,10 @@ describe("v0.1-alpha contracts", () => {
       const created = await createWorkflowCopy(sourcePhotoId, expectedSourceUuid, operationId);
       if (created.result === "created") createdCopyCount += 1;
       if (created.copy) observedCopyIds.push(created.copy.catalog_id);
-      throw new Error("simulated timeout after Workflow Copy side effect");
+      if (createCalls === 1) {
+        throw new Error("simulated timeout after Workflow Copy side effect");
+      }
+      return created;
     };
 
     const initial = await runSinglePhoto({
@@ -555,7 +565,7 @@ describe("v0.1-alpha contracts", () => {
     const recovered = await recoverSession({ sessionDir: initial.sessionDir, backend });
 
     expect(recovered.state).toBe("REVIEW_REQUIRED");
-    expect(backend.calls).not.toContain("create_workflow_copy");
+    expect(backend.calls.filter((call) => call === "create_workflow_copy")).toHaveLength(1);
     expect(backend.calls).not.toContain("create_checkpoint");
     expect(backend.calls).not.toContain("apply_global_adjustment");
     expect(backend.calls).not.toContain("render_preview");
@@ -566,16 +576,121 @@ describe("v0.1-alpha contracts", () => {
     const reports = await recoveryReportPaths(initial.sessionDir);
     expect(reports).toHaveLength(1);
     const report = JSON.parse(await readFile(reports[0]!, "utf8")) as RecoveryReportFixture;
-    expect(report.evidence_status).toBe("insufficient");
-    expect(report.reason).toMatch(/workflow[ _]copy.*(unknown|uncertain|incomplete)/i);
+    expect(report.evidence_status).toBe("consistent");
+    expect(report.reason).toMatch(/workflow[ _]copy.*reconcil/i);
     expect(report.workflow_copy_intent).toEqual(copyIntent);
-    expect(report.workflow_copy).toBeNull();
+    expect(report.workflow_copy).toMatchObject({
+      operation_id: copyIntent.operation_id,
+      result: "reconciled",
+      copy: { catalog_id: observedCopyIds[0] },
+    });
+    expect(report.copy_creation_reconciled).toBe(true);
+    expect(report.copy_creation_retried).toBe(false);
+    expect(report.mutation_retried).toBe(false);
     expect(report.checkpoint_artifacts).toEqual([]);
     expect(report.operation_artifacts).toEqual([]);
     expect(report.read_back).toMatchObject({
-      photo_id: raw,
-      identity: { catalog_id: raw, uuid: "mock-master-uuid" },
+      photo_id: observedCopyIds[0],
+      identity: { catalog_id: observedCopyIds[0] },
     });
+  });
+
+  it("reads the recorded Copy after an uncertain Develop response without retrying it", async () => {
+    const { root, raw, preview } = await fixturePair();
+    const backend = new MockBackend(raw);
+    const applyGlobalAdjustment = backend.applyGlobalAdjustment.bind(backend);
+    let applyCalls = 0;
+    backend.applyGlobalAdjustment = async (photoId, settings) => {
+      applyCalls += 1;
+      await applyGlobalAdjustment(photoId, settings);
+      throw new Error("simulated timeout after Develop side effect");
+    };
+    const initial = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: new MockProvider(),
+      backend,
+      sessionRoot: join(root, "sessions"),
+      apply: true,
+      allowCloudPreview: false,
+    });
+    expect(initial.state).toBe("REVIEW_REQUIRED");
+    expect(applyCalls).toBe(1);
+    const workflowCopy = JSON.parse(
+      await readFile(join(initial.sessionDir, "workflow-copy.json"), "utf8"),
+    ) as { copy: { catalog_id: string } };
+
+    backend.calls.length = 0;
+    backend.operationTargets.length = 0;
+    const recovered = await recoverSession({ sessionDir: initial.sessionDir, backend });
+
+    expect(recovered.state).toBe("REVIEW_REQUIRED");
+    expect(applyCalls).toBe(1);
+    expect(backend.calls).toEqual(["connect", "handshake", "read_current_edit", "close"]);
+    expect(backend.operationTargets).toEqual([]);
+    const reports = await recoveryReportPaths(initial.sessionDir);
+    const report = JSON.parse(await readFile(reports[0]!, "utf8")) as RecoveryReportFixture;
+    expect(report.evidence_status).toBe("insufficient");
+    expect(report.operation_evidence_status).toBe("insufficient");
+    expect(report.copy_creation_retried).toBe(false);
+    expect(report.mutation_retried).toBe(false);
+    expect(report.reason).toMatch(/develop.iteration.*uncertain/i);
+    expect(report.workflow_copy).toMatchObject({
+      copy: { catalog_id: workflowCopy.copy.catalog_id },
+    });
+    expect(report.checkpoint_artifacts).toEqual(
+      expect.arrayContaining([expect.stringMatching(/checkpoints[\\/]iteration-1-before\.json$/)]),
+    );
+    expect(report.operation_artifacts).toEqual(
+      expect.arrayContaining([expect.stringMatching(/operations[\\/]iteration-1-intent\.json$/)]),
+    );
+    expect(report.readback_artifacts).toEqual([]);
+    expect(report.read_back).toMatchObject({
+      photo_id: workflowCopy.copy.catalog_id,
+      develop_settings: { Exposure2012: 0.2 },
+    });
+  });
+
+  it("preserves checkpoint intent when checkpoint response is uncertain and never retries it", async () => {
+    const { root, raw, preview } = await fixturePair();
+    const backend = new MockBackend(raw);
+    const createCheckpoint = backend.createCheckpoint.bind(backend);
+    let checkpointCalls = 0;
+    backend.createCheckpoint = async (photoId, name, settings) => {
+      checkpointCalls += 1;
+      await createCheckpoint(photoId, name, settings);
+      throw new Error("simulated timeout after Checkpoint side effect");
+    };
+    const initial = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: new MockProvider(),
+      backend,
+      sessionRoot: join(root, "sessions"),
+      apply: true,
+      allowCloudPreview: false,
+    });
+    expect(initial.state).toBe("REVIEW_REQUIRED");
+    expect(checkpointCalls).toBe(1);
+
+    backend.calls.length = 0;
+    backend.operationTargets.length = 0;
+    await recoverSession({ sessionDir: initial.sessionDir, backend });
+
+    expect(checkpointCalls).toBe(1);
+    expect(backend.calls).toEqual(["connect", "handshake", "read_current_edit", "close"]);
+    expect(backend.operationTargets).toEqual([]);
+    const reports = await recoveryReportPaths(initial.sessionDir);
+    const report = JSON.parse(await readFile(reports[0]!, "utf8")) as RecoveryReportFixture;
+    expect(report.evidence_status).toBe("insufficient");
+    expect(report.operation_evidence_status).toBe("insufficient");
+    expect(report.reason).toMatch(/develop.iteration.*uncertain/i);
+    expect(report.operation_artifacts).toEqual([
+      expect.stringMatching(/operations[\\/]iteration-1-intent\.json$/),
+    ]);
+    expect(report.checkpoint_artifacts).toEqual([]);
+    expect(report.readback_artifacts).toEqual([]);
+    expect(report.read_back?.photo_id).toMatch(/^mock-copy-/);
   });
 
   it("recovers the exact recorded Copy without changing durable Copy or checkpoint evidence", async () => {

@@ -206,11 +206,17 @@ node dist/src/cli.js recover `
 ```
 
 If Copy creation may have succeeded but no persistent Copy identity was
-returned, recovery preserves the stable operation intent and stops at
-`REVIEW_REQUIRED`; it does not call Copy creation again. When a Copy identity is
-recorded, recovery reads that exact catalog ID and verifies its UUID and Master
-relationship. Each run writes a separate JSON report under `recovery/`, leaving
-the original Copy, operation, Checkpoint, read-back, and error artifacts intact.
+returned, recovery first reads the recorded Master, then reconciles the backend
+with the same stable operation ID and verifies that exactly one persistent Copy
+identity is returned. It never creates a second Copy with a new operation ID.
+When a Copy identity is already recorded, recovery reads that exact catalog ID
+and verifies its UUID and Master relationship. Develop mutations and
+Checkpoints are never retried. Each run writes a separate JSON report under
+`recovery/`, leaving the original Copy, operation, Checkpoint, read-back, and
+error artifacts intact. The report parses each iteration's operation intent,
+Checkpoint, and saved read-back, then compares the last completed read-back to
+the actual Copy state; missing evidence is `insufficient` and mismatches are
+`contradictory`.
 
 ## XMP fallback
 

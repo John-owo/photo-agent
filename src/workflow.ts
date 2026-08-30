@@ -25,6 +25,8 @@ import {
 import { acquireMutationLock, SessionStore } from "./runtime.js";
 import {
   DevelopIterationIntentSchema,
+  CheckpointEvidenceSchema,
+  DevelopReadbackEvidenceSchema,
   EvaluationResultSchema,
   RecoveryEvidenceSchema,
   WorkflowCopyIntentSchema,
@@ -33,6 +35,10 @@ import {
 } from "./schemas.js";
 import type {
   BackendAdapter,
+  BackendPhotoIdentity,
+  CheckpointEvidence,
+  DevelopIterationIntent,
+  DevelopReadbackEvidence,
   EditEvaluator,
   NormalizedEditPlan,
   ProviderResult,
@@ -56,6 +62,65 @@ function sameDevelopSettings(
   const leftEntries = Object.entries(left).sort(([a], [b]) => a.localeCompare(b));
   const rightEntries = Object.entries(right).sort(([a], [b]) => a.localeCompare(b));
   return JSON.stringify(leftEntries) === JSON.stringify(rightEntries);
+}
+
+function samePhotoIdentity(
+  left: BackendPhotoIdentity | undefined,
+  right: BackendPhotoIdentity | undefined,
+): boolean {
+  return (
+    left !== undefined &&
+    right !== undefined &&
+    left.catalog_id === right.catalog_id &&
+    left.uuid === right.uuid &&
+    left.master_id === right.master_id &&
+    left.master_uuid === right.master_uuid &&
+    left.is_virtual_copy === right.is_virtual_copy
+  );
+}
+
+function isRecordedMaster(
+  candidate: BackendPhotoIdentity | undefined,
+  master: BackendPhotoIdentity,
+): boolean {
+  return samePhotoIdentity(candidate, master) && !candidate!.is_virtual_copy;
+}
+
+function isCopyOfMaster(
+  candidate: BackendPhotoIdentity | undefined,
+  master: BackendPhotoIdentity,
+): boolean {
+  return (
+    candidate?.is_virtual_copy === true &&
+    candidate.catalog_id !== master.catalog_id &&
+    candidate.uuid !== master.uuid &&
+    candidate.master_id === master.catalog_id &&
+    candidate.master_uuid === master.uuid
+  );
+}
+
+function workflowCopyResultMatchesIntent(
+  result: WorkflowCopyResult,
+  intent: WorkflowCopyIntent,
+): boolean {
+  return (
+    result.operation_id === intent.operation_id &&
+    (result.source === undefined || isRecordedMaster(result.source, intent.source)) &&
+    (result.master === undefined || isRecordedMaster(result.master, intent.source)) &&
+    (result.copy === undefined || isCopyOfMaster(result.copy, intent.source))
+  );
+}
+
+function workflowCopyResultIsComplete(result: WorkflowCopyResult): boolean {
+  return (
+    result.result !== "REVIEW_REQUIRED" &&
+    !result.partial &&
+    result.source !== undefined &&
+    result.master !== undefined &&
+    result.copy !== undefined &&
+    result.selection_restoration.status !== "failed" &&
+    result.selection_restoration.verified
+  );
 }
 
 function hasEffectiveSettings(
@@ -225,24 +290,8 @@ async function executePlan(
     );
     await session.writeJson("workflow-copy.json", workflowCopy);
     const envelopeVerified =
-      workflowCopy.operation_id === operationId &&
-      workflowCopy.source?.catalog_id === master.identity.catalog_id &&
-      workflowCopy.source.uuid === master.identity.uuid &&
-      workflowCopy.source.master_id === master.identity.catalog_id &&
-      workflowCopy.source.master_uuid === master.identity.uuid &&
-      workflowCopy.source.is_virtual_copy === false &&
-      workflowCopy.master?.catalog_id === master.identity.catalog_id &&
-      workflowCopy.master.uuid === master.identity.uuid &&
-      workflowCopy.master.master_id === master.identity.catalog_id &&
-      workflowCopy.master.master_uuid === master.identity.uuid &&
-      workflowCopy.master.is_virtual_copy === false &&
-      workflowCopy.copy?.catalog_id !== master.identity.catalog_id &&
-      workflowCopy.copy?.master_id === master.identity.catalog_id &&
-      workflowCopy.copy.master_uuid === master.identity.uuid &&
-      workflowCopy.copy.is_virtual_copy === true &&
-      workflowCopy.copy.uuid !== master.identity.uuid &&
-      workflowCopy.selection_restoration.status !== "failed" &&
-      workflowCopy.selection_restoration.verified;
+      workflowCopyResultMatchesIntent(workflowCopy, workflowCopyIntent) &&
+      workflowCopyResultIsComplete(workflowCopy);
     if (
       workflowCopy.result === "REVIEW_REQUIRED" ||
       !workflowCopy.copy ||
@@ -260,12 +309,9 @@ async function executePlan(
     const copyState = await options.backend.readCurrentEdit(workflowCopy.copy.catalog_id);
     const copyIdentity = copyState.identity;
     const copyVerified =
-      copyIdentity?.is_virtual_copy === true &&
       copyState.photo_id === workflowCopy.copy.catalog_id &&
-      copyIdentity.catalog_id === workflowCopy.copy.catalog_id &&
-      copyIdentity.uuid === workflowCopy.copy.uuid &&
-      copyIdentity.master_id === master.identity.catalog_id &&
-      copyIdentity.master_uuid === master.identity.uuid &&
+      samePhotoIdentity(copyIdentity, workflowCopy.copy) &&
+      isCopyOfMaster(copyIdentity, master.identity) &&
       samePath(copyState.path, master.path) &&
       sameDevelopSettings(copyState.develop_settings, master.develop_settings);
     const workflowCopyVerification = WorkflowCopyVerificationSchema.parse({
@@ -333,12 +379,13 @@ async function executePlan(
         checkpointName,
         LIGHTROOM_CHECKPOINT_KEYS,
       );
-      const checkpointEvidence = {
+      const checkpointEvidence = CheckpointEvidenceSchema.parse({
+        iteration,
         operation_id: iterationOperationId,
         target: copyIdentity,
         checkpoint_name: checkpointName,
         checkpoint,
-      };
+      });
       await session.writeJson(
         `checkpoints/iteration-${iteration}-before.json`,
         checkpointEvidence,
@@ -347,21 +394,20 @@ async function executePlan(
       sideEffectStarted = true;
       await options.backend.applyGlobalAdjustment(activePhotoId, settings);
       const readBack = await options.backend.readCurrentEdit(activePhotoId);
-      await session.writeJson(`backend-readback-iteration-${iteration}.json`, {
+      const readbackEvidence = DevelopReadbackEvidenceSchema.parse({
+        iteration,
         operation_id: iterationOperationId,
         target: copyIdentity,
         checkpoint_name: checkpointName,
         requested: settings,
         read_back: readBack.develop_settings,
       });
+      await session.writeJson(
+        `backend-readback-iteration-${iteration}.json`,
+        readbackEvidence,
+      );
       if (iteration === 1) {
-        await session.writeJson("backend-readback.json", {
-          operation_id: iterationOperationId,
-          target: copyIdentity,
-          checkpoint_name: checkpointName,
-          requested: settings,
-          read_back: readBack.develop_settings,
-        });
+        await session.writeJson("backend-readback.json", readbackEvidence);
       }
       for (const [key, value] of Object.entries(settings)) {
         if (readBack.develop_settings[key] !== value) {
@@ -673,6 +719,94 @@ async function listJsonArtifacts(session: SessionStore, directory: string): Prom
     .map((name) => join(directory, name));
 }
 
+type IterationEvidenceSummary = {
+  checkpointArtifacts: string[];
+  operationArtifacts: string[];
+  readbackArtifacts: string[];
+  invalidArtifacts: string[];
+  status: RecoveryEvidence["operation_evidence_status"];
+  lastReadback?: DevelopReadbackEvidence;
+};
+
+async function readIterationEvidence(session: SessionStore): Promise<IterationEvidenceSummary> {
+  const checkpointArtifacts = await listJsonArtifacts(session, "checkpoints");
+  const operationArtifacts = await listJsonArtifacts(session, "operations");
+  const readbackArtifacts = (await readdir(session.dir))
+    .filter((name) => /^backend-readback-iteration-\d+\.json$/.test(name))
+    .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+  const invalidArtifacts: string[] = [];
+  const readbacks: DevelopReadbackEvidence[] = [];
+  let status: IterationEvidenceSummary["status"] =
+    operationArtifacts.length === 0 ? "none" : "consistent";
+
+  for (const operationPath of operationArtifacts) {
+    let intent: DevelopIterationIntent;
+    try {
+      intent = DevelopIterationIntentSchema.parse(
+        await session.readJson<unknown>(operationPath),
+      );
+    } catch {
+      invalidArtifacts.push(operationPath);
+      status = "contradictory";
+      continue;
+    }
+    const checkpointPath = join(
+      "checkpoints",
+      `iteration-${intent.iteration}-before.json`,
+    );
+    const readbackPath = `backend-readback-iteration-${intent.iteration}.json`;
+    let checkpoint: CheckpointEvidence | undefined;
+    let readback: DevelopReadbackEvidence | undefined;
+    try {
+      checkpoint = CheckpointEvidenceSchema.parse(
+        await session.readJson<unknown>(checkpointPath),
+      );
+    } catch (error) {
+      if (!isMissingArtifact(error)) invalidArtifacts.push(checkpointPath);
+    }
+    try {
+      readback = DevelopReadbackEvidenceSchema.parse(
+        await session.readJson<unknown>(readbackPath),
+      );
+    } catch (error) {
+      if (!isMissingArtifact(error)) invalidArtifacts.push(readbackPath);
+    }
+    if (!checkpoint || !readback) {
+      if (status !== "contradictory") status = "insufficient";
+      continue;
+    }
+    const checkpointMatches =
+      checkpoint.iteration === intent.iteration &&
+      checkpoint.operation_id === intent.operation_id &&
+      checkpoint.checkpoint_name === intent.checkpoint_name &&
+      checkpoint.checkpoint.name === intent.checkpoint_name &&
+      samePhotoIdentity(checkpoint.target, intent.target);
+    const readbackMatches =
+      readback.iteration === intent.iteration &&
+      readback.operation_id === intent.operation_id &&
+      readback.checkpoint_name === intent.checkpoint_name &&
+      samePhotoIdentity(readback.target, intent.target) &&
+      sameDevelopSettings(readback.requested, intent.requested_settings);
+    if (!checkpointMatches || !readbackMatches) {
+      status = "contradictory";
+      continue;
+    }
+    readbacks.push(readback);
+  }
+
+  if (invalidArtifacts.length > 0) status = "contradictory";
+  readbacks.sort((left, right) => left.iteration - right.iteration);
+  const lastReadback = readbacks.at(-1);
+  return {
+    checkpointArtifacts,
+    operationArtifacts,
+    readbackArtifacts,
+    invalidArtifacts,
+    status,
+    ...(lastReadback ? { lastReadback } : {}),
+  };
+}
+
 async function writeRecoveryEvidence(
   session: SessionStore,
   evidence: RecoveryEvidence,
@@ -697,9 +831,9 @@ async function markRecoveryReview(
 }
 
 /**
- * Reconcile a session left behind by a process crash. This function never
- * retries a mutation. If the backend may have been touched, it only reads
- * the current state and moves the session to REVIEW_REQUIRED.
+ * Reconcile a session left behind by a process crash. Develop mutations are
+ * never retried. An uncertain Workflow Copy creation is first read back at the
+ * recorded Master and then reconciled with the same stable operation id.
  */
 export async function recoverSession(options: RecoverSessionOptions): Promise<WorkflowResult> {
   const session = await SessionStore.open(options.sessionDir);
@@ -730,17 +864,19 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
     return resultFor(session, normalizedPlan);
   }
 
-  const checkpointArtifacts = await listJsonArtifacts(session, "checkpoints");
-  const operationArtifacts = await listJsonArtifacts(session, "operations");
+  const iterationEvidence = await readIterationEvidence(session);
   const evidenceBase = {
     schema_version: "0.1.0" as const,
     interrupted_state: state,
     workflow_copy_intent: copyEvidence.intent ?? null,
     workflow_copy: copyEvidence.result ?? null,
     workflow_copy_verification: copyEvidence.verification ?? null,
-    checkpoint_artifacts: checkpointArtifacts,
-    operation_artifacts: operationArtifacts,
-    invalid_artifacts: copyEvidence.invalidArtifacts,
+    checkpoint_artifacts: iterationEvidence.checkpointArtifacts,
+    operation_artifacts: iterationEvidence.operationArtifacts,
+    readback_artifacts: iterationEvidence.readbackArtifacts,
+    operation_evidence_status: iterationEvidence.status,
+    invalid_artifacts: [...copyEvidence.invalidArtifacts, ...iterationEvidence.invalidArtifacts],
+    copy_creation_reconciled: false,
     copy_creation_retried: false as const,
     mutation_retried: false as const,
     ...(options.photoId ? { requested_photo_id: options.photoId } : {}),
@@ -785,38 +921,27 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
       "workflow_copy_verification_missing_identity_evidence",
     );
   }
-  if (
-    intent &&
-    recordedResult &&
-    (recordedResult.operation_id !== intent.operation_id ||
-      (recordedResult.source !== undefined &&
-        (recordedResult.source.catalog_id !== intent.source.catalog_id ||
-          recordedResult.source.uuid !== intent.source.uuid ||
-          recordedResult.source.is_virtual_copy)) ||
-      (recordedResult.master !== undefined &&
-        (recordedResult.master.catalog_id !== intent.source.catalog_id ||
-          recordedResult.master.uuid !== intent.source.uuid ||
-          recordedResult.master.is_virtual_copy)) ||
-      (recordedCopy !== undefined &&
-        (recordedCopy.master_id !== intent.source.catalog_id ||
-          recordedCopy.master_uuid !== intent.source.uuid ||
-          !recordedCopy.is_virtual_copy)) ||
-      (recordedVerification !== undefined &&
-        (recordedVerification.operation_id !== intent.operation_id ||
-          recordedVerification.master.catalog_id !== intent.source.catalog_id ||
-          recordedVerification.master.uuid !== intent.source.uuid ||
-          recordedVerification.master.is_virtual_copy ||
-          !recordedVerification.copy ||
-          recordedVerification.copy.catalog_id !== recordedCopy?.catalog_id ||
-          recordedVerification.copy.uuid !== recordedCopy?.uuid)))
-  ) {
+  if (intent && recordedResult && !workflowCopyResultMatchesIntent(recordedResult, intent)) {
     return await recordWithoutReadback(
       "contradictory",
       "workflow_copy_artifacts_contradict_each_other",
     );
   }
+  if (
+    intent &&
+    recordedCopy &&
+    recordedVerification &&
+    (recordedVerification.operation_id !== intent.operation_id ||
+      !isRecordedMaster(recordedVerification.master, intent.source) ||
+      !samePhotoIdentity(recordedVerification.copy ?? undefined, recordedCopy))
+  ) {
+    return await recordWithoutReadback(
+      "contradictory",
+      "workflow_copy_verification_contradicts_recorded_identity",
+    );
+  }
 
-  const targetPhotoId = recordedCopy?.catalog_id ?? intent?.source.catalog_id ?? options.photoId ??
+  let targetPhotoId = recordedCopy?.catalog_id ?? intent?.source.catalog_id ?? options.photoId ??
     session.currentManifest.source.raw_path;
   const expectedOverride = recordedCopy?.catalog_id ?? intent?.source.catalog_id;
   if (options.photoId && expectedOverride && options.photoId !== expectedOverride) {
@@ -829,6 +954,7 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
 
   let unlock: (() => Promise<void>) | undefined;
   let connected = false;
+  let copyCreationReconciled = false;
   try {
     unlock = await acquireMutationLock(
       join(resolve(session.dir, ".."), `${options.backend.name}.mutation.lock`),
@@ -840,33 +966,94 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
     );
     await options.backend.connect();
     connected = true;
-    const backendManifest = await requireBackendHandshake(options.backend, RECOVERY_OPERATIONS);
+    const needsCopyReconciliation = Boolean(intent && !recordedCopy);
+    const backendManifest = await requireBackendHandshake(
+      options.backend,
+      needsCopyReconciliation
+        ? ([...RECOVERY_OPERATIONS, "create_workflow_copy"] as const)
+        : RECOVERY_OPERATIONS,
+    );
     await session.updateManifest({
       backend: { name: backendManifest.backend, version: backendManifest.version },
     });
-    const current = await options.backend.readCurrentEdit(targetPhotoId);
+    let current = await options.backend.readCurrentEdit(targetPhotoId);
+    let effectiveResult = recordedResult;
+    let effectiveCopy = recordedCopy;
+    let effectiveVerification = recordedVerification;
     let evidenceStatus: RecoveryEvidence["evidence_status"] = "insufficient";
     let reason = "legacy_recovery_without_workflow_copy_evidence";
-    if (recordedCopy && intent) {
-      const identity = current.identity;
+
+    if (intent && !effectiveCopy) {
+      const sourceMatches =
+        current.photo_id === intent.source.catalog_id &&
+        isRecordedMaster(current.identity, intent.source) &&
+        samePath(current.path, session.currentManifest.source.raw_path);
+      if (!sourceMatches) {
+        evidenceStatus = "contradictory";
+        reason = "workflow_copy_intent_source_contradicts_backend";
+      } else {
+        const semantics = backendManifest.operations.create_workflow_copy;
+        if (
+          !semantics ||
+          semantics.retry_policy !== "readback_before_retry" ||
+          semantics.concurrency !== "exclusive_backend"
+        ) {
+          throw new Error(
+            "Workflow Copy reconciliation requires readback_before_retry and exclusive_backend semantics",
+          );
+        }
+        const sourceState = current;
+        effectiveResult = await options.backend.createWorkflowCopy(
+          intent.source.catalog_id,
+          intent.source.uuid,
+          intent.operation_id,
+        );
+        copyCreationReconciled = true;
+        await session.writeJson("workflow-copy.json", effectiveResult);
+        if (!workflowCopyResultMatchesIntent(effectiveResult, intent) || !effectiveResult.copy) {
+          evidenceStatus = "contradictory";
+          reason = "workflow_copy_reconciliation_returned_contradictory_identity";
+        } else {
+          effectiveCopy = effectiveResult.copy;
+          targetPhotoId = effectiveCopy.catalog_id;
+          current = await options.backend.readCurrentEdit(targetPhotoId);
+          const verified =
+            current.photo_id === effectiveCopy.catalog_id &&
+            samePhotoIdentity(current.identity, effectiveCopy) &&
+            isCopyOfMaster(current.identity, intent.source) &&
+            samePath(current.path, sourceState.path) &&
+            sameDevelopSettings(current.develop_settings, sourceState.develop_settings);
+          effectiveVerification = WorkflowCopyVerificationSchema.parse({
+            operation_id: intent.operation_id,
+            verified,
+            master: intent.source,
+            copy: current.identity ?? null,
+            inherited_develop_state: sameDevelopSettings(
+              current.develop_settings,
+              sourceState.develop_settings,
+            ),
+          });
+          await session.writeJson(
+            "workflow-copy-verification.json",
+            effectiveVerification,
+          );
+          evidenceStatus = verified ? "consistent" : "contradictory";
+          reason = verified
+            ? "workflow_copy_creation_reconciled"
+            : "workflow_copy_reconciliation_readback_mismatch";
+        }
+      }
+    } else if (effectiveCopy && intent) {
       const copyMatches =
-        current.photo_id === recordedCopy.catalog_id &&
-        identity?.catalog_id === recordedCopy.catalog_id &&
-        identity.uuid === recordedCopy.uuid &&
-        identity.master_id === intent.source.catalog_id &&
-        identity.master_uuid === intent.source.uuid &&
-        identity.is_virtual_copy &&
+        current.photo_id === effectiveCopy.catalog_id &&
+        samePhotoIdentity(current.identity, effectiveCopy) &&
+        isCopyOfMaster(current.identity, intent.source) &&
         samePath(current.path, session.currentManifest.source.raw_path);
       const completeResult =
-        recordedResult?.result !== "REVIEW_REQUIRED" &&
-        recordedResult?.partial === false &&
-        recordedResult.source !== undefined &&
-        recordedResult.master !== undefined &&
-        recordedResult.selection_restoration.status !== "failed" &&
-        recordedResult.selection_restoration.verified &&
-        (recordedVerification === undefined ||
-          (recordedVerification.verified &&
-            recordedVerification.inherited_develop_state));
+        effectiveResult !== undefined &&
+        workflowCopyResultIsComplete(effectiveResult) &&
+        (effectiveVerification === undefined ||
+          (effectiveVerification.verified && effectiveVerification.inherited_develop_state));
       evidenceStatus = !copyMatches
         ? "contradictory"
         : completeResult
@@ -877,23 +1064,30 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
         : completeResult
           ? "recorded_workflow_copy_reconciled"
           : "recorded_workflow_copy_requires_review";
-    } else if (intent) {
-      const identity = current.identity;
-      const sourceMatches =
-        current.photo_id === intent.source.catalog_id &&
-        identity?.catalog_id === intent.source.catalog_id &&
-        identity.uuid === intent.source.uuid &&
-        identity.master_id === intent.source.catalog_id &&
-        identity.master_uuid === intent.source.uuid &&
-        !identity.is_virtual_copy &&
-        samePath(current.path, session.currentManifest.source.raw_path);
-      evidenceStatus = sourceMatches ? "insufficient" : "contradictory";
-      reason = sourceMatches
-        ? "workflow_copy_creation_outcome_uncertain"
-        : "workflow_copy_intent_source_contradicts_backend";
     } else if (!samePath(current.path, session.currentManifest.source.raw_path)) {
       evidenceStatus = "contradictory";
       reason = "legacy_recovery_path_mismatch";
+    }
+
+    if (evidenceStatus !== "contradictory" && iterationEvidence.status === "contradictory") {
+      evidenceStatus = "contradictory";
+      reason = "develop_iteration_evidence_contradictory";
+    } else if (
+      evidenceStatus === "consistent" &&
+      iterationEvidence.status === "insufficient"
+    ) {
+      evidenceStatus = "insufficient";
+      reason = "develop_iteration_outcome_uncertain";
+    } else if (
+      evidenceStatus === "consistent" &&
+      iterationEvidence.lastReadback &&
+      !sameDevelopSettings(
+        current.develop_settings,
+        iterationEvidence.lastReadback.read_back,
+      )
+    ) {
+      evidenceStatus = "contradictory";
+      reason = "develop_iteration_readback_contradicts_backend";
     }
     const recoveryPath = await writeRecoveryEvidence(session, {
       ...evidenceBase,
@@ -901,6 +1095,9 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
       evidence_status: evidenceStatus,
       reason,
       target_photo_id: targetPhotoId,
+      workflow_copy: effectiveResult ?? null,
+      workflow_copy_verification: effectiveVerification ?? null,
+      copy_creation_reconciled: copyCreationReconciled,
       read_back: current,
     });
     await markRecoveryReview(session, {
@@ -917,6 +1114,7 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
       evidence_status: "readback_failed",
       reason: `recovery_readback_failed: ${message}`,
       target_photo_id: targetPhotoId,
+      copy_creation_reconciled: copyCreationReconciled,
       read_back: null,
     });
     await markRecoveryReview(session, {

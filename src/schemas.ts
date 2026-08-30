@@ -172,6 +172,32 @@ export const DevelopIterationIntentSchema = z
   })
   .strict();
 
+export const CheckpointEvidenceSchema = z
+  .object({
+    iteration: z.number().int().positive(),
+    operation_id: z.string().min(1),
+    target: BackendPhotoIdentitySchema,
+    checkpoint_name: z.string().min(1),
+    checkpoint: z
+      .object({
+        name: z.string().min(1),
+        raw: z.unknown(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export const DevelopReadbackEvidenceSchema = z
+  .object({
+    iteration: z.number().int().positive(),
+    operation_id: z.string().min(1),
+    target: BackendPhotoIdentitySchema,
+    checkpoint_name: z.string().min(1),
+    requested: z.record(z.string(), z.union([z.number(), z.string(), z.boolean()])),
+    read_back: z.record(z.string(), z.union([z.number(), z.string(), z.boolean()])),
+  })
+  .strict();
+
 export const RecoveryEvidenceSchema = z
   .object({
     schema_version: z.literal(SCHEMA_VERSION),
@@ -191,8 +217,16 @@ export const RecoveryEvidenceSchema = z
     workflow_copy_verification: WorkflowCopyVerificationSchema.nullable(),
     checkpoint_artifacts: z.array(z.string().min(1)),
     operation_artifacts: z.array(z.string().min(1)),
+    readback_artifacts: z.array(z.string().min(1)),
+    operation_evidence_status: z.enum([
+      "none",
+      "consistent",
+      "insufficient",
+      "contradictory",
+    ]),
     invalid_artifacts: z.array(z.string().min(1)),
     read_back: BackendPhotoStateSchema.nullable(),
+    copy_creation_reconciled: z.boolean(),
     copy_creation_retried: z.literal(false),
     mutation_retried: z.literal(false),
   })

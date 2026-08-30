@@ -5,6 +5,7 @@ import type {
   BackendCapabilityManifestSchema,
   BackendPhotoIdentitySchema,
   BackendPhotoStateSchema,
+  CheckpointEvidenceSchema,
   CullingDecisionSchema,
   EvaluationResultSchema,
   LightingClassificationSchema,
@@ -19,6 +20,7 @@ import type {
   PropagationPlanSchema,
   SourceAssetPairSchema,
   DevelopIterationIntentSchema,
+  DevelopReadbackEvidenceSchema,
   RecoveryEvidenceSchema,
   WorkflowCopyIntentSchema,
   WorkflowCopyResultSchema,
@@ -32,7 +34,9 @@ export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;
 export type BackendPhotoIdentity = z.infer<typeof BackendPhotoIdentitySchema>;
+export type CheckpointEvidence = z.infer<typeof CheckpointEvidenceSchema>;
 export type DevelopIterationIntent = z.infer<typeof DevelopIterationIntentSchema>;
+export type DevelopReadbackEvidence = z.infer<typeof DevelopReadbackEvidenceSchema>;
 export type RecoveryEvidence = z.infer<typeof RecoveryEvidenceSchema>;
 export type WorkflowCopyIntent = z.infer<typeof WorkflowCopyIntentSchema>;
 export type WorkflowCopyResult = z.infer<typeof WorkflowCopyResultSchema>;
