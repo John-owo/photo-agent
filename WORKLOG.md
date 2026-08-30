@@ -1475,3 +1475,33 @@ Cloud-analyzer checkpoint:
 - Manual staged-diff review found the live Lightroom and human-render clauses
   intentionally remain pending external gates; no historical artifact was
   relabelled as current T09 E2E evidence.
+
+## 2026-08-30 - T09 clean-clone dependency preflight
+
+- Created a fresh detached worktree at
+  `D:\photo\_agent_workspace\git-worktrees\photo-agent-t09-clean-clone`
+  from commit `af5197b`.
+- The first clean-clone `npm.cmd ci` failed before dependency installation
+  because the pre-existing user npm cache returned `EPERM` while statting
+  `C:\Users\John\AppData\Local\npm-cache`. No tracked file or source/photo
+  data changed. The retry uses a task-local cache under `_agent_workspace`.
+
+## 2026-08-30 - T09 clean-clone dependency install
+
+- The task-local-cache retry reached the npm registry but failed with
+  `EACCES` while fetching `zod-to-json-schema`; the failure was environmental,
+  before a usable dependency tree existed. No tracked file changed.
+- An approved network retry of `npm.cmd ci --cache
+  D:\photo\_agent_workspace\runtime\npm-cache-t09` completed in the detached
+  clean-clone worktree: 247 packages added and 0 vulnerabilities reported.
+  npm emitted only its normal pending `esbuild` install-script warning.
+
+## 2026-08-30 - T09 detached clean-clone verification
+
+- In the fresh detached worktree at commit `af5197b`,
+  `npm.cmd run check`, `npm.cmd run lint`, full `npm.cmd test` (3 files / 56
+  tests), and `npm.cmd run build` all passed.
+- The same clean worktree then ran `npm.cmd run example` successfully. It
+  reached `ACCEPTED`, produced a mock render, confirmed byte-identical source
+  fixtures, and cleaned its temporary fixture directory.
+- Final clean-clone `git status --short --branch` was clean at `af5197b`.
