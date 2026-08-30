@@ -11,19 +11,19 @@ separates reproducible repository checks from Lightroom and human gates.
 | Clean-clone install, check, lint, test, build | Implemented                                        | `.github/workflows/ci.yml` runs `npm ci`, `npm run check`, `npm run lint`, `npm test`, and `npm run build`.              |
 | Documented single-photo example               | Implemented                                        | `npm run example` runs `examples/run-example.mjs` after build and includes a simulated interrupted-session recovery.     |
 | Interrupted-session recovery                  | Implemented in smoke path and live controlled path | The example covers the simulated path; the live evidence below covers an actual process interruption and MCP disconnect. |
-| Live Lightroom single-photo E2E               | Completed; human gate pending                      | A non-critical imported RAW was copied, mutated, read back, and rendered through the intended Lightroom MCP server.      |
-| Human inspection of the resulting render      | Pending user                                       | The render is readable and the agent recorded its observable content; a human must still confirm the visual result.      |
+| Live Lightroom single-photo E2E               | Completed                                          | A non-critical imported RAW was copied, mutated, read back, and rendered through the intended Lightroom MCP server.      |
+| Human inspection of the resulting render      | PASS                                               | The user inspected the opened render and confirmed `render PASS` on 2026-08-30.                                          |
 | Preset export/re-import stability             | Experimental only                                  | No stable preset claim is made until a real export and re-import round trip passes.                                      |
 
 ## Final acceptance matrix — 2026-08-30
 
-| Acceptance item                                                           | Result                              | Evidence boundary                                                                                                                                                                                                                   |
-| ------------------------------------------------------------------------- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| T09 AC1 — clean-clone CI and documented example                           | PASS                                | Hosted run [33316341500](https://github.com/John-owo/photo-agent/actions/runs/33316341500) passed install, check, lint, tests, build, and example for `codex/roadmap-t09` at `e7d3ba4`; the local detached clean clone also passed. |
-| T09 AC2 — live Lightroom E2E, human render, and source preservation       | FAIL / BLOCKED (human gate pending) | Live mutation, Copy-to-Master validation, render creation, and source preservation passed; human render confirmation is still missing. See the local evidence index recorded below.                                                 |
-| T09 AC3 — preset export boundary                                          | PASS with experimental limitation   | No stable preset guarantee is claimed; export → re-import → round-trip remains required before any preset compatibility claim.                                                                                                      |
-| T08 code-level read-only recovery invariant                               | PASS                                | The reviewed implementation and automated tests keep recovery read-only and fail closed to `REVIEW_REQUIRED`.                                                                                                                       |
-| T08 live recovery: exact Copy reuse, duplicate prevention, no blind retry | PASS (controlled interruption)      | PhotoAgent and its MCP child were actually interrupted after mutation/readback; two recoveries read the exact Copy, created no duplicate, and recorded `mutation_retried=false`.                                                    |
+| Acceptance item                                                           | Result                            | Evidence boundary                                                                                                                                                                                                                   |
+| ------------------------------------------------------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| T09 AC1 — clean-clone CI and documented example                           | PASS                              | Hosted run [33316341500](https://github.com/John-owo/photo-agent/actions/runs/33316341500) passed install, check, lint, tests, build, and example for `codex/roadmap-t09` at `e7d3ba4`; the local detached clean clone also passed. |
+| T09 AC2 — live Lightroom E2E, human render, and source preservation       | PASS                              | Live mutation, Copy-to-Master validation, render creation, source preservation, and user-confirmed human render inspection all passed. See the local evidence index recorded below.                                                 |
+| T09 AC3 — preset export boundary                                          | PASS with experimental limitation | No stable preset guarantee is claimed; export → re-import → round-trip remains required before any preset compatibility claim.                                                                                                      |
+| T08 code-level read-only recovery invariant                               | PASS                              | The reviewed implementation and automated tests keep recovery read-only and fail closed to `REVIEW_REQUIRED`.                                                                                                                       |
+| T08 live recovery: exact Copy reuse, duplicate prevention, no blind retry | PASS (controlled interruption)    | PhotoAgent and its MCP child were actually interrupted after mutation/readback; two recoveries read the exact Copy, created no duplicate, and recorded `mutation_retried=false`.                                                    |
 
 The matrix uses `FAIL / BLOCKED` where required evidence is absent; it does not
 convert an unrun external or human gate into a pass.
@@ -146,17 +146,18 @@ readback showed exactly one additional Copy for this interrupted run and no
 fourth Copy after the second recovery.
 
 The render was non-empty and readable; the agent observed an intact squirrel
-subject and no obvious corruption. Human visual acceptance remains pending,
-so the live gate is not silently promoted to a complete AC2 pass. This was a
+subject and no obvious corruption. The user then inspected the opened render
+and confirmed `render PASS` on 2026-08-30, completing the human gate. This was a
 controlled real process interruption plus MCP disconnect, not a claim of a
 spontaneous Lightroom application crash or an unreliable network fault.
 
 ## Current run boundary — 2026-08-30
 
-The clean-clone path and hosted CI are green, and the live Lightroom gate has
-now been run with the intended integration server. T09 AC2 remains blocked only
-by the required human render confirmation. No PR was created and Issue #14
-remains open.
+The clean-clone path and hosted CI are green, the live Lightroom gate has been
+run with the intended integration server, and the required human render
+confirmation is recorded above. T09 AC1, AC2, and AC3 are now accepted within
+the documented preset boundary. PhotoAgent v0.1 first phase can therefore be
+formally declared complete. No PR was created and Issue #14 remains open.
 
 The XMP fallback and any preset-export workflow remain
 `experimental / not part of validated v0.1 guarantees`. A stable preset claim

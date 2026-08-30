@@ -1834,3 +1834,17 @@ Cloud-analyzer checkpoint:
   action versions; no job step failed.
 - The remote branch is `origin/codex/roadmap-t09` at `43016a3`. No merge, PR,
   or Issue #14 status change was performed.
+
+## 2026-08-30 - T09 human render gate and final acceptance
+
+- The user inspected the opened T09 render and confirmed `render PASS` at
+  2026-08-30 23:14:46 UTC+08:00. This is the required human visual evidence;
+  the agent's earlier readability check was not used as a substitute.
+- Updated the local Lightroom evidence index and the committed T09 acceptance
+  pack to record the human confirmation. T09 AC2 is now PASS; T09 AC1 remains
+  PASS, T09 AC3 remains PASS only as the documented experimental boundary, and
+  the controlled live T08 recovery items remain PASS.
+- With all required v0.1 evidence present, PhotoAgent v0.1 first phase is
+  eligible for formal completion. Preset export remains
+  `experimental / not part of validated v0.1 guarantees`; no stable preset
+  guarantee is claimed.
