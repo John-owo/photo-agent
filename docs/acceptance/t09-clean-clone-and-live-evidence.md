@@ -28,15 +28,17 @@ npm.cmd run build
 npm.cmd run example
 ```
 
-`npm run example` creates a non-delivery synthetic `.NEF` and a 1×1 JPEG in
-the operating system temporary directory, invokes the built CLI with
-`--backend mock --provider mock --apply --evaluator mock`, requires an
-`ACCEPTED` result and a non-empty readable render, then creates an `APPLYING`
-session and invokes the documented `recover` command. Recovery must return
-`REVIEW_REQUIRED` with a JSON recovery artifact. The runner checks that the
-source fixtures are byte-identical after both paths and removes the temporary
-directory. The fixture RAW is only a non-empty extension-validated test file; it
-is never presented as a real camera RAW or Lightroom proof.
+`npm run example` creates a non-delivery synthetic `.NEF` and a 1×1 JPEG in a
+per-run scratch directory under `_agent_workspace` for the configured worktree,
+invokes the built CLI with `--backend mock --provider mock --apply --evaluator
+mock`, requires an `ACCEPTED` result and a non-empty readable render, then
+creates an `APPLYING` session and invokes the documented `recover` command.
+Recovery must return `REVIEW_REQUIRED` with a JSON recovery artifact. The runner
+checks that the source fixtures are byte-identical after both paths and removes
+the per-run directory. Hosted CI sets `PHOTO_AGENT_EXAMPLE_ROOT` to its
+ephemeral runner directory as a CI-only equivalent. The fixture RAW is only a
+non-empty extension-validated test file; it is never presented as a real camera
+RAW or Lightroom proof.
 
 ## Live Lightroom procedure
 

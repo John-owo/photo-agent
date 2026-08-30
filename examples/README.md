@@ -1,10 +1,12 @@
 # v0.1 examples
 
 After building, run the clean-clone smoke example. It creates synthetic files
-in the OS temporary directory, exercises the documented single-photo CLI with
-the mock provider/backend, recovers a simulated interrupted session, checks the
-render and recovery artifacts, verifies both source fixtures are unchanged, and
-removes the temporary directory:
+in a per-run scratch directory under `_agent_workspace` for the configured
+worktree, exercises the documented single-photo CLI with the mock
+provider/backend, recovers a simulated interrupted session, checks the render
+and recovery artifacts, verifies both source fixtures are unchanged, and
+removes the per-run directory. Hosted CI sets `PHOTO_AGENT_EXAMPLE_ROOT` to its
+ephemeral runner directory as the CI-only equivalent:
 
 ```powershell
 npm.cmd run build

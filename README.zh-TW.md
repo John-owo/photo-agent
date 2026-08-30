@@ -63,10 +63,12 @@ npm.cmd run build
 npm.cmd run example
 ```
 
-`npm.cmd run example` 是 clean clone 的 smoke 測試：它會在 repository 外的
-作業系統暫存目錄建立合成 RAW／預覽圖，使用 mock provider/backend 執行文件中
-記載的單張流程，恢復一個模擬中斷的 session，確認結果為 `ACCEPTED`、render
-與 recovery report 都存在，驗證兩個來源 fixture 仍逐 byte 相同，最後刪除暫存目錄。
+`npm.cmd run example` 是 clean clone 的 smoke 測試：它會在本工作區
+`_agent_workspace` 底下的 per-run scratch 目錄建立合成 RAW／預覽圖，使用 mock
+provider/backend 執行文件中記載的單張流程，恢復一個模擬中斷的 session，確認結果為
+`ACCEPTED`、render 與 recovery report 都存在，驗證兩個來源 fixture 仍逐 byte 相同，
+最後刪除該次執行目錄。Hosted CI 會透過 `PHOTO_AGENT_EXAMPLE_ROOT` 提供 ephemeral
+runner 目錄作為 CI 專用等價路徑。
 
 ## 環境變數
 

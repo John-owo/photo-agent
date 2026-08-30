@@ -1,7 +1,6 @@
 import { Buffer } from "node:buffer";
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import process from "node:process";
 import { fileURLToPath, URL } from "node:url";
@@ -10,7 +9,10 @@ const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const { writeFixtureJpeg } = await import("../dist/src/preview.js");
 const { ingestPair } = await import("../dist/src/ingest.js");
 const { SessionStore } = await import("../dist/src/runtime.js");
-const exampleRoot = await mkdtemp(join(tmpdir(), "photo-agent-example-"));
+const scratchRoot =
+  process.env.PHOTO_AGENT_EXAMPLE_ROOT || join(projectRoot, "..", ".photo-agent-example-runs");
+await mkdir(scratchRoot, { recursive: true });
+const exampleRoot = await mkdtemp(join(scratchRoot, "photo-agent-example-"));
 
 function runCli(args) {
   return new Promise((resolve, reject) => {
@@ -34,6 +36,21 @@ function runCli(args) {
   });
 }
 
+function parseCliJson(run, label) {
+  if (run.code !== 0) {
+    throw new Error(
+      `${label} failed with code ${run.code ?? "null"}${
+        run.signal ? ` (${run.signal})` : ""
+      }\n${run.stderr}\n${run.stdout}`,
+    );
+  }
+  try {
+    return JSON.parse(run.stdout);
+  } catch (error) {
+    throw new Error(`${label} returned invalid JSON: ${error}\n${run.stdout}`);
+  }
+}
+
 try {
   const rawPath = join(exampleRoot, "example.NEF");
   const previewPath = join(exampleRoot, "example.JPG");
@@ -43,38 +60,27 @@ try {
   const rawBefore = await readFile(rawPath);
   const previewBefore = await readFile(previewPath);
 
-  const run = await runCli([
-    "edit-one",
-    "--raw",
-    rawPath,
-    "--preview",
-    previewPath,
-    "--backend",
-    "mock",
-    "--provider",
-    "mock",
-    "--apply",
-    "--evaluator",
-    "mock",
-    "--max-iterations",
-    "3",
-    "--session-root",
-    sessionRoot,
-  ]);
-  if (run.code !== 0) {
-    throw new Error(
-      `clean-clone example failed with code ${run.code ?? "null"}${
-        run.signal ? ` (${run.signal})` : ""
-      }\n${run.stderr}\n${run.stdout}`,
-    );
-  }
-
-  let result;
-  try {
-    result = JSON.parse(run.stdout);
-  } catch (error) {
-    throw new Error(`clean-clone example returned invalid JSON: ${error}\n${run.stdout}`);
-  }
+  const result = parseCliJson(
+    await runCli([
+      "edit-one",
+      "--raw",
+      rawPath,
+      "--preview",
+      previewPath,
+      "--backend",
+      "mock",
+      "--provider",
+      "mock",
+      "--apply",
+      "--evaluator",
+      "mock",
+      "--max-iterations",
+      "3",
+      "--session-root",
+      sessionRoot,
+    ]),
+    "clean-clone example",
+  );
   if (result.state !== "ACCEPTED") {
     throw new Error(`clean-clone example did not reach ACCEPTED: ${JSON.stringify(result)}`);
   }
@@ -92,20 +98,10 @@ try {
   await interrupted.transition("ANALYZING");
   await interrupted.transition("PLAN_READY");
   await interrupted.transition("APPLYING");
-  const recoveryRun = await runCli(["recover", "--session", interrupted.dir, "--backend", "mock"]);
-  if (recoveryRun.code !== 0) {
-    throw new Error(
-      `clean-clone recovery example failed with code ${recoveryRun.code ?? "null"}\n${
-        recoveryRun.stderr
-      }\n${recoveryRun.stdout}`,
-    );
-  }
-  let recovery;
-  try {
-    recovery = JSON.parse(recoveryRun.stdout);
-  } catch (error) {
-    throw new Error(`clean-clone recovery returned invalid JSON: ${error}\n${recoveryRun.stdout}`);
-  }
+  const recovery = parseCliJson(
+    await runCli(["recover", "--session", interrupted.dir, "--backend", "mock"]),
+    "clean-clone recovery example",
+  );
   if (recovery.state !== "REVIEW_REQUIRED") {
     throw new Error(`clean-clone recovery did not stop for review: ${JSON.stringify(recovery)}`);
   }

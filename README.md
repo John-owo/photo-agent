@@ -94,11 +94,12 @@ npm.cmd run example
 ```
 
 `npm.cmd run example` is the clean-clone smoke path. It generates synthetic
-RAW/preview fixtures outside the repository, runs the documented single-photo
-workflow with the mock provider/backend, recovers a simulated interrupted
-session, verifies an `ACCEPTED` result, readable render, and recovery artifact,
-checks that both source fixtures remain byte-identical, and removes the
-temporary directory.
+RAW/preview fixtures in a per-run scratch directory under `_agent_workspace`,
+runs the documented single-photo workflow with the mock provider/backend,
+recovers a simulated interrupted session, verifies an `ACCEPTED` result,
+readable render, and recovery artifact, checks that both source fixtures remain
+byte-identical, and removes the per-run directory. Hosted CI supplies its
+ephemeral runner directory through `PHOTO_AGENT_EXAMPLE_ROOT`.
 
 ## Environment variables
 

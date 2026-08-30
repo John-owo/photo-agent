@@ -1571,3 +1571,21 @@ Cloud-analyzer checkpoint:
   `REVIEW_REQUIRED` recovery, a readable render, and preserved source bytes.
 - Final clean-clone `git status --short --branch` was clean at `892126b`; the
   only npm output was the existing pending `esbuild` install-script warning.
+
+## 2026-08-30 - T09 Standards review follow-up
+
+- The second Standards review found that the example runner still used the OS
+  temp directory, which violated the workspace output rule. It also noted
+  duplicated CLI failure/JSON parsing logic. The runner now defaults to a
+  per-run directory under `_agent_workspace` for this configured worktree,
+  accepts `PHOTO_AGENT_EXAMPLE_ROOT` for a documented CI-safe override, and
+  uses one JSON subprocess helper.
+- CI sets `PHOTO_AGENT_EXAMPLE_ROOT` to `${{ runner.temp }}` for its ephemeral
+  environment. The README files and T09 evidence pack document both paths.
+- After this repair, `npm.cmd run check`, `npm.cmd run lint`, `npm.cmd run
+  build`, full `npm.cmd test` (3 files / 56 tests), default `npm.cmd run
+  example`, and the explicit CI-equivalent override example all passed.
+- Targeted Prettier checks for the runner and evidence pack passed. `git diff
+  --check` passed with only the known LF-to-CRLF warnings. The second Spec
+  review found no scope creep and retained hosted-CI, simulated-recovery,
+  Lightroom/human, and preset round-trip boundaries as partial or pending.
