@@ -1933,3 +1933,44 @@ Cloud-analyzer checkpoint:
   current local handoff commit on `codex/roadmap-t09`. No push, PR, merge,
   remote issue closure, milestone update, photo change, or Lightroom action
   was performed.
+
+## 2026-08-31 - T12 budget enforcement
+
+- Read GitHub issue #16 (`[T12] Enforce stall, iteration, time, token, render,
+  and cost budgets`) with read-only `gh issue view`; it remains `OPEN` and is
+  blocked remotely by T11 (#15), while the local T11 implementation is now
+  present.
+- Added configurable wall-clock, render-count, evaluator-call, token, and
+  estimated-cost limits to the closed loop, with conservative defaults and a
+  durable `iteration-budget.json` plus budget/usage fields in
+  `iteration-report.json`. Every exhausted limit ends in `REVIEW_REQUIRED`.
+- Added CLI and representative-edit propagation for the budget options, plus
+  regression coverage for render exhaustion, over-budget evaluator output,
+  and zero-time preflight without Workflow Copy creation.
+- One initial documentation patch had a stale context and was rejected without
+  changing the file; the corrected patch was then applied. An initial TypeScript
+  check exposed exact-optional-property handling in the CLI budget builder;
+  the builder was corrected before the successful check and 11-test targeted
+  suite below.
+- Verification passed: targeted `npx.cmd prettier --check`, `npm.cmd run
+  check`, and `npm.cmd test -- tests/next-tickets.test.ts` (11/11 tests).
+- Post-T12 full verification passed: `npm.cmd test` (4 files / 67 tests),
+  `npm.cmd run check`, `npm.cmd run lint`, targeted Prettier check,
+  `git diff --check`, `npm.cmd run build`, and `npm.cmd run example`. The
+  example returned `ACCEPTED`, recovery returned `REVIEW_REQUIRED`, and
+  `source_preserved=true`.
+
+## 2026-08-31 - T14 live-gate preflight
+
+- Read GitHub issue #18 (`[T14] Live-verify the v0.2 closed loop`) with
+  read-only `gh issue view`. Its acceptance requires an actual Lightroom
+  render/evaluation/refinement run, unchanged Master/source state, injected
+  failure escalation, and human visual inspection; it remains `OPEN` and is
+  blocked remotely by T11, T12, and T13.
+- The safe local preflight checked only the exact Lightroom process name and
+  MCP listener ports 58763/58764. No Lightroom process or listener was
+  present, and this task has no registered Lightroom MCP tool. No external
+  process was started and no catalog, photo, or Lightroom state changed.
+- T14 therefore remains pending the explicit Lightroom connection and human
+  render gate. Existing mock/automated evidence is not recorded as live or
+  human acceptance.

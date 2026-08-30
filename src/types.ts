@@ -27,6 +27,7 @@ import type {
   ShootReviewFileSchema,
   PropagationPlanSchema,
   SourceAssetPairSchema,
+  WorkflowBudgetSchema,
   DevelopIterationIntentSchema,
   DevelopReadbackEvidenceSchema,
   RecoveryEvidenceSchema,
@@ -58,6 +59,7 @@ export type PreviewPolicy = z.infer<typeof PreviewPolicySchema>;
 export type FinalExportSettings = z.infer<typeof FinalExportSettingsSchema>;
 export type IterationReportRecord = z.infer<typeof IterationReportRecordSchema>;
 export type IterationReport = z.infer<typeof IterationReportSchema>;
+export type WorkflowBudget = z.infer<typeof WorkflowBudgetSchema>;
 export type CullingDecision = z.infer<typeof CullingDecisionSchema>;
 export type LightingClassification = z.infer<typeof LightingClassificationSchema>;
 export type ShootAsset = z.infer<typeof ShootAssetSchema>;
@@ -159,6 +161,14 @@ export type EditEvaluator = {
   evaluate(input: EvaluationInput): Promise<EvaluationResult>;
 };
 
+export type WorkflowBudgetOptions = {
+  maxElapsedMs?: number;
+  maxRenders?: number;
+  maxEvaluatorCalls?: number;
+  maxTotalTokens?: number;
+  maxCostUsd?: number;
+};
+
 export type ShootAnalyzer = {
   readonly requiresCloudPreview?: boolean;
   cull(asset: ShootAsset): Promise<CullingDecision>;
@@ -176,6 +186,7 @@ export type WorkflowOptions = {
   allowCloudPreview: boolean;
   evaluator?: EditEvaluator;
   maxIterations?: number;
+  budget?: WorkflowBudgetOptions;
 };
 
 export type WorkflowResult = {

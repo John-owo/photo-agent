@@ -33,6 +33,7 @@ import {
   IterationReportRecordSchema,
   IterationReportSchema,
   RecoveryEvidenceSchema,
+  WorkflowBudgetSchema,
   WorkflowCopyIntentSchema,
   WorkflowCopyResultSchema,
   WorkflowCopyVerificationSchema,
@@ -54,6 +55,8 @@ import type {
   WorkflowCopyIntent,
   WorkflowCopyResult,
   WorkflowCopyVerification,
+  WorkflowBudget,
+  WorkflowBudgetOptions,
   WorkflowResult,
 } from "./types.js";
 
@@ -231,7 +234,58 @@ type PlanExecutionOptions = {
   apply: boolean;
   evaluator?: EditEvaluator;
   maxIterations?: number;
+  budget?: WorkflowBudgetOptions;
 };
+
+export const DEFAULT_WORKFLOW_BUDGETS = {
+  maxElapsedMs: 5 * 60 * 1000,
+  maxTotalTokens: 100_000,
+  maxCostUsd: 1,
+} as const;
+
+type ResolvedWorkflowBudget = {
+  maxIterations: number;
+  maxElapsedMs: number;
+  maxRenders: number;
+  maxEvaluatorCalls: number;
+  maxTotalTokens: number;
+  maxCostUsd: number;
+};
+
+function resolveWorkflowBudget(
+  maxIterations: number,
+  configured: WorkflowBudgetOptions | undefined,
+): ResolvedWorkflowBudget {
+  const budget: ResolvedWorkflowBudget = {
+    maxIterations,
+    maxElapsedMs: configured?.maxElapsedMs ?? DEFAULT_WORKFLOW_BUDGETS.maxElapsedMs,
+    maxRenders: configured?.maxRenders ?? maxIterations,
+    maxEvaluatorCalls: configured?.maxEvaluatorCalls ?? maxIterations,
+    maxTotalTokens: configured?.maxTotalTokens ?? DEFAULT_WORKFLOW_BUDGETS.maxTotalTokens,
+    maxCostUsd: configured?.maxCostUsd ?? DEFAULT_WORKFLOW_BUDGETS.maxCostUsd,
+  };
+  for (const [name, value] of Object.entries(budget)) {
+    if (
+      !Number.isFinite(value) ||
+      (!Number.isInteger(value) && name !== "maxCostUsd") ||
+      value < 0
+    ) {
+      throw new Error(`Invalid workflow budget ${name}: expected a non-negative number`);
+    }
+  }
+  return budget;
+}
+
+function budgetArtifact(budget: ResolvedWorkflowBudget): WorkflowBudget {
+  return WorkflowBudgetSchema.parse({
+    max_iterations: budget.maxIterations,
+    max_elapsed_ms: budget.maxElapsedMs,
+    max_renders: budget.maxRenders,
+    max_evaluator_calls: budget.maxEvaluatorCalls,
+    max_total_tokens: budget.maxTotalTokens,
+    max_cost_usd: budget.maxCostUsd,
+  });
+}
 
 async function executePlan(
   session: SessionStore,
@@ -255,6 +309,15 @@ async function executePlan(
     });
     return resultFor(session, normalizedPlan);
   }
+  let budget: ResolvedWorkflowBudget;
+  try {
+    budget = resolveWorkflowBudget(maxIterations, options.budget);
+  } catch (error) {
+    await session.transition("FAILED", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return resultFor(session, normalizedPlan);
+  }
 
   let sideEffectStarted = false;
   let unlock: (() => Promise<void>) | undefined;
@@ -266,7 +329,33 @@ async function executePlan(
   let evaluatorCalls = 0;
   let totalTokens = 0;
   let estimatedCostUsd = 0;
+  let renderCount = 0;
   let evaluatorAttempted = false;
+
+  const budgetReasonBeforeWork = (): string | undefined => {
+    if (Date.now() - startedAt >= budget.maxElapsedMs) return "time_budget_exhausted";
+    if (renderCount >= budget.maxRenders) return "render_budget_exhausted";
+    if (evaluatorCalls >= budget.maxEvaluatorCalls) return "evaluator_call_budget_exhausted";
+    if (totalTokens >= budget.maxTotalTokens) return "token_budget_exhausted";
+    if (estimatedCostUsd >= budget.maxCostUsd) return "cost_budget_exhausted";
+    return undefined;
+  };
+
+  const budgetReasonBeforeEvaluation = (): string | undefined => {
+    if (Date.now() - startedAt >= budget.maxElapsedMs) return "time_budget_exhausted";
+    if (evaluatorCalls >= budget.maxEvaluatorCalls) return "evaluator_call_budget_exhausted";
+    if (totalTokens >= budget.maxTotalTokens) return "token_budget_exhausted";
+    if (estimatedCostUsd >= budget.maxCostUsd) return "cost_budget_exhausted";
+    return undefined;
+  };
+
+  const budgetOverrunAfterEvaluation = (): string | undefined => {
+    if (Date.now() - startedAt > budget.maxElapsedMs) return "time_budget_exhausted";
+    if (evaluatorCalls > budget.maxEvaluatorCalls) return "evaluator_call_budget_exhausted";
+    if (totalTokens > budget.maxTotalTokens) return "token_budget_exhausted";
+    if (estimatedCostUsd > budget.maxCostUsd) return "cost_budget_exhausted";
+    return undefined;
+  };
 
   const finishReport = async (iterations: number, reason: string): Promise<void> => {
     await session.writeJson(
@@ -275,16 +364,26 @@ async function executePlan(
         schema_version: "0.2.0",
         evaluator: options.evaluator?.name ?? null,
         iterations,
+        render_count: renderCount,
         evaluator_calls: evaluatorCalls,
         total_tokens: totalTokens,
         estimated_cost_usd: Number(estimatedCostUsd.toFixed(6)),
         elapsed_ms: Date.now() - startedAt,
+        budget: budgetArtifact(budget),
         terminal_state: session.currentState,
         reason,
         iteration_records: iterationRecords,
       }),
     );
   };
+
+  await session.writeJson("iteration-budget.json", budgetArtifact(budget));
+  const initialBudgetReason = budgetReasonBeforeWork();
+  if (initialBudgetReason) {
+    await session.transition("REVIEW_REQUIRED", { reason: initialBudgetReason });
+    await finishReport(0, initialBudgetReason);
+    return resultFor(session, normalizedPlan);
+  }
 
   const completeIteration = (
     state: IterationReportRecord["state"],
@@ -347,6 +446,12 @@ async function executePlan(
     }
     if (!hasEffectiveSettings(master.develop_settings, initialSettings)) {
       await session.transition("REVIEW_REQUIRED", { reason: "no_effective_adjustments" });
+      return resultFor(session, normalizedPlan);
+    }
+    const preMutationBudgetReason = budgetReasonBeforeWork();
+    if (preMutationBudgetReason) {
+      await session.transition("REVIEW_REQUIRED", { reason: preMutationBudgetReason });
+      await finishReport(0, preMutationBudgetReason);
       return resultFor(session, normalizedPlan);
     }
     const operationId = `photoagent-vc-${session.currentManifest.session_id}`;
@@ -414,6 +519,15 @@ async function executePlan(
     let previousPlanHash: string | undefined;
 
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
+      const nextIterationBudgetReason = budgetReasonBeforeWork();
+      if (nextIterationBudgetReason) {
+        await session.transition("REVIEW_REQUIRED", {
+          reason: nextIterationBudgetReason,
+          iteration,
+        });
+        await finishReport(iteration - 1, nextIterationBudgetReason);
+        return resultFor(session, normalizedPlan, { iterations: iteration - 1 });
+      }
       const settings =
         iteration === 1
           ? initialSettings
@@ -505,6 +619,7 @@ async function executePlan(
         activePhotoId,
         join(session.dir, "renders", `iteration-${iteration}`),
       );
+      renderCount += 1;
       const previewArtifact = await materializePreviewArtifact(session.dir, iteration, render.path);
       const previewPath = resolve(session.dir, previewArtifact.path);
       const backendRenderLink = await evidenceLink(
@@ -522,6 +637,20 @@ async function executePlan(
         preview: previewLink,
       };
       if (!options.evaluator) {
+        const postRenderBudgetReason = budgetReasonBeforeEvaluation();
+        if (postRenderBudgetReason) {
+          await session.transition("REVIEW_REQUIRED", {
+            reason: postRenderBudgetReason,
+            iteration,
+            rollback_checkpoint: checkpointName,
+          });
+          completeIteration("REVIEW_REQUIRED", { error: postRenderBudgetReason });
+          await finishReport(iteration, postRenderBudgetReason);
+          return resultFor(session, normalizedPlan, {
+            renderPath: render.path,
+            iterations: iteration,
+          });
+        }
         await session.transition("REVIEW_REQUIRED", {
           reason: "visual_evaluator_not_configured",
           render: render.path,
@@ -544,6 +673,20 @@ async function executePlan(
         await createSanitizedPreview(previewPath, evaluationPath);
       }
       const evaluationRelativePath = sessionRelativePath(session.dir, evaluationPath);
+      const preEvaluationBudgetReason = budgetReasonBeforeEvaluation();
+      if (preEvaluationBudgetReason) {
+        await session.transition("REVIEW_REQUIRED", {
+          reason: preEvaluationBudgetReason,
+          iteration,
+          rollback_checkpoint: checkpointName,
+        });
+        completeIteration("REVIEW_REQUIRED", { error: preEvaluationBudgetReason });
+        await finishReport(iteration, preEvaluationBudgetReason);
+        return resultFor(session, normalizedPlan, {
+          renderPath: render.path,
+          iterations: iteration,
+        });
+      }
       evaluatorAttempted = true;
       const evaluation = EvaluationResultSchema.parse(
         await options.evaluator.evaluate({
@@ -577,6 +720,23 @@ async function executePlan(
         rationale: evaluation.rationale,
         issues: evaluation.issues,
       };
+      const evaluationBudgetOverrun = budgetOverrunAfterEvaluation();
+      if (evaluationBudgetOverrun) {
+        await session.transition("REVIEW_REQUIRED", {
+          reason: evaluationBudgetOverrun,
+          iteration,
+          rollback_checkpoint: checkpointName,
+        });
+        completeIteration("REVIEW_REQUIRED", {
+          evaluation: evaluationSummary,
+          error: evaluationBudgetOverrun,
+        });
+        await finishReport(iteration, evaluationBudgetOverrun);
+        return resultFor(session, normalizedPlan, {
+          renderPath: render.path,
+          iterations: iteration,
+        });
+      }
       if (evaluation.confidence < MIN_EVALUATION_CONFIDENCE || evaluation.verdict === "review") {
         await session.transition("REVIEW_REQUIRED", {
           reason:
@@ -723,6 +883,7 @@ export async function runSinglePhoto(options: WorkflowOptions): Promise<Workflow
       apply: options.apply,
       ...(options.evaluator ? { evaluator: options.evaluator } : {}),
       ...(options.maxIterations !== undefined ? { maxIterations: options.maxIterations } : {}),
+      ...(options.budget ? { budget: options.budget } : {}),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -745,6 +906,7 @@ export type ResumeCodexOptions = {
   allowCloudPreview: boolean;
   evaluator?: EditEvaluator;
   maxIterations?: number;
+  budget?: WorkflowBudgetOptions;
 };
 
 export async function resumeCodexSession(options: ResumeCodexOptions): Promise<WorkflowResult> {
@@ -774,6 +936,7 @@ export async function resumeCodexSession(options: ResumeCodexOptions): Promise<W
       apply: options.apply,
       ...(options.evaluator ? { evaluator: options.evaluator } : {}),
       ...(options.maxIterations !== undefined ? { maxIterations: options.maxIterations } : {}),
+      ...(options.budget ? { budget: options.budget } : {}),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

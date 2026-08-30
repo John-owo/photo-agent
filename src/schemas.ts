@@ -212,15 +212,28 @@ export const IterationReportRecordSchema = z
   })
   .strict();
 
+export const WorkflowBudgetSchema = z
+  .object({
+    max_iterations: z.number().int().positive(),
+    max_elapsed_ms: z.number().int().nonnegative(),
+    max_renders: z.number().int().nonnegative(),
+    max_evaluator_calls: z.number().int().nonnegative(),
+    max_total_tokens: z.number().int().nonnegative(),
+    max_cost_usd: z.number().nonnegative(),
+  })
+  .strict();
+
 export const IterationReportSchema = z
   .object({
     schema_version: z.literal("0.2.0"),
     evaluator: z.string().nullable(),
     iterations: z.number().int().nonnegative(),
+    render_count: z.number().int().nonnegative(),
     evaluator_calls: z.number().int().nonnegative(),
     total_tokens: z.number().int().nonnegative(),
     estimated_cost_usd: z.number().nonnegative(),
     elapsed_ms: z.number().int().nonnegative(),
+    budget: WorkflowBudgetSchema,
     terminal_state: z.enum(["REFINING", "ACCEPTED", "REVIEW_REQUIRED", "FAILED"]),
     reason: z.string().min(1),
     iteration_records: z.array(IterationReportRecordSchema),

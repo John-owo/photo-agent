@@ -396,3 +396,114 @@ describe("T16 baseline Parameter Registry", () => {
     ).toThrow(/Unsupported parameter registry version/);
   });
 });
+
+describe("T12 workflow budgets", () => {
+  it("stops before a render budget can start another iteration", async () => {
+    const { root, raw, preview } = await fixturePair();
+    const result = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: new MockProvider(),
+      backend: new MockBackend(raw),
+      evaluator: new ScriptedEvaluator([refinement]),
+      maxIterations: 3,
+      budget: { maxRenders: 1 },
+      sessionRoot: join(root, "sessions"),
+      apply: true,
+      allowCloudPreview: false,
+    });
+
+    expect(result.state).toBe("REVIEW_REQUIRED");
+    const report = JSON.parse(
+      await readFile(join(result.sessionDir, "iteration-report.json"), "utf8"),
+    ) as {
+      reason: string;
+      render_count: number;
+      budget: { max_renders: number };
+      iteration_records: Array<{ state: string }>;
+    };
+    expect(report).toMatchObject({
+      reason: "render_budget_exhausted",
+      render_count: 1,
+      budget: { max_renders: 1 },
+    });
+    expect(report.iteration_records.map((record) => record.state)).toEqual(["REFINING"]);
+  });
+
+  it("does not accept an evaluation that exceeds token or cost limits", async () => {
+    const { root, raw, preview } = await fixturePair();
+    const result = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: new MockProvider(),
+      backend: new MockBackend(raw),
+      evaluator: {
+        name: "over-budget-fixture",
+        requiresCloudPreview: false,
+        evaluate: async () => ({
+          schema_version: "0.2.0" as const,
+          verdict: "accept" as const,
+          confidence: 0.99,
+          rationale: "The fixture would otherwise be accepted",
+          issues: [],
+          usage: { evaluator_calls: 1, total_tokens: 101, estimated_cost_usd: 0.02 },
+        }),
+      },
+      budget: { maxTotalTokens: 100, maxCostUsd: 0.01 },
+      sessionRoot: join(root, "sessions"),
+      apply: true,
+      allowCloudPreview: false,
+    });
+
+    expect(result.state).toBe("REVIEW_REQUIRED");
+    const report = JSON.parse(
+      await readFile(join(result.sessionDir, "iteration-report.json"), "utf8"),
+    ) as {
+      reason: string;
+      iterations: number;
+      render_count: number;
+      evaluator_calls: number;
+      total_tokens: number;
+      estimated_cost_usd: number;
+      iteration_records: Array<{ state: string; error?: string }>;
+    };
+    expect(report).toMatchObject({
+      reason: "token_budget_exhausted",
+      iterations: 1,
+      render_count: 1,
+      evaluator_calls: 1,
+      total_tokens: 101,
+      estimated_cost_usd: 0.02,
+    });
+    expect(report.iteration_records[0]).toMatchObject({
+      state: "REVIEW_REQUIRED",
+      error: "token_budget_exhausted",
+    });
+  });
+
+  it("records a zero-time budget as review without mutating the backend", async () => {
+    const { root, raw, preview } = await fixturePair();
+    const backend = new MockBackend(raw);
+    const result = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: new MockProvider(),
+      backend,
+      budget: { maxElapsedMs: 0 },
+      sessionRoot: join(root, "sessions"),
+      apply: true,
+      allowCloudPreview: false,
+    });
+
+    expect(result.state).toBe("REVIEW_REQUIRED");
+    expect(backend.calls).not.toContain("create_workflow_copy");
+    const report = JSON.parse(
+      await readFile(join(result.sessionDir, "iteration-report.json"), "utf8"),
+    ) as { reason: string; iterations: number; render_count: number };
+    expect(report).toMatchObject({
+      reason: "time_budget_exhausted",
+      iterations: 0,
+      render_count: 0,
+    });
+  });
+});

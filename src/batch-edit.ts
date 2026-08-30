@@ -10,6 +10,7 @@ import type {
   PropagationPlan,
   ShootAsset,
   ShootManifest,
+  WorkflowBudgetOptions,
   WorkflowResult,
 } from "./types.js";
 import { runSinglePhoto } from "./workflow.js";
@@ -35,6 +36,7 @@ export async function runRepresentativeEdits(options: {
   apply: boolean;
   allowCloudPreview: boolean;
   maxIterations?: number;
+  budget?: WorkflowBudgetOptions;
 }): Promise<RepresentativeEditRecord[]> {
   const assets = new Map(options.manifest.assets.map((asset) => [asset.id, asset]));
   const records: RepresentativeEditRecord[] = [];
@@ -71,6 +73,7 @@ export async function runRepresentativeEdits(options: {
         allowCloudPreview: options.allowCloudPreview,
         ...(evaluator ? { evaluator } : {}),
         ...(options.maxIterations !== undefined ? { maxIterations: options.maxIterations } : {}),
+        ...(options.budget ? { budget: options.budget } : {}),
       });
       records.push({
         cluster_id: cluster.cluster_id,

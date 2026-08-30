@@ -18,6 +18,7 @@ import { SessionStore } from "./runtime.js";
 import { SemanticIntentPlanSchema } from "./schemas.js";
 import { OpenAIShootAnalyzer } from "./shoot-analyzers.js";
 import { resolveLightroomSettings, translateIntent } from "./translator.js";
+import type { WorkflowBudgetOptions } from "./types.js";
 import { recoverSession, resumeCodexSession, runSinglePhoto } from "./workflow.js";
 import { writeXmpSidecar } from "./xmp.js";
 
@@ -25,8 +26,9 @@ const DEFAULT_LIGHTROOM_ENTRY = "D:\\photo\\lightroom-mcp-john\\server\\dist\\in
 
 function usage(): string {
   return [
-    "photo-agent edit-one --raw <RAW> --preview <JPEG> --backend <mock|lightroom> --provider <codex|mock|openai> [--evaluator <none|mock|openai>] [--intent-file <JSON>] [--apply] [--allow-cloud-preview]",
-    "photo-agent resume --session <SESSION_DIR> --intent-file <JSON> --backend <mock|lightroom> [--apply] [--evaluator <none|mock|openai>] [--allow-cloud-preview] [--max-iterations <1-10>]",
+    "photo-agent edit-one --raw <RAW> --preview <JPEG> --backend <mock|lightroom> --provider <codex|mock|openai> [--evaluator <none|mock|openai>] [--intent-file <JSON>] [--apply] [--allow-cloud-preview] [budget flags]",
+    "photo-agent resume --session <SESSION_DIR> --intent-file <JSON> --backend <mock|lightroom> [--apply] [--evaluator <none|mock|openai>] [--allow-cloud-preview] [--max-iterations <1-10>] [budget flags]",
+    "budget flags: --max-elapsed-ms <ms> --max-renders <n> --max-evaluator-calls <n> --max-total-tokens <n> --max-cost-usd <usd>",
     "photo-agent recover --session <SESSION_DIR> --backend <mock|lightroom> [--photo-id <ID>]",
     "photo-agent export-xmp --raw <RAW> --intent-file <JSON> --current-settings <JSON> --output <XMP>",
     "photo-agent shoot --root <SHOOT_DIR> [--session-root <DIR>] [--analysis-file <REVIEW_JSON> | --analyzer openai --allow-cloud-preview]",
@@ -53,6 +55,37 @@ function createEvaluator(name: string | undefined) {
   throw new Error(`Unsupported evaluator: ${name}`);
 }
 
+function optionalBudgetNumber(value: string | undefined, option: string): number | undefined {
+  if (value === undefined) return undefined;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) throw new Error(`--${option} must be a finite number`);
+  return numeric;
+}
+
+function readWorkflowBudget(values: {
+  "max-elapsed-ms"?: string;
+  "max-renders"?: string;
+  "max-evaluator-calls"?: string;
+  "max-total-tokens"?: string;
+  "max-cost-usd"?: string;
+}): WorkflowBudgetOptions | undefined {
+  const budget: WorkflowBudgetOptions = {};
+  const maxElapsedMs = optionalBudgetNumber(values["max-elapsed-ms"], "max-elapsed-ms");
+  const maxRenders = optionalBudgetNumber(values["max-renders"], "max-renders");
+  const maxEvaluatorCalls = optionalBudgetNumber(
+    values["max-evaluator-calls"],
+    "max-evaluator-calls",
+  );
+  const maxTotalTokens = optionalBudgetNumber(values["max-total-tokens"], "max-total-tokens");
+  const maxCostUsd = optionalBudgetNumber(values["max-cost-usd"], "max-cost-usd");
+  if (maxElapsedMs !== undefined) budget.maxElapsedMs = maxElapsedMs;
+  if (maxRenders !== undefined) budget.maxRenders = maxRenders;
+  if (maxEvaluatorCalls !== undefined) budget.maxEvaluatorCalls = maxEvaluatorCalls;
+  if (maxTotalTokens !== undefined) budget.maxTotalTokens = maxTotalTokens;
+  if (maxCostUsd !== undefined) budget.maxCostUsd = maxCostUsd;
+  return Object.keys(budget).length > 0 ? budget : undefined;
+}
+
 async function editOne(argv: string[]): Promise<number> {
   const parsed = parseArgs({
     args: argv,
@@ -67,6 +100,11 @@ async function editOne(argv: string[]): Promise<number> {
       "allow-cloud-preview": { type: "boolean", default: false },
       evaluator: { type: "string", default: "none" },
       "max-iterations": { type: "string", default: "3" },
+      "max-elapsed-ms": { type: "string" },
+      "max-renders": { type: "string" },
+      "max-evaluator-calls": { type: "string" },
+      "max-total-tokens": { type: "string" },
+      "max-cost-usd": { type: "string" },
       "session-root": {
         type: "string",
         default: process.env.PHOTO_AGENT_SESSION_ROOT ?? ".photo-agent/sessions",
@@ -98,6 +136,7 @@ async function editOne(argv: string[]): Promise<number> {
   const backend = createBackend(parsed.values.backend, raw, parsed.values["lightroom-mcp-entry"]);
   if (!backend) throw new Error(`Unsupported backend: ${parsed.values.backend}`);
   const evaluator = createEvaluator(parsed.values.evaluator);
+  const budget = readWorkflowBudget(parsed.values);
   const result = await runSinglePhoto({
     rawPath: raw,
     previewPath: preview,
@@ -109,6 +148,7 @@ async function editOne(argv: string[]): Promise<number> {
     allowCloudPreview: parsed.values["allow-cloud-preview"],
     ...(evaluator ? { evaluator } : {}),
     maxIterations: Number(parsed.values["max-iterations"]),
+    ...(budget ? { budget } : {}),
   });
   console.log(JSON.stringify(result, null, 2));
   return result.state === "FAILED" ? 1 : 0;
@@ -126,6 +166,11 @@ async function resume(argv: string[]): Promise<number> {
       "allow-cloud-preview": { type: "boolean", default: false },
       evaluator: { type: "string", default: "none" },
       "max-iterations": { type: "string", default: "3" },
+      "max-elapsed-ms": { type: "string" },
+      "max-renders": { type: "string" },
+      "max-evaluator-calls": { type: "string" },
+      "max-total-tokens": { type: "string" },
+      "max-cost-usd": { type: "string" },
       "session-root": { type: "string", default: process.env.PHOTO_AGENT_SESSION_ROOT },
       "lightroom-mcp-entry": {
         type: "string",
@@ -150,6 +195,7 @@ async function resume(argv: string[]): Promise<number> {
   );
   if (!backend) throw new Error(`Unsupported backend: ${parsed.values.backend}`);
   const evaluator = createEvaluator(parsed.values.evaluator);
+  const budget = readWorkflowBudget(parsed.values);
   const result = await resumeCodexSession({
     sessionDir,
     intentFile,
@@ -160,6 +206,7 @@ async function resume(argv: string[]): Promise<number> {
     allowCloudPreview: parsed.values["allow-cloud-preview"],
     ...(evaluator ? { evaluator } : {}),
     maxIterations: Number(parsed.values["max-iterations"]),
+    ...(budget ? { budget } : {}),
   });
   console.log(JSON.stringify(result, null, 2));
   return result.state === "FAILED" ? 1 : 0;
