@@ -1559,3 +1559,15 @@ Cloud-analyzer checkpoint:
   baseline, including existing README, package, source, tests, and WORKLOG
   files; no bulk formatting was applied. `git diff --check` passed with only
   the known LF-to-CRLF warnings.
+
+## 2026-08-30 - T09 final detached clean-clone verification
+
+- Created detached worktree `D:\photo\_agent_workspace\git-worktrees\photo-agent-t09-clean-clone-final`
+  at commit `892126b` and installed the lockfile with `npm.cmd ci` using the
+  task-local npm cache: 247 packages added, 0 vulnerabilities reported.
+- In that clean clone, `npm.cmd run check`, `npm.cmd run lint`, full
+  `npm.cmd test` (3 files / 56 tests), `npm.cmd run build`, and
+  `npm.cmd run example` all passed. The example reported `ACCEPTED`,
+  `REVIEW_REQUIRED` recovery, a readable render, and preserved source bytes.
+- Final clean-clone `git status --short --branch` was clean at `892126b`; the
+  only npm output was the existing pending `esbuild` install-script warning.
