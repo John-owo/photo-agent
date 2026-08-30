@@ -1370,3 +1370,11 @@ Cloud-analyzer checkpoint:
 - Final post-review `git diff 1a89983be2bf5628451619b508f1a60ee06f1d2b
   --check` exited 0. Git emitted only the known LF-to-CRLF working-copy
   normalization warnings; no whitespace errors were reported.
+
+## 2026-08-30 - T08 PhotoAgent remote ref inspection
+
+- An escalated `git ls-remote origin` inspection failed before contacting the
+  remote because the shared worktree was rejected as a repository under that
+  execution context. No remote change resulted. The same read-only query is
+  being rerun with the command-local `safe.directory` override; no global Git
+  configuration will be changed.
