@@ -60,7 +60,13 @@ npm.cmd run check
 npm.cmd run lint
 npm.cmd test
 npm.cmd run build
+npm.cmd run example
 ```
+
+`npm.cmd run example` 是 clean clone 的 smoke 測試：它會在 repository 外的
+作業系統暫存目錄建立合成 RAW／預覽圖，使用 mock provider/backend 執行文件中
+記載的單張流程，確認結果為 `ACCEPTED` 且 render 存在，驗證兩個來源 fixture
+仍逐 byte 相同，最後刪除暫存目錄。
 
 ## 環境變數
 
@@ -100,6 +106,8 @@ node dist\src\cli.js shoot --root <SHOOT_DIR> --session-root .photo-agent\shoots
 而且只使用清理過的 session 副本。shoot 指令不會寫入星等、色標、調色或來源
 檔。詳見 [v0.2 實作紀錄](docs/implementation/v0.2.md)與
 [v0.3 實作紀錄](docs/implementation/v0.3.md)。
+
+T09 clean-clone 與 live evidence 的驗收邊界，請見 [T09 evidence pack](docs/acceptance/t09-clean-clone-and-live-evidence.md)。
 
 ## Codex 本機流程（預設）
 

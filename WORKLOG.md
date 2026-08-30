@@ -1378,3 +1378,100 @@ Cloud-analyzer checkpoint:
   execution context. No remote change resulted. The same read-only query is
   being rerun with the command-local `safe.directory` override; no global Git
   configuration will be changed.
+
+## 2026-08-30 - T09 continuation baseline
+
+- Read the supplied handoff at
+  `C:\Users\John\AppData\Local\Temp\codex-handoff-20260830-t08.md`.
+  T09 was not started there; the active clean worktree is
+  `D:\photo\_agent_workspace\git-worktrees\photo-agent-roadmap-integration`
+  on `codex/roadmap-t09` at `4b74878`.
+- Read-only `gh issue view 14 --repo John-owo/photo-agent` confirmed the
+  `[T09] Produce the v0.1 clean-clone and live evidence pack` scope: clean-clone
+  CI must install/check/build/test and run the documented example; live
+  Lightroom E2E plus human render inspection must use a non-critical photo and
+  record source preservation; preset export remains experimental until a real
+  export/re-import round trip passes. The first sandboxed query was denied by
+  network policy; the approved read-only retry returned the issue unchanged.
+- Baseline `git status --short --branch` was clean at `codex/roadmap-t09` with
+  HEAD `4b74878`.
+- Baseline `npm.cmd run check`, `npm.cmd run lint`,
+  `npm.cmd test -- tests/workflow.test.ts` (29 tests), and
+  `npm.cmd run build` all passed. Existing CI runs install/check/lint/test/build
+  but does not run a documented example. No photo, catalog, sidecar, or
+  configured `D:\photo\lightroom-mcp-john` checkout was modified.
+
+## 2026-08-30 - T09 clean-clone smoke implementation
+
+- Added `npm run example`, CI execution after build, and
+  `examples/run-example.mjs`. The example creates synthetic files only in the
+  OS temporary directory, runs the built mock single-photo workflow, checks the
+  `ACCEPTED` state and render, verifies source bytes, and cleans up.
+- Post-change `npm.cmd run check` and `npm.cmd run build` passed.
+- The first post-change `npm.cmd run lint` failed on five undeclared Node
+  globals in the new `.mjs` runner (`URL`, `process`, `Buffer`, and `console`).
+  No runtime example was counted from that attempt; the runner will import the
+  required `node:` bindings explicitly before the next verification.
+
+## 2026-08-30 - T09 clean-clone smoke lint repair
+
+- Explicit `node:` imports removed the lint diagnostics; the follow-up
+  `npm.cmd run lint` passed.
+- The first runtime `npm.cmd run example` failed before the workflow because
+  `node:console` has no named `console` export in the available Node runtime.
+  No source or photo data was involved. The runner will write its final JSON
+  through the already imported `process` binding instead.
+
+## 2026-08-30 - T09 clean-clone smoke path green
+
+- Replaced the unsupported `node:console` binding with `process.stdout`; the
+  runner now passes the strict lint/runtime boundary.
+- Follow-up `npm.cmd run lint` passed.
+- `npm.cmd run example` passed: the built CLI reached `ACCEPTED`, produced a
+  mock render, confirmed source fixtures were byte-identical, and removed its
+  OS-temporary fixture directory. No external backend or photo data was used.
+- Added the T09 evidence pack, linked it from both READMEs, and updated the v0.1
+  implementation status to distinguish CI automation from the still-manual
+  Lightroom, human-render, and preset round-trip gates.
+
+## 2026-08-30 - T09 post-change verification checkpoint
+
+- Full `npm.cmd test` passed: 3 Vitest files / 56 tests.
+- `git diff --check` passed with only the repository's known LF-to-CRLF
+  normalization warnings.
+- Targeted `npx.cmd prettier --check` over the T09 documentation/configuration
+  scope reported seven existing-style files, including the newly touched
+  README/config files and the new evidence document. The new runner itself was
+  not reported. No whole-file line-ending normalization or unrelated bulk
+  formatting was applied because the repository retains a known broad format
+  baseline failure.
+- Read-only runtime preflight found no Lightroom process and no listener on
+  ports 58763/58764 in this environment; no live UI/MCP/catalog/photo action
+  was attempted.
+
+## 2026-08-30 - T09 evidence-pack formatting
+
+- Ran `npx.cmd prettier --write docs/acceptance/t09-clean-clone-and-live-evidence.md`
+  only on the new evidence document; it completed successfully. Existing
+  repository files were not normalized.
+
+## 2026-08-30 - T09 pre-commit verification
+
+- Final pre-commit `npm.cmd run check`, `npm.cmd run lint`, full
+  `npm.cmd test` (3 files / 56 tests), `npm.cmd run build`, and
+  `npm.cmd run example` all passed.
+- The new `examples/run-example.mjs` and T09 evidence pack both passed the
+  targeted Prettier check.
+- Final pre-commit `git diff --check` passed with only the known LF-to-CRLF
+  normalization warnings. The example again reported `ACCEPTED`, a readable
+  mock render, and unchanged source fixtures.
+
+## 2026-08-30 - T09 staged-scope audit
+
+- Staged exactly the T09 CI, example, documentation, package-script, evidence,
+  and append-only work-log paths. `git diff --cached --check` passed, and the
+  staged summary reported 9 files / 314 added lines / 1 deletion. No source
+  image, Lightroom checkout, or unrelated repository path was staged.
+- Manual staged-diff review found the live Lightroom and human-render clauses
+  intentionally remain pending external gates; no historical artifact was
+  relabelled as current T09 E2E evidence.

@@ -90,7 +90,14 @@ npm.cmd run check
 npm.cmd run lint
 npm.cmd test
 npm.cmd run build
+npm.cmd run example
 ```
+
+`npm.cmd run example` is the clean-clone smoke path. It generates synthetic
+RAW/preview fixtures outside the repository, runs the documented single-photo
+workflow with the mock provider/backend, verifies an `ACCEPTED` result and a
+render artifact, checks that both source fixtures remain byte-identical, and
+removes the temporary directory.
 
 ## Environment variables
 
@@ -130,6 +137,8 @@ either opt-in source, every image remains `review`. The OpenAI analyzer uses one
 structured request per preview asset and only a sanitized session copy. The
 shoot command does not write ratings, labels, edits, or source files. See the [v0.2 record](docs/implementation/v0.2.md)
 and [v0.3 record](docs/implementation/v0.3.md).
+
+For the v0.1 clean-clone and live-evidence boundary, see [the T09 evidence pack](docs/acceptance/t09-clean-clone-and-live-evidence.md).
 
 ## Codex-local run (default)
 

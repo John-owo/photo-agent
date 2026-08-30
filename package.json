@@ -16,6 +16,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "example": "node examples/run-example.mjs",
     "format:check": "prettier --check ."
   },
   "dependencies": {
