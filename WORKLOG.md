@@ -1672,3 +1672,150 @@ Cloud-analyzer checkpoint:
 - Targeted `npx.cmd prettier --check
   docs/acceptance/t09-clean-clone-and-live-evidence.md` passed. `git diff
   --check` passed with only the known LF-to-CRLF warnings.
+
+## 2026-08-30 - T09 live Lightroom connectivity check
+
+- With Lightroom Classic open, process `Lightroom.exe` was present and
+  `netstat -ano` showed the plugin listening on request port `58763` and
+  response port `58764`.
+- The read-only direct TCP probe `node manual-test.mjs ping '{}'` connected to
+  both ports, but the plugin log recorded `Auth failed (token mismatch)` for
+  the probe request. No successful MCP/plugin handshake or Lightroom metadata
+  read is claimed.
+- This confirms that an LRC plugin is running, but the active plugin instance
+  is not authenticated with the probe/server token. No photo, Master, catalog,
+  or configuration mutation was performed.
+- Post-check `git status --short --branch` and `git diff --check` passed; the
+  only worktree change is this append-only `WORKLOG.md` entry. Git emitted only
+  the known LF-to-CRLF normalization warning.
+
+## 2026-08-30 - T09 live backend follow-up
+
+- After the user reported the Lightroom setup was resolved, the selected
+  plugin status showed `Running: true`, but both `Request socket connected` and
+  `Response socket connected` were still `false`.
+- A second read-only `node manual-test.mjs ping '{}'` reached both ports, then
+  the plugin log recorded `Auth failed (token mismatch)` and closed the probe
+  connection. No MCP handshake, metadata read, or mutation is claimed.
+- Starting the configured integration `server\dist\index.js` was blocked by
+  its existing bridge lock reporting PID `8988`. Read-only `Get-Process` and
+  `tasklist` checks found no such process; the lock was not removed or altered.
+- No photo, Master, catalog, plugin source, configuration, or Lightroom
+  application state was changed by this follow-up.
+
+## 2026-08-30 - T09 duplicate Lightroom plugin instance repair
+
+- Computer Use inspected the live Lightroom Plug-in Manager and confirmed two
+  Lightroom MCP entries: the intended integration plug-in at
+  `D:\photo\_agent_workspace\git-worktrees\lightroom-mcp-roadmap-integration\plugin\LightroomMCP.lrplugin`
+  was disabled, while the older Roaming copy at
+  `C:\Users\John\AppData\Roaming\Adobe\Lightroom\Modules\LightroomMCP.lrplugin`
+  was enabled.
+- Disabled the older Roaming plug-in, enabled the integration plug-in, and
+  clicked `Start Server`. The visible status dialog reported `Running: true`,
+  and the log recorded a new token plus successful request/response binds on
+  ports 58763/58764 at 22:39:31. Neither plug-in bundle was deleted.
+- The repository `manual-test.mjs` probe still sent authentication as a
+  separate hello frame, while the current plug-in validates `hello` on every
+  request; that stale probe consequently reproduced `token mismatch`. A
+  generated read-only verification probe at
+  `D:\photo\_agent_workspace\lightroom\verification\t09-plugin-switch-20260830\ping-per-message.mjs`
+  followed the current per-message contract and returned `{"pong":true}`.
+  This proves live plug-in reachability/authentication only, not full PhotoAgent
+  live E2E or a creative render acceptance.
+- Closing Plug-in Manager caused one click-through selection change to
+  `DSC_5652.NEF`; Computer Use immediately restored the original selection and
+  a fresh accessibility readback confirmed exactly one selected photo,
+  `DSC_5343.NEF`. No Develop setting, photo, Master, catalog, sidecar, preview,
+  or export was modified.
+- Computer Use initially resolved the workspace's older `@oai/sky` 0.6.6 and
+  failed before UI input on its blocked `node:process` import. For this run only,
+  the bundled 0.6.24 package was copied into the already trusted workspace
+  runtime path. After UI verification, the original 0.6.6 package was restored
+  byte-for-path; the used newer copy remains recoverably archived as
+  `sky.new-0.6.24-used-20260830`. No Codex config was changed.
+- Final read-only verification showed Lightroom still listening on both ports,
+  the expected 22:39:31 integration start/bind log entries, and only this
+  append-only work-log change in the PhotoAgent worktree. `git diff --check`
+  exited 0 with only the known LF-to-CRLF warning.
+
+## 2026-08-30 - T09 live E2E and controlled interrupted-run recovery
+
+- Corrective evidence for the earlier probe entries: the checked-in
+  `lightroom-mcp-john\manual-test.mjs` sends authentication as a standalone
+  hello message, but the active integration plug-in requires per-message
+  authentication. Its `token mismatch` result is therefore stale-probe
+  behavior, not evidence that the intended integration server is unusable.
+- Started the integration worktree server `server\dist\index.js` and sent raw
+  MCP JSON-RPC `initialize`, `ping`, and `get_photo_metadata` calls. The live
+  server identified itself as `lightroom-mcp-server` `0.10.0`; ping and catalog
+  readback succeeded for Master `976310` and the T09 Copy `1011757`.
+- The first live PhotoAgent command used the real `lightroom` backend and the
+  integration server entry with the non-critical `DSC_5343.NEF` plus its
+  explicitly matching preview. It created Copy `1011757`, verified the
+  Copy/Master identity and inherited Develop state, applied the requested
+  `Exposure2012=0` / `Contrast2012=14`, read the values back from Lightroom,
+  exported one render, and ended `REVIEW_REQUIRED` because no visual evaluator
+  was configured. The session is under
+  `D:\photo\_agent_workspace\photo-jobs\t09-live-20260830-dsc5343\`.
+- Direct post-run catalog readback showed Master still `is_virtual_copy=false`
+  with its pre-run exposed Develop state unchanged. The Master's virtual-copy
+  count increased from the one pre-existing Copy to exactly two, including one
+  new T09 operation marker.
+- Post-run file verification passed: the RAW remained 19,126,784 bytes with
+  SHA-256 `E8BD9B1F59D5D0DFC431674E28BA981B548640BC32FBEAF8D569B6F4760E418A`
+  and unchanged creation/last-write timestamps; the matching preview remained
+  608,915 bytes with SHA-256
+  `69EB4B4331CA5C5203CFFF0D4B391AF11C6813522FEC831E4A9E1FC2B4F604D8` and
+  unchanged timestamps. The adjacent XMP sidecar remained absent.
+- The first render existed, was non-empty and readable, and was visually
+  checked by the agent. That observation is not human visual acceptance; the
+  required human gate remains pending.
+- A targeted artifact inspection initially attempted to read a non-existent
+  `events.jsonl` and exited 1 after printing the other artifacts. The durable
+  `session.log`, `state.json`, workflow-copy, checkpoint, readback, and render
+  artifacts were then inspected directly; no event log was treated as evidence.
+- For a real interruption test, the dedicated recovery root was confirmed
+  absent, then a second real Lightroom run was launched. After the mutation
+  and Develop readback completed, while the session was in `RENDERING`, the
+  PhotoAgent process and its MCP child process were terminated with their exact
+  PIDs. The resulting session retained the Copy and readback artifacts, and
+  Lightroom logged the subsequent client socket close. This is controlled real
+  process interruption plus MCP disconnect evidence, not a simulated state
+  edit and not a claim of a spontaneous Lightroom crash or network fault.
+- The terminated server left a lock containing a dead PID. It was moved, not
+  deleted or overwritten, to the per-run recovery evidence directory as
+  `bridge-58763-58764.lock.stale-backup`; source absence and backup existence
+  were verified.
+- The first recovery attempt from an incorrect, non-existent work directory
+  failed before execution with Windows `os error 267` (invalid directory).
+  The corrected `node dist\src\cli.js recover ... --backend lightroom` then
+  passed with `REVIEW_REQUIRED`. A second recovery of the same session also
+  passed with `REVIEW_REQUIRED`.
+- Both recovery reports were `evidence_status=consistent`, targeted exact Copy
+  `1011792`, read back `Exposure2012=0` / `Contrast2012=14`, and recorded
+  `copy_creation_retried=false` and `mutation_retried=false`. Final direct
+  catalog readback showed Master virtual-copy count exactly three (the prior
+  Copy plus the two T09 test Copies), with no fourth Copy after the second
+  recovery. This evidences exact-Copy reuse, duplicate prevention, and no blind
+  retry of the completed mutation.
+- Created the local audit index at
+  `D:\photo\_agent_workspace\lightroom\verification\t09-live-20260830-dsc5343\README.md`
+  and updated the committed T09 acceptance pack with the live evidence and
+  remaining human-gate boundary. Preset export remains
+  `experimental / not part of validated v0.1 guarantees`.
+- Post-update `git status --short --branch` and `git diff --check` showed only
+  the expected append-only worklog plus the T09 evidence-pack change; Git
+  emitted only the known LF-to-CRLF normalization warning.
+
+## 2026-08-30 - T09 post-evidence local verification
+
+- After updating the acceptance pack, `npm.cmd run check`, `npm.cmd run lint`,
+  `npm.cmd test`, `npm.cmd run build`, targeted `npx.cmd prettier --check`, and
+  `git diff --check` all passed. Vitest reported 3 test files and 56 tests
+  passed.
+- `npm.cmd run example` passed with `ACCEPTED`, simulated recovery
+  `REVIEW_REQUIRED`, a readable render, and `source_preserved=true`.
+- Final status remains limited to the intended `WORKLOG.md` and T09 acceptance
+  pack changes; no generated build or example fixture was added to the Git
+  worktree. Git emitted only the known LF-to-CRLF normalization warnings.
