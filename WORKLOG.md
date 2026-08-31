@@ -2557,3 +2557,40 @@ Cloud-analyzer checkpoint:
   planning`; post-commit status was clean on `codex/roadmap-t09`. The
   following WORKLOG-only commit records this post-commit evidence; no remote
   operation was performed.
+
+## 2026-08-31 - T42 existing-mask adjustment planning boundary
+
+- Read-only `gh issue view 38 --repo John-owo/photo-agent --json ...` confirmed
+  T42 requires schema-validated mask selectors, values, identity, and
+  Workflow Copy requirements, plus golden/preservation regressions for
+  supported parameters, duplicate names, opaque fields, geometry, other
+  masks, global settings, and operation-ID reconciliation. It remains blocked
+  by PhotoAgent #31 and Lightroom MCP #1.
+- Read-only `gh issue view 12 --repo John-owo/lightroom-mcp --json ...`
+  showed that issue is already merged and only covers T08 Workflow Copy
+  reconciliation; it is not the T42 mask blocker. Read-only
+  `gh issue view 1 --repo John-owo/lightroom-mcp --json ...` confirmed the
+  actual blocker requires existing-mask summaries, verified Workflow Copy
+  identity, opaque-tree preservation, allowlisted local parameters,
+  pre-write Checkpoint, immediate readback, and `REVIEW_REQUIRED` on
+  uncertainty. No remote state changed.
+- Added a planning-only existing-mask contract: stable id/unique-name
+  selectors, Master/Workflow Copy identity checks, bounded allowlisted local
+  parameters, opaque/geometry/other-mask/global preservation readback, and
+  operation-ID reconciliation that never authorizes a blind retry. The
+  current BackendAdapter still has no structured mask operation.
+- The first T42 `npm.cmd run check` exposed one unused schema import, one
+  unused test type, and a fixture type narrowed to the default mask union;
+  the first targeted test run passed 4 tests but exposed the same fixture's
+  runtime support-list mistake and an assessment expectation missing two
+  declared capability labels. Those fixtures/imports were corrected; the
+  targeted runtime suite then passed 6 tests while the fixture type annotation
+  was broadened for the final check.
+- After broadening the fixture input type, `npm.cmd run check` passed and
+  `npm.cmd test -- --run tests/mask-adjustment.test.ts` passed 1 file / 6
+  tests.
+- Final T42 verification passed `npm.cmd run check`, `npm.cmd test` (10 files
+  / 116 tests), `npm.cmd run lint`, `npm.cmd run build`, changed-source/test/
+  docs `npx.cmd prettier --check`, and `git diff --check`; diff output
+  contained only normal LF-to-CRLF warnings. No remote issue, push, merge, PR,
+  or issue closure was performed.

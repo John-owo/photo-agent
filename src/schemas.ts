@@ -161,6 +161,52 @@ export const COLOR_GRADING_PROPAGATION_POLICY = {
     "Modern Color Grading is process-version and photo-context sensitive; per-photo proof is required before propagation",
 } as const;
 
+export const MASK_REGISTRY_VERSION = "0.1.0" as const;
+export const MASK_SELECTOR_VARIANTS = ["id", "name"] as const;
+export const MASK_PARAMETER_NAMES = [
+  "exposure",
+  "contrast",
+  "highlights",
+  "shadows",
+  "whites",
+  "blacks",
+  "temperature",
+  "tint",
+  "texture",
+  "clarity",
+  "dehaze",
+  "saturation",
+  "sharpness",
+  "luminance_noise_reduction",
+  "moire",
+  "defringe",
+  "hue",
+] as const;
+export const MASK_PARAMETER_RANGES = {
+  exposure: [-5, 5],
+  contrast: [-100, 100],
+  highlights: [-100, 100],
+  shadows: [-100, 100],
+  whites: [-100, 100],
+  blacks: [-100, 100],
+  temperature: [-100, 100],
+  tint: [-100, 100],
+  texture: [-100, 100],
+  clarity: [-100, 100],
+  dehaze: [-100, 100],
+  saturation: [-100, 100],
+  sharpness: [0, 150],
+  luminance_noise_reduction: [0, 100],
+  moire: [0, 100],
+  defringe: [0, 100],
+  hue: [-180, 180],
+} as const satisfies Record<(typeof MASK_PARAMETER_NAMES)[number], readonly [number, number]>;
+export const MASK_PROPAGATION_POLICY = {
+  eligible: false,
+  blocked_reason:
+    "Existing-mask adjustments are Workflow Copy and mask-schema specific; per-photo preservation proof is required before propagation",
+} as const;
+
 export const SemanticAdjustmentSchema = z.object({
   parameter: z.enum(SEMANTIC_PARAMETERS),
   direction,
@@ -1482,6 +1528,222 @@ export const BackendPhotoStateSchema = z.object({
   identity: BackendPhotoIdentitySchema.optional(),
 });
 
+const MaskParameterMapSchema = z
+  .record(z.string(), z.number().finite())
+  .superRefine((settings, context) => {
+    for (const [parameter, value] of Object.entries(settings)) {
+      const range = MASK_PARAMETER_RANGES[parameter as keyof typeof MASK_PARAMETER_RANGES];
+      if (!range) {
+        context.addIssue({
+          code: "custom",
+          path: [parameter],
+          message: `Unsupported existing-mask parameter: ${parameter}`,
+        });
+        continue;
+      }
+      if (value < range[0] || value > range[1]) {
+        context.addIssue({
+          code: "custom",
+          path: [parameter],
+          message: `Existing-mask parameter ${parameter} must be between ${range[0]} and ${range[1]}`,
+        });
+      }
+    }
+  });
+
+const ExistingMaskFieldsSchema = z
+  .object({
+    mask_id: z.string().min(1).max(200),
+    name: z.string().min(1).max(200),
+    kind: z.string().min(1).max(100),
+    enabled: z.boolean(),
+    supported_parameters: z.array(z.enum(MASK_PARAMETER_NAMES)).max(MASK_PARAMETER_NAMES.length),
+    parameters: MaskParameterMapSchema,
+  })
+  .strict();
+
+function validateExistingMaskFields(
+  mask: z.infer<typeof ExistingMaskFieldsSchema>,
+  context: z.RefinementCtx,
+): void {
+  if (new Set(mask.supported_parameters).size !== mask.supported_parameters.length) {
+    context.addIssue({
+      code: "custom",
+      path: ["supported_parameters"],
+      message: "Existing-mask supported parameters may not contain duplicates",
+    });
+  }
+  for (const parameter of Object.keys(mask.parameters)) {
+    if (!mask.supported_parameters.includes(parameter as (typeof MASK_PARAMETER_NAMES)[number])) {
+      context.addIssue({
+        code: "custom",
+        path: ["parameters", parameter],
+        message: `Existing-mask parameter is not declared as supported: ${parameter}`,
+      });
+    }
+  }
+}
+
+export const ExistingMaskSummarySchema = ExistingMaskFieldsSchema.superRefine(
+  validateExistingMaskFields,
+);
+
+export const ExistingMaskSnapshotSchema = ExistingMaskFieldsSchema.extend({
+  geometry: z.unknown(),
+  opaque: z.unknown(),
+})
+  .strict()
+  .superRefine((mask, context) => validateExistingMaskFields(mask, context));
+
+export const MaskSelectorSchema = z.union([
+  z
+    .object({
+      kind: z.literal("id"),
+      mask_id: z.string().min(1).max(200),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("name"),
+      name: z.string().min(1).max(200),
+    })
+    .strict(),
+]);
+
+export const MaskParameterSettingsSchema = MaskParameterMapSchema.superRefine(
+  (settings, context) => {
+    const count = Object.keys(settings).length;
+    if (count === 0) {
+      context.addIssue({
+        code: "custom",
+        path: [],
+        message: "Existing-mask adjustment requires at least one parameter",
+      });
+    }
+    if (count > MASK_PARAMETER_NAMES.length) {
+      context.addIssue({
+        code: "custom",
+        path: [],
+        message: `Existing-mask adjustment may contain at most ${MASK_PARAMETER_NAMES.length} parameters`,
+      });
+    }
+  },
+);
+
+function validateUniqueMaskIds(
+  masks: readonly { mask_id: string }[],
+  context: z.RefinementCtx,
+): void {
+  const seen = new Set<string>();
+  for (const [index, mask] of masks.entries()) {
+    if (seen.has(mask.mask_id)) {
+      context.addIssue({
+        code: "custom",
+        path: ["masks", index, "mask_id"],
+        message: `Existing-mask readback contains duplicate mask_id: ${mask.mask_id}`,
+      });
+    }
+    seen.add(mask.mask_id);
+  }
+}
+
+export const MaskReadbackSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    mask_registry_version: z.literal(MASK_REGISTRY_VERSION),
+    mask_schema_version: z.string().min(1).max(100),
+    target: BackendPhotoIdentitySchema,
+    masks: z.array(ExistingMaskSnapshotSchema).max(256),
+    global_settings: z.record(z.string(), z.union([z.number(), z.string(), z.boolean()])),
+  })
+  .strict()
+  .superRefine((readback, context) => validateUniqueMaskIds(readback.masks, context));
+
+function validateMaskAdjustmentBoundary(
+  value: {
+    master: z.infer<typeof BackendPhotoIdentitySchema>;
+    target: z.infer<typeof BackendPhotoIdentitySchema>;
+    expected_master_uuid: string;
+  },
+  context: z.RefinementCtx,
+): void {
+  if (value.master.is_virtual_copy) {
+    context.addIssue({
+      code: "custom",
+      path: ["master", "is_virtual_copy"],
+      message: "Existing-mask inspection source must be a Master Photo",
+    });
+  }
+  if (!value.target.is_virtual_copy) {
+    context.addIssue({
+      code: "custom",
+      path: ["target", "is_virtual_copy"],
+      message: "Existing-mask mutation target must be a verified Workflow Copy",
+    });
+  }
+  if (value.expected_master_uuid !== value.master.uuid) {
+    context.addIssue({
+      code: "custom",
+      path: ["expected_master_uuid"],
+      message: "Existing-mask expected_master_uuid must match the Master identity",
+    });
+  }
+  if (value.target.master_uuid !== value.expected_master_uuid) {
+    context.addIssue({
+      code: "custom",
+      path: ["target", "master_uuid"],
+      message: "Existing-mask Workflow Copy does not reference the expected Master UUID",
+    });
+  }
+}
+
+export const MaskAdjustmentIntentSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    operation_id: z.string().min(1).max(200),
+    mask_schema_version: z.string().min(1).max(100),
+    master: BackendPhotoIdentitySchema,
+    target: BackendPhotoIdentitySchema,
+    expected_master_uuid: z.string().min(1),
+    selector: MaskSelectorSchema,
+    settings: MaskParameterSettingsSchema,
+  })
+  .strict()
+  .superRefine(validateMaskAdjustmentBoundary);
+
+export const MaskAdjustmentPlanSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    mask_registry_version: z.literal(MASK_REGISTRY_VERSION),
+    operation_id: z.string().min(1).max(200),
+    mask_schema_version: z.string().min(1).max(100),
+    master: BackendPhotoIdentitySchema,
+    target: BackendPhotoIdentitySchema,
+    expected_master_uuid: z.string().min(1),
+    selector: MaskSelectorSchema,
+    settings: MaskParameterSettingsSchema,
+    warnings: z.array(z.string().min(1).max(500)).max(16),
+    propagation_policy: z
+      .object({
+        eligible: z.literal(false),
+        blocked_reason: z.string().min(1).max(500),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine(validateMaskAdjustmentBoundary);
+
+export const MaskGoldenVectorSchema = z
+  .object({
+    id: z.string().min(1),
+    control_group: z.string().min(1),
+    intent: MaskAdjustmentIntentSchema,
+    expected_plan: MaskAdjustmentPlanSchema,
+    current_readback: MaskReadbackSchema,
+    expected_readback: MaskReadbackSchema,
+  })
+  .strict();
+
 export const WorkflowCopyCandidateSchema = z
   .object({
     catalog_id: z.string().min(1),
@@ -1618,6 +1880,8 @@ export const OperationSemanticsSchema = z
     supported_color_grading_wheels: z.array(z.enum(COLOR_GRADING_WHEEL_VARIANTS)).optional(),
     supported_color_grading_controls: z.array(z.enum(COLOR_GRADING_SHARED_CONTROLS)).optional(),
     supported_color_grading_process_versions: z.array(z.string().min(1).max(100)).optional(),
+    supported_mask_parameters: z.array(z.enum(MASK_PARAMETER_NAMES)).optional(),
+    supported_mask_schema_versions: z.array(z.string().min(1).max(100)).optional(),
   })
   .strict();
 

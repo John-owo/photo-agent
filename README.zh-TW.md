@@ -70,6 +70,11 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
   split toning 沒有 fallback 路徑；只有 backend 明確宣告所需 process version、
   controls、具體 settings 與 read／checkpoint／render prerequisite，才可進入未來
   execution 評估。Propagation 仍禁止，不支援的 intent 會明確交給人工接手。
+- Existing-mask planning 將 Master inspection 與一份已驗證 Workflow Copy 上的單次
+  調整分開。Selector 只能用 stable mask id 或唯一名稱；local parameter 有明確
+  allowlist 與 bounds，readback 會驗證 geometry、opaque field、其他 mask 與 global
+  settings 都被保留。不支援或不確定的 mask state 會交給人工接手，目前 adapter
+  尚無 structured mask mutation method。
 - 單張 apply 會先唯讀並驗證 Master；只有明確允許 apply 且計畫含可執行調整時，
   才建立一份帶 session 標記的 Workflow Copy。checkpoint、Develop mutation、讀回與
   render 只會指向已驗證的 Copy。dry-run／no-op 不會建立 Copy；輸入已是 Virtual

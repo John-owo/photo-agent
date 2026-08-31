@@ -102,6 +102,12 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   read/checkpoint/render prerequisites before execution can be considered.
   Propagation remains disabled and unsupported intent returns an explicit
   manual handoff.
+- Existing-mask planning keeps Master inspection separate from one verified
+  Workflow Copy adjustment. Selectors may use a stable mask id or a unique
+  name, local parameters are allowlisted and bounded, and readback verifies
+  geometry, opaque fields, other masks, and global settings are preserved.
+  Unsupported or uncertain mask state returns a manual handoff; the current
+  adapter has no structured mask mutation method.
 - A single-photo apply reads and verifies the Master first, then lazily creates
   one session-marked Workflow Copy only when apply is approved and the plan has
   an executable adjustment. Checkpoints, Develop mutation, read-back, and render

@@ -76,6 +76,14 @@ import type {
   ColorGradingPayloadSchema,
   ColorGradingPlanSchema,
   ColorGradingReadbackSchema,
+  ExistingMaskSnapshotSchema,
+  ExistingMaskSummarySchema,
+  MaskAdjustmentIntentSchema,
+  MaskAdjustmentPlanSchema,
+  MaskGoldenVectorSchema,
+  MaskParameterSettingsSchema,
+  MaskReadbackSchema,
+  MaskSelectorSchema,
 } from "./schemas.js";
 
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
@@ -120,6 +128,14 @@ export type ColorGradingIntent = z.infer<typeof ColorGradingIntentSchema>;
 export type ColorGradingPlan = z.infer<typeof ColorGradingPlanSchema>;
 export type ColorGradingReadback = z.infer<typeof ColorGradingReadbackSchema>;
 export type ColorGradingGoldenVector = z.infer<typeof ColorGradingGoldenVectorSchema>;
+export type ExistingMaskSummary = z.infer<typeof ExistingMaskSummarySchema>;
+export type ExistingMaskSnapshot = z.infer<typeof ExistingMaskSnapshotSchema>;
+export type MaskSelector = z.infer<typeof MaskSelectorSchema>;
+export type MaskParameterSettings = z.infer<typeof MaskParameterSettingsSchema>;
+export type MaskReadback = z.infer<typeof MaskReadbackSchema>;
+export type MaskAdjustmentIntent = z.infer<typeof MaskAdjustmentIntentSchema>;
+export type MaskAdjustmentPlan = z.infer<typeof MaskAdjustmentPlanSchema>;
+export type MaskGoldenVector = z.infer<typeof MaskGoldenVectorSchema>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;
