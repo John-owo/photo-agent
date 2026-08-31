@@ -3,8 +3,15 @@ import { mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promis
 import { dirname, join, resolve } from "node:path";
 
 import { CancellationEvidenceSchema, SessionManifestSchema } from "./schemas.js";
+import { buildSessionPrivacyRecord, DEFAULT_PRIVACY_POLICY } from "./privacy-policy.js";
 import { PREVIEW_POLICY } from "./preview.js";
-import type { CancellationEvidence, JobState, SessionManifest, SourceAssetPair } from "./types.js";
+import type {
+  CancellationEvidence,
+  JobState,
+  PrivacyPolicy,
+  SessionManifest,
+  SourceAssetPair,
+} from "./types.js";
 
 const TRANSITIONS: Record<JobState, readonly JobState[]> = {
   PENDING: ["ANALYZING", "CANCELLED", "FAILED"],
@@ -174,6 +181,7 @@ export class SessionStore {
     root: string,
     source: SourceAssetPair,
     backendName: string,
+    privacyPolicy: PrivacyPolicy = DEFAULT_PRIVACY_POLICY,
   ): Promise<SessionStore> {
     const sessionId = `${new Date().toISOString().replaceAll(":", "-")}-${randomUUID().slice(0, 8)}`;
     const dir = join(resolve(root), sessionId);
@@ -190,8 +198,8 @@ export class SessionStore {
         cloud_preview: false,
       },
       backend: { name: backendName, version: "pending" },
-      config_hash: sha256(JSON.stringify({ backendName })),
-      privacy: { raw_uploaded: false, exif_sent: false, preview_sanitized: true },
+      config_hash: sha256(JSON.stringify({ backendName, privacyPolicy })),
+      privacy: buildSessionPrivacyRecord(privacyPolicy),
     });
     const store = new SessionStore(dir, manifest);
     await mkdir(join(dir, "inputs"), { recursive: true });

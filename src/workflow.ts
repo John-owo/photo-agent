@@ -13,6 +13,15 @@ import { ingestPair } from "./ingest.js";
 import { createSanitizedPreview, materializePreviewArtifact } from "./preview.js";
 import { assertBackendSupportsPlan, validateNormalizedPlan } from "./parameter-registry.js";
 import {
+  applyLegacyCloudPreviewConsent,
+  assertPrivacyPolicyAllowsCloudPreview,
+  assertPrivacyPolicyAllowsProvider,
+  recordPreviewCloudTransfer,
+  removeEphemeralPreviews,
+  resolvePrivacyPolicy,
+  sessionPrivacyPolicy,
+} from "./privacy-policy.js";
+import {
   resolveLightroomSettings,
   translateIntent,
   LIGHTROOM_CHECKPOINT_KEYS,
@@ -56,6 +65,7 @@ import type {
   IterationReportRecord,
   NormalizedEditPlan,
   ProviderResult,
+  PrivacyPolicy,
   RecoveryEvidence,
   SourceAssetPair,
   WorkflowOptions,
@@ -311,6 +321,7 @@ type PlanExecutionOptions = {
   backend: BackendAdapter;
   sessionRoot: string;
   apply: boolean;
+  privacyPolicy: PrivacyPolicy;
   evaluator?: EditEvaluator;
   maxIterations?: number;
   budget?: WorkflowBudgetOptions;
@@ -806,6 +817,15 @@ async function executePlan(
           iterations: iteration,
         });
       }
+      if (options.evaluator.requiresCloudPreview) {
+        await session.updateManifest({
+          privacy: recordPreviewCloudTransfer(
+            session.currentManifest.privacy,
+            true,
+            options.privacyPolicy,
+          ),
+        });
+      }
       evaluatorAttempted = true;
       const parsedEvaluation = EvaluationResultSchema.parse(
         await options.evaluator.evaluate({
@@ -961,14 +981,24 @@ async function executePlan(
 }
 
 export async function runSinglePhoto(options: WorkflowOptions): Promise<WorkflowResult> {
-  if (options.provider.requiresCloudPreview && !options.allowCloudPreview) {
-    throw new Error("This provider requires --allow-cloud-preview; no image was sent");
-  }
-  if (options.evaluator?.requiresCloudPreview && !options.allowCloudPreview) {
-    throw new Error("This evaluator requires --allow-cloud-preview; no render was sent");
-  }
+  const privacyPolicy = resolvePrivacyPolicy(options.privacyPolicy, options.allowCloudPreview);
+  assertPrivacyPolicyAllowsProvider(
+    privacyPolicy,
+    options.provider.capabilities,
+    options.provider.requiresCloudPreview,
+  );
+  assertPrivacyPolicyAllowsCloudPreview(
+    privacyPolicy,
+    options.evaluator?.requiresCloudPreview ?? false,
+    "evaluator",
+  );
   const source = await ingestPair(options.rawPath, options.previewPath);
-  const session = await SessionStore.create(options.sessionRoot, source, options.backend.name);
+  const session = await SessionStore.create(
+    options.sessionRoot,
+    source,
+    options.backend.name,
+    privacyPolicy,
+  );
   const photoId = options.photoId ?? source.raw_path;
   let normalizedPlan = emptyPlan();
 
@@ -981,6 +1011,9 @@ export async function runSinglePhoto(options: WorkflowOptions): Promise<Workflow
       sanitized_preview: sanitizedPath,
       raw_uploaded: false,
       exif_sent: false,
+      gps_sent: false,
+      preview_cloud_transfer: false,
+      privacy_policy: privacyPolicy,
     });
     await session.transition("ANALYZING");
     throwIfCancellationRequested(options.signal, "read_only");
@@ -994,6 +1027,9 @@ export async function runSinglePhoto(options: WorkflowOptions): Promise<Workflow
         throw new WorkflowCancellationError("read_only", false, options.signal.reason);
       }
       if (!(error instanceof CodexInputRequiredError)) throw error;
+      if (privacyPolicy.preview_retention === "ephemeral") {
+        throw new Error("Ephemeral preview retention cannot create a Codex handoff");
+      }
       const intentFilePath = join(session.dir, "codex-intent.json");
       const handoffPath = join(session.dir, "codex-analysis-request.md");
       await session.updateManifest({
@@ -1021,6 +1057,12 @@ export async function runSinglePhoto(options: WorkflowOptions): Promise<Workflow
     }
 
     await writeProviderArtifacts(session, providerResult);
+    await session.updateManifest({
+      privacy: recordPreviewCloudTransfer(
+        session.currentManifest.privacy,
+        providerResult.metadata.cloudPreview,
+      ),
+    });
     throwIfCancellationRequested(options.signal, "read_only");
     normalizedPlan = translateIntent(providerResult.intent);
     await session.writeJson("normalized-edit-plan.json", normalizedPlan);
@@ -1030,6 +1072,7 @@ export async function runSinglePhoto(options: WorkflowOptions): Promise<Workflow
       backend: options.backend,
       sessionRoot: options.sessionRoot,
       apply: options.apply,
+      privacyPolicy,
       ...(options.evaluator ? { evaluator: options.evaluator } : {}),
       ...(options.maxIterations !== undefined ? { maxIterations: options.maxIterations } : {}),
       ...(options.budget ? { budget: options.budget } : {}),
@@ -1048,6 +1091,10 @@ export async function runSinglePhoto(options: WorkflowOptions): Promise<Workflow
       await session.transition("FAILED", { error: message });
     }
     return resultFor(session, normalizedPlan);
+  } finally {
+    if (privacyPolicy.preview_retention === "ephemeral") {
+      await removeEphemeralPreviews(session.dir);
+    }
   }
 }
 
@@ -1066,10 +1113,16 @@ export type ResumeCodexOptions = {
 };
 
 export async function resumeCodexSession(options: ResumeCodexOptions): Promise<WorkflowResult> {
-  if (options.evaluator?.requiresCloudPreview && !options.allowCloudPreview) {
-    throw new Error("This evaluator requires --allow-cloud-preview; no render was sent");
-  }
   const session = await SessionStore.open(options.sessionDir);
+  const privacyPolicy = applyLegacyCloudPreviewConsent(
+    sessionPrivacyPolicy(session.currentManifest.privacy),
+    options.allowCloudPreview,
+  );
+  assertPrivacyPolicyAllowsCloudPreview(
+    privacyPolicy,
+    options.evaluator?.requiresCloudPreview ?? false,
+    "evaluator",
+  );
   if (session.currentState !== "CODEX_INPUT_REQUIRED") {
     throw new Error(
       `Session is ${session.currentState}; only CODEX_INPUT_REQUIRED sessions can be resumed`,
@@ -1085,6 +1138,9 @@ export async function resumeCodexSession(options: ResumeCodexOptions): Promise<W
     const providerResult = await new CodexProvider(options.intentFile).analyze();
     throwIfCancellationRequested(options.signal, "read_only");
     await writeProviderArtifacts(session, providerResult);
+    await session.updateManifest({
+      privacy: recordPreviewCloudTransfer(session.currentManifest.privacy, false, privacyPolicy),
+    });
     normalizedPlan = translateIntent(providerResult.intent);
     await session.writeJson("normalized-edit-plan.json", normalizedPlan);
     await session.transition("PLAN_READY", { operation_count: normalizedPlan.operations.length });
@@ -1093,6 +1149,7 @@ export async function resumeCodexSession(options: ResumeCodexOptions): Promise<W
       backend: options.backend,
       sessionRoot,
       apply: options.apply,
+      privacyPolicy,
       ...(options.evaluator ? { evaluator: options.evaluator } : {}),
       ...(options.maxIterations !== undefined ? { maxIterations: options.maxIterations } : {}),
       ...(options.budget ? { budget: options.budget } : {}),
@@ -1111,6 +1168,10 @@ export async function resumeCodexSession(options: ResumeCodexOptions): Promise<W
       await session.transition("FAILED", { error: message });
     }
     return resultFor(session, normalizedPlan);
+  } finally {
+    if (privacyPolicy.preview_retention === "ephemeral") {
+      await removeEphemeralPreviews(session.dir);
+    }
   }
 }
 

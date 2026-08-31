@@ -252,6 +252,8 @@ export const PROVIDER_CAPABILITIES = [
 ] as const;
 export const LOCAL_PROVIDER_REGISTRY_VERSION = "0.1.0" as const;
 export const LOCAL_PROVIDER_ID = "local-experimental" as const;
+export const PRIVACY_POLICY_VERSION = "0.1.0" as const;
+export const PRIVACY_PREVIEW_RETENTION = ["session", "ephemeral"] as const;
 
 export const SemanticAdjustmentSchema = z.object({
   parameter: z.enum(SEMANTIC_PARAMETERS),
@@ -2581,6 +2583,90 @@ export const PreviewPolicySchema = z
   })
   .strict();
 
+export const PrivacyPolicySchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    policy_version: z.literal(PRIVACY_POLICY_VERSION),
+    local_only: z.boolean(),
+    allow_cloud_preview: z.boolean(),
+    allow_cloud_raw: z.boolean(),
+    allow_cloud_exif: z.boolean(),
+    allow_cloud_gps: z.boolean(),
+    preview_retention: z.enum(PRIVACY_PREVIEW_RETENTION),
+  })
+  .strict()
+  .superRefine((policy, context) => {
+    if (
+      policy.local_only &&
+      (policy.allow_cloud_preview ||
+        policy.allow_cloud_raw ||
+        policy.allow_cloud_exif ||
+        policy.allow_cloud_gps)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["local_only"],
+        message: "local_only policy cannot allow any cloud data boundary",
+      });
+    }
+  });
+
+const LegacySessionPrivacySchema = z
+  .object({
+    raw_uploaded: z.literal(false),
+    exif_sent: z.literal(false),
+    preview_sanitized: z.literal(true),
+  })
+  .strict();
+
+export const SessionPrivacyRecordSchema = z
+  .object({
+    policy: PrivacyPolicySchema,
+    raw_uploaded: z.boolean(),
+    exif_sent: z.boolean(),
+    gps_sent: z.boolean(),
+    preview_sanitized: z.literal(true),
+    preview_cloud_transfer: z.boolean(),
+  })
+  .strict()
+  .superRefine((record, context) => {
+    const checks = [
+      [record.raw_uploaded, record.policy.allow_cloud_raw, "raw_uploaded", "allow_cloud_raw"],
+      [record.exif_sent, record.policy.allow_cloud_exif, "exif_sent", "allow_cloud_exif"],
+      [record.gps_sent, record.policy.allow_cloud_gps, "gps_sent", "allow_cloud_gps"],
+      [
+        record.preview_cloud_transfer,
+        record.policy.allow_cloud_preview,
+        "preview_cloud_transfer",
+        "allow_cloud_preview",
+      ],
+    ] as const;
+    for (const [crossed, allowed, crossedField, policyField] of checks) {
+      if (crossed && !allowed) {
+        context.addIssue({
+          code: "custom",
+          path: [crossedField],
+          message: `${crossedField} requires ${policyField}`,
+        });
+      }
+    }
+    if (
+      record.policy.local_only &&
+      (record.raw_uploaded || record.exif_sent || record.gps_sent || record.preview_cloud_transfer)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["policy", "local_only"],
+        message: "local_only session privacy cannot record a cloud crossing",
+      });
+    }
+  });
+
+export const SessionPrivacySchema = z.union([
+  LegacySessionPrivacySchema,
+  SessionPrivacyRecordSchema,
+]);
+
 export const FinalExportSettingsSchema = z
   .object({
     format: z.enum(["jpeg", "png", "tiff"]),
@@ -3092,9 +3178,9 @@ export const ProviderCapabilityManifestSchema = z
     requires_cloud_preview: z.boolean(),
     data_boundary: z
       .object({
-        raw: z.literal("local_only"),
-        exif: z.literal("local_only"),
-        gps: z.literal("local_only"),
+        raw: z.enum(["local_only", "cloud"]),
+        exif: z.enum(["local_only", "cloud"]),
+        gps: z.enum(["local_only", "cloud"]),
         preview: z.enum(["local_only", "sanitized_preview_to_cloud"]),
       })
       .strict(),
@@ -3297,11 +3383,7 @@ export const SessionManifestSchema = z.object({
     version: z.string().min(1),
   }),
   config_hash: z.string().regex(/^[a-f0-9]{64}$/),
-  privacy: z.object({
-    raw_uploaded: z.literal(false),
-    exif_sent: z.literal(false),
-    preview_sanitized: z.literal(true),
-  }),
+  privacy: SessionPrivacySchema,
   cancellation: CancellationEvidenceSchema.optional(),
 });
 
@@ -3414,6 +3496,7 @@ export const ShootPlanSchema = z
     created_at: z.string().datetime(),
     mode: z.literal("dry_run"),
     assets: z.array(ShootAssetSchema),
+    privacy_policy: PrivacyPolicySchema.optional(),
   })
   .superRefine((plan, context) => {
     const ids = new Set<string>();
@@ -3465,6 +3548,7 @@ export const ShootManifestSchema = z.object({
   created_at: z.string().datetime(),
   mode: z.literal("dry_run"),
   assets: z.array(ShootAssetSchema),
+  privacy_policy: PrivacyPolicySchema.optional(),
   decisions: z.array(ShootDecisionSchema),
   status: z.enum(["RUNNING", "COMPLETED", "CANCELLED"]).default("COMPLETED"),
   status_reason: z.string().min(1).optional(),

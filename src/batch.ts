@@ -13,6 +13,13 @@ import {
 import { sha256File } from "./ingest.js";
 import { createSanitizedPreview } from "./preview.js";
 import { PARAMETER_REGISTRY_VERSION, selectPropagatableOperations } from "./parameter-registry.js";
+import {
+  applyLegacyCloudPreviewConsent,
+  assertPrivacyPolicyAllowsCloudPreview,
+  DEFAULT_PRIVACY_POLICY,
+  removeEphemeralPreviews,
+  resolvePrivacyPolicy,
+} from "./privacy-policy.js";
 import { readShootMetadata } from "./shoot-metadata.js";
 import { buildNearDuplicateGroups, rankAssetIds } from "./shoot-grouping.js";
 import { throwIfCancellationRequested, WorkflowCancellationError } from "./runtime.js";
@@ -20,6 +27,7 @@ import type {
   CullingDecision,
   LightingClassification,
   NormalizedEditPlan,
+  PrivacyPolicy,
   PropagationPlan,
   ShootAnalyzer,
   ShootAsset,
@@ -486,6 +494,7 @@ export async function createShootSession(options: {
   shootRoot: string;
   sessionRoot: string;
   highValueAssetIds?: string[];
+  privacyPolicy?: PrivacyPolicy;
 }): Promise<{ sessionDir: string; plan: ShootPlan }> {
   const assets = applyHighValueConfiguration(
     await indexShoot(options.shootRoot),
@@ -501,6 +510,7 @@ export async function createShootSession(options: {
     created_at: new Date().toISOString(),
     mode: "dry_run",
     assets,
+    privacy_policy: options.privacyPolicy ?? DEFAULT_PRIVACY_POLICY,
   });
   await writeJsonAtomic(join(sessionDir, "shoot-plan.json"), plan);
   return { sessionDir, plan };
@@ -510,6 +520,7 @@ export async function resumeShootDryRun(options: {
   sessionDir: string;
   analyzer: ShootAnalyzer;
   allowCloudPreview?: boolean;
+  privacyPolicy?: PrivacyPolicy;
   signal?: AbortSignal;
 }): Promise<{ sessionDir: string; manifest: ShootManifest }> {
   const started = Date.now();
@@ -517,6 +528,12 @@ export async function resumeShootDryRun(options: {
   const plan = ShootPlanSchema.parse(
     JSON.parse(await readFile(join(sessionDir, "shoot-plan.json"), "utf8")),
   );
+  const privacyPolicy = options.privacyPolicy
+    ? resolvePrivacyPolicy(options.privacyPolicy, options.allowCloudPreview)
+    : applyLegacyCloudPreviewConsent(
+        plan.privacy_policy ?? resolvePrivacyPolicy(undefined, options.allowCloudPreview),
+        options.allowCloudPreview,
+      );
   const decisions: ShootDecision[] = [];
   let resumedJobs = 0;
   let analyzedJobs = 0;
@@ -524,9 +541,11 @@ export async function resumeShootDryRun(options: {
   try {
     throwIfCancellationRequested(options.signal, "read_only");
     options.analyzer.validateAssets?.(plan.assets);
-    if (options.analyzer.requiresCloudPreview && !options.allowCloudPreview) {
-      throw new Error("This shoot analyzer requires --allow-cloud-preview; no image was sent");
-    }
+    assertPrivacyPolicyAllowsCloudPreview(
+      privacyPolicy,
+      options.analyzer.requiresCloudPreview ?? false,
+      "shoot analyzer",
+    );
     for (const asset of plan.assets) {
       throwIfCancellationRequested(options.signal, "read_only");
       const jobPath = join(sessionDir, "jobs", `${asset.id}.json`);
@@ -614,6 +633,10 @@ export async function resumeShootDryRun(options: {
       cancellation.message,
     );
     return { sessionDir, manifest };
+  } finally {
+    if (privacyPolicy.preview_retention === "ephemeral") {
+      await removeEphemeralPreviews(sessionDir);
+    }
   }
 }
 
@@ -622,23 +645,26 @@ export async function runShootDryRun(options: {
   sessionRoot: string;
   analyzer: ShootAnalyzer;
   allowCloudPreview?: boolean;
+  privacyPolicy?: PrivacyPolicy;
   highValueAssetIds?: string[];
   signal?: AbortSignal;
 }): Promise<{ sessionDir: string; manifest: ShootManifest }> {
-  if (options.analyzer.requiresCloudPreview && !options.allowCloudPreview) {
-    throw new Error("This shoot analyzer requires --allow-cloud-preview; no session was created");
-  }
+  const privacyPolicy = resolvePrivacyPolicy(options.privacyPolicy, options.allowCloudPreview);
+  assertPrivacyPolicyAllowsCloudPreview(
+    privacyPolicy,
+    options.analyzer.requiresCloudPreview ?? false,
+    "shoot analyzer",
+  );
   const created = await createShootSession({
     shootRoot: options.shootRoot,
     sessionRoot: options.sessionRoot,
+    privacyPolicy,
     ...(options.highValueAssetIds ? { highValueAssetIds: options.highValueAssetIds } : {}),
   });
   return resumeShootDryRun({
     sessionDir: created.sessionDir,
     analyzer: options.analyzer,
-    ...(options.allowCloudPreview !== undefined
-      ? { allowCloudPreview: options.allowCloudPreview }
-      : {}),
+    privacyPolicy,
     ...(options.signal ? { signal: options.signal } : {}),
   });
 }

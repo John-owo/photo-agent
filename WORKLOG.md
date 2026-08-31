@@ -2896,3 +2896,44 @@ Cloud-analyzer checkpoint:
   --oneline --summary HEAD`, and `git log --oneline -8` confirmed the expected
   nine-file commit on `codex/roadmap-t09` with a clean worktree. No remote
   operation was performed.
+
+## 2026-08-31 - T55 privacy policy runtime enforcement
+
+- Read-only `gh issue view 48 --repo John-owo/photo-agent --json
+  number,title,body,labels,state` confirmed T55 requires runtime enforcement
+  for local-only, cloud image, cloud RAW, EXIF, GPS, and preview-retention
+  choices. Read-only parent checks for #9 and #3 confirmed the v0.6 workflow
+  contract and stable-platform privacy gate. No remote state changed.
+- A first broad PowerShell `rg` inspection used the invalid `src/*.ts` glob and
+  failed before reading files; the follow-up targeted searches used explicit
+  source paths and completed without changing state.
+- Added a versioned `PrivacyPolicySchema` with independent
+  `allow_cloud_preview`, `allow_cloud_raw`, `allow_cloud_exif`, and
+  `allow_cloud_gps` permissions, a `local_only` conflict guard, and
+  `session`/`ephemeral` preview retention. Provider manifests now allow
+  explicit `cloud` declarations for RAW/EXIF/GPS, while existing providers
+  continue to declare local-only boundaries.
+- Added runtime enforcement before single-photo ingest/provider execution and
+  before shoot analyzer execution. The legacy `--allow-cloud-preview` flag is
+  mapped to preview-only consent; provider manifest crossings are checked
+  independently, unsupported/mismatched declarations fail closed, and no
+  credential or image payload is put in the audit.
+- Session manifests and shoot plans now persist the validated policy and
+  boolean crossing audit. Ephemeral retention removes generated images only
+  from session `inputs`, `renders`, and `evaluations`; it never traverses source
+  photo paths. A Codex handoff is refused under ephemeral retention because it
+  requires a durable preview for human review.
+- Added nine privacy-policy tests for local-only conflicts, four independent
+  boundary decisions, pre-ingest refusal, allowed crossing audit, ephemeral
+  cleanup, and evaluator refusal. The first targeted run found that the
+  preview case used the preserved legacy error text rather than the test's
+  `cloud preview` phrase; the assertion was corrected and the targeted suite
+  then passed (1 file / 9 tests).
+- The first T55 `npm.cmd run check` failed on an unused
+  `ProviderCapabilityManifest` type import in `src/privacy-policy.ts`; the
+  import was removed. Follow-up formatting, typecheck, targeted tests, and
+  lint passed. Full verification then passed `npm.cmd test` (19 files / 156
+  tests), `npm.cmd run build`, changed-source/test/docs/package
+  `npx.cmd prettier --check`, and `git diff --check`; only normal LF-to-CRLF
+  warnings were emitted. No Lightroom/MCP, photo, visual, human, provider
+  service, remote issue, push, merge, PR, or issue-closure state changed.

@@ -127,6 +127,8 @@ import type {
   ProviderMetadataSchema,
   ProviderResultSchema,
   LocalProviderExperimentReportSchema,
+  PrivacyPolicySchema,
+  SessionPrivacySchema,
 } from "./schemas.js";
 
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
@@ -229,6 +231,8 @@ export type ProviderCapabilityAssessment = z.infer<typeof ProviderCapabilityAsse
 export type ProviderMetadata = z.infer<typeof ProviderMetadataSchema>;
 export type ProviderResult = z.infer<typeof ProviderResultSchema>;
 export type LocalProviderExperimentReport = z.infer<typeof LocalProviderExperimentReportSchema>;
+export type PrivacyPolicy = z.infer<typeof PrivacyPolicySchema>;
+export type SessionPrivacy = z.infer<typeof SessionPrivacySchema>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;
@@ -358,7 +362,8 @@ export type WorkflowOptions = {
   backend: BackendAdapter;
   sessionRoot: string;
   apply: boolean;
-  allowCloudPreview: boolean;
+  allowCloudPreview?: boolean;
+  privacyPolicy?: PrivacyPolicy;
   evaluator?: EditEvaluator;
   maxIterations?: number;
   budget?: WorkflowBudgetOptions;

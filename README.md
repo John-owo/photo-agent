@@ -146,6 +146,12 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   capabilities, validates its structured intent, and records quality/latency/
   hardware limitations without inventing evidence. No local model runtime or
   quality result is claimed by this contract alone.
+- Privacy policy is now a versioned runtime contract: `local_only`, cloud preview,
+  RAW, EXIF, and GPS permissions are independent, provider boundary manifests are
+  checked before ingest/provider execution, session manifests record only boolean
+  crossings, and `ephemeral` retention removes generated preview images from the
+  session after the workflow. Legacy `--allow-cloud-preview` remains an explicit
+  preview-only compatibility path.
 - A single-photo apply reads and verifies the Master first, then lazily creates
   one session-marked Workflow Copy only when apply is approved and the plan has
   an executable adjustment. Checkpoints, Develop mutation, read-back, and render
