@@ -23,7 +23,12 @@ import {
   CodexProvider,
   writeCodexAnalysisRequest,
 } from "./providers.js";
-import { acquireMutationLock, SessionStore } from "./runtime.js";
+import {
+  acquireMutationLock,
+  SessionStore,
+  throwIfCancellationRequested,
+  WorkflowCancellationError,
+} from "./runtime.js";
 import {
   DevelopIterationIntentSchema,
   CheckpointEvidenceSchema,
@@ -33,6 +38,7 @@ import {
   IterationReportRecordSchema,
   IterationReportSchema,
   RecoveryEvidenceSchema,
+  CancellationEvidenceSchema,
   WorkflowBudgetSchema,
   WorkflowCopyIntentSchema,
   WorkflowCopyResultSchema,
@@ -59,6 +65,78 @@ import type {
   WorkflowBudgetOptions,
   WorkflowResult,
 } from "./types.js";
+
+function cancellationFrom(
+  error: unknown,
+  signal: AbortSignal | undefined,
+  phase: "read_only" | "mutation",
+  sideEffectStarted: boolean,
+): WorkflowCancellationError | undefined {
+  if (error instanceof WorkflowCancellationError) return error;
+  return signal?.aborted
+    ? new WorkflowCancellationError(phase, sideEffectStarted, signal.reason)
+    : undefined;
+}
+
+function isTerminalState(state: WorkflowResult["state"]): boolean {
+  return ["ACCEPTED", "REVIEW_REQUIRED", "FAILED", "CANCELLED"].includes(state);
+}
+
+async function finalizeCancellation(
+  session: SessionStore,
+  cancellation: WorkflowCancellationError,
+): Promise<void> {
+  const evidence = await session.recordCancellation({
+    phase: cancellation.phase,
+    reason: cancellation.message,
+    side_effect_started: cancellation.sideEffectStarted,
+  });
+  await session.writeJson("cancellation.json", CancellationEvidenceSchema.parse(evidence));
+  if (isTerminalState(session.currentState)) {
+    await session.appendEvent(session.currentState, {
+      event: "cancellation_requested_after_terminal_state",
+      reason: cancellation.message,
+    });
+    return;
+  }
+  if (cancellation.sideEffectStarted) {
+    await session.transition("REVIEW_REQUIRED", {
+      reason: "cancellation_during_mutation",
+      cancellation: cancellation.message,
+    });
+  } else {
+    await session.transition("CANCELLED", {
+      reason: "cancellation_during_read_only_work",
+      cancellation: cancellation.message,
+    });
+  }
+}
+
+async function releaseBackendLease(
+  session: SessionStore,
+  backend: BackendAdapter,
+  connected: boolean,
+): Promise<void> {
+  if (!connected) return;
+  let releaseError: string | undefined;
+  try {
+    await backend.close();
+  } catch (error) {
+    releaseError = error instanceof Error ? error.message : String(error);
+  }
+  await session.writeJson("backend-lease.json", {
+    backend: backend.name,
+    released: releaseError === undefined,
+    released_at: new Date().toISOString(),
+    ...(releaseError ? { error: releaseError } : {}),
+  });
+  if (releaseError) {
+    await session.appendEvent(session.currentState, {
+      event: "backend_lease_release_failed",
+      error: releaseError,
+    });
+  }
+}
 
 function samePath(left: string, right: string): boolean {
   return resolve(left).toLowerCase() === resolve(right).toLowerCase();
@@ -235,6 +313,7 @@ type PlanExecutionOptions = {
   evaluator?: EditEvaluator;
   maxIterations?: number;
   budget?: WorkflowBudgetOptions;
+  signal?: AbortSignal;
 };
 
 export const DEFAULT_WORKFLOW_BUDGETS = {
@@ -294,6 +373,7 @@ async function executePlan(
   normalizedPlan: NormalizedEditPlan,
   options: PlanExecutionOptions,
 ): Promise<WorkflowResult> {
+  throwIfCancellationRequested(options.signal, "read_only");
   if (!options.apply) {
     await session.transition("REVIEW_REQUIRED", { reason: "apply_not_requested" });
     return resultFor(session, normalizedPlan);
@@ -378,6 +458,7 @@ async function executePlan(
   };
 
   await session.writeJson("iteration-budget.json", budgetArtifact(budget));
+  throwIfCancellationRequested(options.signal, "read_only");
   const initialBudgetReason = budgetReasonBeforeWork();
   if (initialBudgetReason) {
     await session.transition("REVIEW_REQUIRED", { reason: initialBudgetReason });
@@ -398,6 +479,7 @@ async function executePlan(
   };
 
   try {
+    throwIfCancellationRequested(options.signal, "read_only");
     unlock = await acquireMutationLock(
       join(options.sessionRoot, `${options.backend.name}.mutation.lock`),
       {
@@ -408,10 +490,12 @@ async function executePlan(
     await options.backend.connect();
     connected = true;
     const backendManifest = await requireBackendHandshake(options.backend, SINGLE_PHOTO_OPERATIONS);
+    throwIfCancellationRequested(options.signal, "read_only");
     await session.updateManifest({
       backend: { name: backendManifest.backend, version: backendManifest.version },
     });
     const master = await options.backend.readCurrentEdit(photoId);
+    throwIfCancellationRequested(options.signal, "read_only");
     let current = master;
     if (!master.identity) {
       await session.transition("REVIEW_REQUIRED", { reason: "source_identity_uncertain" });
@@ -463,11 +547,13 @@ async function executePlan(
     });
     await session.writeJson("workflow-copy-intent.json", workflowCopyIntent);
     sideEffectStarted = true;
+    throwIfCancellationRequested(options.signal, "mutation", true);
     const workflowCopy = await options.backend.createWorkflowCopy(
       master.identity.catalog_id,
       master.identity.uuid,
       operationId,
     );
+    throwIfCancellationRequested(options.signal, "mutation", true);
     await session.writeJson("workflow-copy.json", workflowCopy);
     const envelopeVerified =
       workflowCopyResultMatchesIntent(workflowCopy, workflowCopyIntent) &&
@@ -487,6 +573,7 @@ async function executePlan(
       return resultFor(session, normalizedPlan);
     }
     const copyState = await options.backend.readCurrentEdit(workflowCopy.copy.catalog_id);
+    throwIfCancellationRequested(options.signal, "mutation", true);
     const copyIdentity = copyState.identity;
     const copyVerified =
       copyState.photo_id === workflowCopy.copy.catalog_id &&
@@ -519,6 +606,7 @@ async function executePlan(
     let previousPlanHash: string | undefined;
 
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
+      throwIfCancellationRequested(options.signal, "mutation", true);
       const nextIterationBudgetReason = budgetReasonBeforeWork();
       if (nextIterationBudgetReason) {
         await session.transition("REVIEW_REQUIRED", {
@@ -561,6 +649,7 @@ async function executePlan(
         checkpointName,
         LIGHTROOM_CHECKPOINT_KEYS,
       );
+      throwIfCancellationRequested(options.signal, "mutation", true);
       const checkpointEvidence = CheckpointEvidenceSchema.parse({
         iteration,
         operation_id: iterationOperationId,
@@ -581,7 +670,9 @@ async function executePlan(
       };
       sideEffectStarted = true;
       await options.backend.applyGlobalAdjustment(activePhotoId, settings);
+      throwIfCancellationRequested(options.signal, "mutation", true);
       const readBack = await options.backend.readCurrentEdit(activePhotoId);
+      throwIfCancellationRequested(options.signal, "mutation", true);
       const readbackEvidence = DevelopReadbackEvidenceSchema.parse({
         iteration,
         operation_id: iterationOperationId,
@@ -615,12 +706,15 @@ async function executePlan(
       }
       current = readBack;
       await session.transition("RENDERING", { iteration });
+      throwIfCancellationRequested(options.signal, "mutation", true);
       const render = await options.backend.renderPreview(
         activePhotoId,
         join(session.dir, "renders", `iteration-${iteration}`),
       );
+      throwIfCancellationRequested(options.signal, "mutation", true);
       renderCount += 1;
       const previewArtifact = await materializePreviewArtifact(session.dir, iteration, render.path);
+      throwIfCancellationRequested(options.signal, "mutation", true);
       const previewPath = resolve(session.dir, previewArtifact.path);
       const backendRenderLink = await evidenceLink(
         session.dir,
@@ -696,6 +790,7 @@ async function executePlan(
           readBack,
         }),
       );
+      throwIfCancellationRequested(options.signal, "mutation", true);
       evaluatorCalls += evaluation.usage?.evaluator_calls ?? 1;
       totalTokens += evaluation.usage?.total_tokens ?? 0;
       estimatedCostUsd += evaluation.usage?.estimated_cost_usd ?? 0;
@@ -800,6 +895,20 @@ async function executePlan(
       evaluatorCalls += 1;
       evaluatorAttempted = false;
     }
+    const cancellation = cancellationFrom(
+      error,
+      options.signal,
+      sideEffectStarted ? "mutation" : "read_only",
+      sideEffectStarted,
+    );
+    if (cancellation) {
+      await finalizeCancellation(session, cancellation);
+      completeIteration("REVIEW_REQUIRED", { error: cancellation.message });
+      if (activeIteration > 0) {
+        await finishReport(activeIteration, "cancellation_requested");
+      }
+      return resultFor(session, normalizedPlan);
+    }
     await session.writeJson("error.json", { message, side_effect_started: sideEffectStarted });
     if (sideEffectStarted && session.currentState !== "REVIEW_REQUIRED") {
       await session.transition("REVIEW_REQUIRED", {
@@ -815,7 +924,7 @@ async function executePlan(
     }
     return resultFor(session, normalizedPlan);
   } finally {
-    if (connected) await options.backend.close();
+    await releaseBackendLease(session, options.backend, connected);
     if (unlock) await unlock();
   }
 }
@@ -833,19 +942,26 @@ export async function runSinglePhoto(options: WorkflowOptions): Promise<Workflow
   let normalizedPlan = emptyPlan();
 
   try {
+    throwIfCancellationRequested(options.signal, "read_only");
     const sanitizedPath = join(session.dir, "inputs", "analysis.jpg");
     await createSanitizedPreview(source.preview_path, sanitizedPath);
+    throwIfCancellationRequested(options.signal, "read_only");
     await session.writeJson("inputs.json", {
       sanitized_preview: sanitizedPath,
       raw_uploaded: false,
       exif_sent: false,
     });
     await session.transition("ANALYZING");
+    throwIfCancellationRequested(options.signal, "read_only");
 
     let providerResult: ProviderResult;
     try {
       providerResult = await options.provider.analyze(sanitizedPath);
+      throwIfCancellationRequested(options.signal, "read_only");
     } catch (error) {
+      if (options.signal?.aborted) {
+        throw new WorkflowCancellationError("read_only", false, options.signal.reason);
+      }
       if (!(error instanceof CodexInputRequiredError)) throw error;
       const intentFilePath = join(session.dir, "codex-intent.json");
       const handoffPath = join(session.dir, "codex-analysis-request.md");
@@ -874,9 +990,11 @@ export async function runSinglePhoto(options: WorkflowOptions): Promise<Workflow
     }
 
     await writeProviderArtifacts(session, providerResult);
+    throwIfCancellationRequested(options.signal, "read_only");
     normalizedPlan = translateIntent(providerResult.intent);
     await session.writeJson("normalized-edit-plan.json", normalizedPlan);
     await session.transition("PLAN_READY", { operation_count: normalizedPlan.operations.length });
+    throwIfCancellationRequested(options.signal, "read_only");
     return await executePlan(session, source, photoId, normalizedPlan, {
       backend: options.backend,
       sessionRoot: options.sessionRoot,
@@ -884,9 +1002,15 @@ export async function runSinglePhoto(options: WorkflowOptions): Promise<Workflow
       ...(options.evaluator ? { evaluator: options.evaluator } : {}),
       ...(options.maxIterations !== undefined ? { maxIterations: options.maxIterations } : {}),
       ...(options.budget ? { budget: options.budget } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const cancellation = cancellationFrom(error, options.signal, "read_only", false);
+    if (cancellation) {
+      await finalizeCancellation(session, cancellation);
+      return resultFor(session, normalizedPlan);
+    }
     await session.writeJson("error.json", { message, side_effect_started: false });
     const stateAfterError: string = session.currentState;
     if (stateAfterError !== "FAILED" && stateAfterError !== "REVIEW_REQUIRED") {
@@ -907,6 +1031,7 @@ export type ResumeCodexOptions = {
   evaluator?: EditEvaluator;
   maxIterations?: number;
   budget?: WorkflowBudgetOptions;
+  signal?: AbortSignal;
 };
 
 export async function resumeCodexSession(options: ResumeCodexOptions): Promise<WorkflowResult> {
@@ -925,11 +1050,14 @@ export async function resumeCodexSession(options: ResumeCodexOptions): Promise<W
   let normalizedPlan = emptyPlan();
 
   try {
+    throwIfCancellationRequested(options.signal, "read_only");
     const providerResult = await new CodexProvider(options.intentFile).analyze();
+    throwIfCancellationRequested(options.signal, "read_only");
     await writeProviderArtifacts(session, providerResult);
     normalizedPlan = translateIntent(providerResult.intent);
     await session.writeJson("normalized-edit-plan.json", normalizedPlan);
     await session.transition("PLAN_READY", { operation_count: normalizedPlan.operations.length });
+    throwIfCancellationRequested(options.signal, "read_only");
     return await executePlan(session, source, photoId, normalizedPlan, {
       backend: options.backend,
       sessionRoot,
@@ -937,9 +1065,15 @@ export async function resumeCodexSession(options: ResumeCodexOptions): Promise<W
       ...(options.evaluator ? { evaluator: options.evaluator } : {}),
       ...(options.maxIterations !== undefined ? { maxIterations: options.maxIterations } : {}),
       ...(options.budget ? { budget: options.budget } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const cancellation = cancellationFrom(error, options.signal, "read_only", false);
+    if (cancellation) {
+      await finalizeCancellation(session, cancellation);
+      return resultFor(session, normalizedPlan);
+    }
     await session.writeJson("error.json", { message, side_effect_started: false });
     const stateAfterError: string = session.currentState;
     if (stateAfterError !== "FAILED" && stateAfterError !== "REVIEW_REQUIRED") {
@@ -1399,7 +1533,7 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
     });
     return resultFor(session, normalizedPlan);
   } finally {
-    if (connected) await options.backend.close();
+    await releaseBackendLease(session, options.backend, connected);
     if (unlock) await unlock();
   }
 }

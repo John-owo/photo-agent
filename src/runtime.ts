@@ -2,9 +2,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
-import { SessionManifestSchema } from "./schemas.js";
+import { CancellationEvidenceSchema, SessionManifestSchema } from "./schemas.js";
 import { PREVIEW_POLICY } from "./preview.js";
-import type { JobState, SessionManifest, SourceAssetPair } from "./types.js";
+import type { CancellationEvidence, JobState, SessionManifest, SourceAssetPair } from "./types.js";
 
 const TRANSITIONS: Record<JobState, readonly JobState[]> = {
   PENDING: ["ANALYZING", "CANCELLED", "FAILED"],
@@ -20,6 +20,32 @@ const TRANSITIONS: Record<JobState, readonly JobState[]> = {
   FAILED: [],
   CANCELLED: [],
 };
+
+export type CancellationPhase = "read_only" | "mutation";
+
+export class WorkflowCancellationError extends Error {
+  readonly code = "WORKFLOW_CANCELLED" as const;
+
+  constructor(
+    readonly phase: CancellationPhase,
+    readonly sideEffectStarted: boolean,
+    reason?: unknown,
+  ) {
+    const suffix = reason === undefined ? "" : `: ${String(reason)}`;
+    super(`Workflow cancelled during ${phase}${suffix}`);
+    this.name = "WorkflowCancellationError";
+  }
+}
+
+export function throwIfCancellationRequested(
+  signal: AbortSignal | undefined,
+  phase: CancellationPhase,
+  sideEffectStarted = false,
+): void {
+  if (signal?.aborted) {
+    throw new WorkflowCancellationError(phase, sideEffectStarted, signal.reason);
+  }
+}
 
 export const DEFAULT_MUTATION_LOCK_STALE_MS = 30 * 60 * 1000;
 
@@ -210,6 +236,20 @@ export class SessionStore {
   async updateManifest(patch: Partial<SessionManifest>): Promise<void> {
     this.manifest = SessionManifestSchema.parse({ ...this.manifest, ...patch });
     await atomicJsonWrite(join(this.dir, "manifest.json"), this.manifest);
+  }
+
+  async recordCancellation(details: {
+    phase: CancellationPhase;
+    reason: string;
+    side_effect_started: boolean;
+  }): Promise<CancellationEvidence> {
+    const evidence = CancellationEvidenceSchema.parse({
+      requested_at: new Date().toISOString(),
+      interrupted_state: this.state,
+      ...details,
+    });
+    await this.updateManifest({ cancellation: evidence });
+    return evidence;
   }
 
   async writeJson(relativePath: string, value: unknown): Promise<void> {

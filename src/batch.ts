@@ -4,6 +4,7 @@ import { dirname, extname, join, parse, relative, resolve, sep } from "node:path
 
 import {
   PropagationPlanSchema,
+  ShootCancellationEvidenceSchema,
   ShootDecisionSchema,
   ShootManifestSchema,
   ShootPlanSchema,
@@ -14,6 +15,7 @@ import { createSanitizedPreview } from "./preview.js";
 import { PARAMETER_REGISTRY_VERSION, selectPropagatableOperations } from "./parameter-registry.js";
 import { readShootMetadata } from "./shoot-metadata.js";
 import { buildNearDuplicateGroups, rankAssetIds } from "./shoot-grouping.js";
+import { throwIfCancellationRequested, WorkflowCancellationError } from "./runtime.js";
 import type {
   CullingDecision,
   LightingClassification,
@@ -413,13 +415,21 @@ async function writeShootReports(
   started: number,
   resumedJobs: number,
   analyzedJobs: number,
+  status: "RUNNING" | "COMPLETED" | "CANCELLED" = "COMPLETED",
+  statusReason?: string,
 ): Promise<ShootManifest> {
   const clustered = clustersFor(decisions, plan.assets);
   const clusters = clustered.clusters;
   const nearDuplicateGroups = await buildNearDuplicateGroups(plan.assets, decisions);
+  const decidedIds = new Set(decisions.map((decision) => decision.asset_id));
   const manifest = ShootManifestSchema.parse({
     ...plan,
     decisions,
+    status,
+    ...(statusReason ? { status_reason: statusReason } : {}),
+    pending_asset_ids: plan.assets
+      .filter((asset) => !decidedIds.has(asset.id))
+      .map((asset) => asset.id),
     duplicate_groups: duplicateGroups(plan.assets),
     burst_groups: burstGroups(plan.assets, decisions),
     near_duplicate_groups: nearDuplicateGroups,
@@ -500,74 +510,111 @@ export async function resumeShootDryRun(options: {
   sessionDir: string;
   analyzer: ShootAnalyzer;
   allowCloudPreview?: boolean;
+  signal?: AbortSignal;
 }): Promise<{ sessionDir: string; manifest: ShootManifest }> {
   const started = Date.now();
   const sessionDir = resolve(options.sessionDir);
   const plan = ShootPlanSchema.parse(
     JSON.parse(await readFile(join(sessionDir, "shoot-plan.json"), "utf8")),
   );
-  options.analyzer.validateAssets?.(plan.assets);
-  if (options.analyzer.requiresCloudPreview && !options.allowCloudPreview) {
-    throw new Error("This shoot analyzer requires --allow-cloud-preview; no image was sent");
-  }
   const decisions: ShootDecision[] = [];
   let resumedJobs = 0;
   let analyzedJobs = 0;
   const conservative = new ConservativeShootAnalyzer();
-  for (const asset of plan.assets) {
-    const jobPath = join(sessionDir, "jobs", `${asset.id}.json`);
-    const existing = await readDecision(jobPath);
-    if (existing) {
-      decisions.push(existing);
-      resumedJobs += 1;
-      continue;
+  try {
+    throwIfCancellationRequested(options.signal, "read_only");
+    options.analyzer.validateAssets?.(plan.assets);
+    if (options.analyzer.requiresCloudPreview && !options.allowCloudPreview) {
+      throw new Error("This shoot analyzer requires --allow-cloud-preview; no image was sent");
     }
-    let decision: ShootDecision;
-    try {
-      const previewHasErrors = asset.ingestion_errors.some((item) => item.source === "preview");
-      const analyzer = asset.preview_path && !previewHasErrors ? options.analyzer : conservative;
-      let analysisAsset = asset;
-      if (asset.preview_path && analyzer.requiresCloudPreview) {
-        const sanitizedPath = join(sessionDir, "inputs", `${asset.id}.jpg`);
-        await createSanitizedPreview(asset.preview_path, sanitizedPath);
-        analysisAsset = { ...asset, preview_path: sanitizedPath };
+    for (const asset of plan.assets) {
+      throwIfCancellationRequested(options.signal, "read_only");
+      const jobPath = join(sessionDir, "jobs", `${asset.id}.json`);
+      const existing = await readDecision(jobPath);
+      throwIfCancellationRequested(options.signal, "read_only");
+      if (existing) {
+        decisions.push(existing);
+        resumedJobs += 1;
+        continue;
       }
-      const [culling, lighting] = await Promise.all([
-        analyzer.cull(analysisAsset),
-        analyzer.classify(analysisAsset),
-      ]);
-      decision = ShootDecisionSchema.parse({
-        asset_id: asset.id,
-        culling: enforceCullingSafety(culling, asset),
-        lighting,
-        state: "completed",
-      });
-    } catch (error) {
-      decision = ShootDecisionSchema.parse({
-        asset_id: asset.id,
-        culling: {
-          selection_status: "review",
-          confidence: 0,
-          rationale: "Analyzer failed; isolated for manual review",
-        },
-        lighting: { lighting_type: "unknown", confidence: 0, rationale: "Analyzer failed" },
-        state: "failed",
-        error: error instanceof Error ? error.message : String(error),
-      });
+      let decision: ShootDecision;
+      try {
+        const previewHasErrors = asset.ingestion_errors.some((item) => item.source === "preview");
+        const analyzer = asset.preview_path && !previewHasErrors ? options.analyzer : conservative;
+        let analysisAsset = asset;
+        if (asset.preview_path && analyzer.requiresCloudPreview) {
+          const sanitizedPath = join(sessionDir, "inputs", `${asset.id}.jpg`);
+          await createSanitizedPreview(asset.preview_path, sanitizedPath);
+          throwIfCancellationRequested(options.signal, "read_only");
+          analysisAsset = { ...asset, preview_path: sanitizedPath };
+        }
+        const [culling, lighting] = await Promise.all([
+          analyzer.cull(analysisAsset),
+          analyzer.classify(analysisAsset),
+        ]);
+        throwIfCancellationRequested(options.signal, "read_only");
+        decision = ShootDecisionSchema.parse({
+          asset_id: asset.id,
+          culling: enforceCullingSafety(culling, asset),
+          lighting,
+          state: "completed",
+        });
+      } catch (error) {
+        if (error instanceof WorkflowCancellationError || options.signal?.aborted) throw error;
+        decision = ShootDecisionSchema.parse({
+          asset_id: asset.id,
+          culling: {
+            selection_status: "review",
+            confidence: 0,
+            rationale: "Analyzer failed; isolated for manual review",
+          },
+          lighting: { lighting_type: "unknown", confidence: 0, rationale: "Analyzer failed" },
+          state: "failed",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      decisions.push(decision);
+      analyzedJobs += 1;
+      await writeJsonAtomic(jobPath, decision);
+      throwIfCancellationRequested(options.signal, "read_only");
     }
-    decisions.push(decision);
-    analyzedJobs += 1;
-    await writeJsonAtomic(jobPath, decision);
+    const manifest = await writeShootReports(
+      sessionDir,
+      plan,
+      decisions,
+      started,
+      resumedJobs,
+      analyzedJobs,
+    );
+    return { sessionDir, manifest };
+  } catch (error) {
+    if (!(error instanceof WorkflowCancellationError) && !options.signal?.aborted) throw error;
+    const cancellation =
+      error instanceof WorkflowCancellationError
+        ? error
+        : new WorkflowCancellationError("read_only", false, options.signal?.reason);
+    const pendingAssetIds = plan.assets
+      .filter((asset) => !decisions.some((decision) => decision.asset_id === asset.id))
+      .map((asset) => asset.id);
+    const evidence = ShootCancellationEvidenceSchema.parse({
+      requested_at: new Date().toISOString(),
+      phase: "read_only",
+      reason: cancellation.message,
+      pending_asset_ids: pendingAssetIds,
+    });
+    await writeJsonAtomic(join(sessionDir, "cancellation.json"), evidence);
+    const manifest = await writeShootReports(
+      sessionDir,
+      plan,
+      decisions,
+      started,
+      resumedJobs,
+      analyzedJobs,
+      "CANCELLED",
+      cancellation.message,
+    );
+    return { sessionDir, manifest };
   }
-  const manifest = await writeShootReports(
-    sessionDir,
-    plan,
-    decisions,
-    started,
-    resumedJobs,
-    analyzedJobs,
-  );
-  return { sessionDir, manifest };
 }
 
 export async function runShootDryRun(options: {
@@ -576,6 +623,7 @@ export async function runShootDryRun(options: {
   analyzer: ShootAnalyzer;
   allowCloudPreview?: boolean;
   highValueAssetIds?: string[];
+  signal?: AbortSignal;
 }): Promise<{ sessionDir: string; manifest: ShootManifest }> {
   if (options.analyzer.requiresCloudPreview && !options.allowCloudPreview) {
     throw new Error("This shoot analyzer requires --allow-cloud-preview; no session was created");
@@ -591,6 +639,7 @@ export async function runShootDryRun(options: {
     ...(options.allowCloudPreview !== undefined
       ? { allowCloudPreview: options.allowCloudPreview }
       : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
   });
 }
 

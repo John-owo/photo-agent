@@ -62,6 +62,10 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   Workflow Copy catalog identity when one is known, writes a new immutable
   recovery report for each attempt, and retains operation and Checkpoint
   evidence for review.
+- Ctrl-C/SIGTERM cancellation is durable: cancellation during read-only work
+  ends in `CANCELLED`; cancellation after a backend side effect ends in
+  `REVIEW_REQUIRED` and never silently retries the mutation. Backend lease
+  release is recorded in the session.
 - A single-photo apply reads and verifies the Master first, then lazily creates
   one session-marked Workflow Copy only when apply is approved and the plan has
   an executable adjustment. Checkpoints, Develop mutation, read-back, and render

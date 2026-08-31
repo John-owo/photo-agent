@@ -445,6 +445,100 @@ describe("v0.1-alpha contracts", () => {
     await expect(store.transition("RENDERING")).rejects.toThrow("PENDING -> RENDERING");
   });
 
+  it("cancels read-only work with durable evidence and no backend mutation", async () => {
+    const { root, raw, preview } = await fixturePair();
+    const controller = new AbortController();
+    const backend = new MockBackend(raw);
+    const readCurrentEdit = backend.readCurrentEdit.bind(backend);
+    backend.readCurrentEdit = async (photoId) => {
+      const result = await readCurrentEdit(photoId);
+      controller.abort("fixture read-only cancellation");
+      return result;
+    };
+    const result = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: new MockProvider(),
+      backend,
+      sessionRoot: join(root, "sessions"),
+      apply: true,
+      allowCloudPreview: false,
+      signal: controller.signal,
+    });
+    expect(result.state).toBe("CANCELLED");
+    expect(result.manifest.cancellation).toMatchObject({
+      phase: "read_only",
+      side_effect_started: false,
+      interrupted_state: "PLAN_READY",
+    });
+    expect(backend.calls).toEqual(["connect", "handshake", "read_current_edit", "close"]);
+    expect(
+      JSON.parse(await readFile(join(result.sessionDir, "cancellation.json"), "utf8")),
+    ).toMatchObject({
+      phase: "read_only",
+      side_effect_started: false,
+    });
+    expect(
+      JSON.parse(await readFile(join(result.sessionDir, "backend-lease.json"), "utf8")),
+    ).toMatchObject({
+      backend: "mock",
+      released: true,
+    });
+    const reopened = await SessionStore.open(result.sessionDir);
+    await expect(reopened.transition("FAILED")).rejects.toThrow("CANCELLED -> FAILED");
+  });
+
+  it("cancels mutation work as review-required without retrying the edit", async () => {
+    const { root, raw, preview } = await fixturePair();
+    const controller = new AbortController();
+    const backend = new MockBackend(raw);
+    const applyGlobalAdjustment = backend.applyGlobalAdjustment.bind(backend);
+    backend.applyGlobalAdjustment = async (photoId, settings) => {
+      const result = await applyGlobalAdjustment(photoId, settings);
+      controller.abort("fixture mutation cancellation");
+      return result;
+    };
+    const result = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: new MockProvider(),
+      backend,
+      sessionRoot: join(root, "sessions"),
+      apply: true,
+      allowCloudPreview: false,
+      signal: controller.signal,
+    });
+    expect(result.state).toBe("REVIEW_REQUIRED");
+    expect(result.manifest.cancellation).toMatchObject({
+      phase: "mutation",
+      side_effect_started: true,
+      interrupted_state: "APPLYING",
+    });
+    expect(backend.calls).toEqual([
+      "connect",
+      "handshake",
+      "read_current_edit",
+      "create_workflow_copy",
+      "read_current_edit",
+      "create_checkpoint",
+      "apply_global_adjustment",
+      "close",
+    ]);
+    expect(backend.calls).not.toContain("render_preview");
+    expect(
+      JSON.parse(await readFile(join(result.sessionDir, "iteration-report.json"), "utf8")),
+    ).toMatchObject({
+      terminal_state: "REVIEW_REQUIRED",
+      reason: "cancellation_requested",
+    });
+    expect(
+      JSON.parse(await readFile(join(result.sessionDir, "backend-lease.json"), "utf8")),
+    ).toMatchObject({
+      backend: "mock",
+      released: true,
+    });
+  });
+
   it("reclaims a lock only when the recorded owner is dead and stale", async () => {
     const { root } = await fixturePair();
     const lockPath = join(root, "mutation.lock");
@@ -788,16 +882,8 @@ describe("v0.1-alpha contracts", () => {
 
     const copyPath = join(initial.sessionDir, "workflow-copy.json");
     const copyIntentPath = join(initial.sessionDir, "workflow-copy-intent.json");
-    const operationIntentPath = join(
-      initial.sessionDir,
-      "operations",
-      "iteration-1-intent.json",
-    );
-    const checkpointPath = join(
-      initial.sessionDir,
-      "checkpoints",
-      "iteration-1-before.json",
-    );
+    const operationIntentPath = join(initial.sessionDir, "operations", "iteration-1-intent.json");
+    const checkpointPath = join(initial.sessionDir, "checkpoints", "iteration-1-before.json");
     const readbackPath = join(initial.sessionDir, "backend-readback-iteration-1.json");
     const workflowCopyBytes = await readFile(copyPath);
     const checkpointBytes = await readFile(checkpointPath);
@@ -890,11 +976,7 @@ describe("v0.1-alpha contracts", () => {
     });
     expect(initial.state).toBe("REVIEW_REQUIRED");
     const copyPath = join(initial.sessionDir, "workflow-copy.json");
-    const checkpointPath = join(
-      initial.sessionDir,
-      "checkpoints",
-      "iteration-1-before.json",
-    );
+    const checkpointPath = join(initial.sessionDir, "checkpoints", "iteration-1-before.json");
     const copyBytes = await readFile(copyPath);
     const checkpointBytes = await readFile(checkpointPath);
     const workflowCopy = JSON.parse(copyBytes.toString("utf8")) as {

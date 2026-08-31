@@ -86,7 +86,7 @@ function readWorkflowBudget(values: {
   return Object.keys(budget).length > 0 ? budget : undefined;
 }
 
-async function editOne(argv: string[]): Promise<number> {
+async function editOne(argv: string[], signal?: AbortSignal): Promise<number> {
   const parsed = parseArgs({
     args: argv,
     options: {
@@ -149,12 +149,13 @@ async function editOne(argv: string[]): Promise<number> {
     ...(evaluator ? { evaluator } : {}),
     maxIterations: Number(parsed.values["max-iterations"]),
     ...(budget ? { budget } : {}),
+    ...(signal ? { signal } : {}),
   });
   console.log(JSON.stringify(result, null, 2));
-  return result.state === "FAILED" ? 1 : 0;
+  return result.state === "FAILED" ? 1 : result.state === "CANCELLED" ? 130 : 0;
 }
 
-async function resume(argv: string[]): Promise<number> {
+async function resume(argv: string[], signal?: AbortSignal): Promise<number> {
   const parsed = parseArgs({
     args: argv,
     options: {
@@ -207,9 +208,10 @@ async function resume(argv: string[]): Promise<number> {
     ...(evaluator ? { evaluator } : {}),
     maxIterations: Number(parsed.values["max-iterations"]),
     ...(budget ? { budget } : {}),
+    ...(signal ? { signal } : {}),
   });
   console.log(JSON.stringify(result, null, 2));
-  return result.state === "FAILED" ? 1 : 0;
+  return result.state === "FAILED" ? 1 : result.state === "CANCELLED" ? 130 : 0;
 }
 
 async function recover(argv: string[]): Promise<number> {
@@ -290,7 +292,7 @@ async function exportXmp(argv: string[]): Promise<number> {
   return 0;
 }
 
-async function shoot(argv: string[]): Promise<number> {
+async function shoot(argv: string[], signal?: AbortSignal): Promise<number> {
   const parsed = parseArgs({
     args: argv,
     options: {
@@ -332,6 +334,7 @@ async function shoot(argv: string[]): Promise<number> {
         sessionDir: parsed.values.resume,
         analyzer,
         allowCloudPreview: parsed.values["allow-cloud-preview"],
+        ...(signal ? { signal } : {}),
       })
     : await runShootDryRun({
         shootRoot: parsed.values.root!,
@@ -341,11 +344,14 @@ async function shoot(argv: string[]): Promise<number> {
         ...(parsed.values["high-value-asset-id"]
           ? { highValueAssetIds: parsed.values["high-value-asset-id"] }
           : {}),
+        ...(signal ? { signal } : {}),
       });
   console.log(
     JSON.stringify(
       {
         sessionDir: result.sessionDir,
+        status: result.manifest.status,
+        pending_assets: result.manifest.pending_asset_ids.length,
         summary: result.manifest.summary,
         clusters: result.manifest.clusters.length,
         duplicate_groups: result.manifest.duplicate_groups.length,
@@ -357,17 +363,26 @@ async function shoot(argv: string[]): Promise<number> {
       2,
     ),
   );
-  return result.manifest.summary.failed > 0 ? 1 : 0;
+  return result.manifest.status === "CANCELLED" ? 130 : result.manifest.summary.failed > 0 ? 1 : 0;
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
-  if (argv[0] === "edit-one") return editOne(argv.slice(1));
-  if (argv[0] === "resume") return resume(argv.slice(1));
-  if (argv[0] === "recover") return recover(argv.slice(1));
-  if (argv[0] === "export-xmp") return exportXmp(argv.slice(1));
-  if (argv[0] === "shoot") return shoot(argv.slice(1));
-  console.error(usage());
-  return 2;
+  const controller = new AbortController();
+  const cancel = () => controller.abort("process signal");
+  process.once("SIGINT", cancel);
+  process.once("SIGTERM", cancel);
+  try {
+    if (argv[0] === "edit-one") return await editOne(argv.slice(1), controller.signal);
+    if (argv[0] === "resume") return await resume(argv.slice(1), controller.signal);
+    if (argv[0] === "recover") return await recover(argv.slice(1));
+    if (argv[0] === "export-xmp") return await exportXmp(argv.slice(1));
+    if (argv[0] === "shoot") return await shoot(argv.slice(1), controller.signal);
+    console.error(usage());
+    return 2;
+  } finally {
+    process.off("SIGINT", cancel);
+    process.off("SIGTERM", cancel);
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

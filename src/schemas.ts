@@ -234,7 +234,7 @@ export const IterationReportSchema = z
     estimated_cost_usd: z.number().nonnegative(),
     elapsed_ms: z.number().int().nonnegative(),
     budget: WorkflowBudgetSchema,
-    terminal_state: z.enum(["REFINING", "ACCEPTED", "REVIEW_REQUIRED", "FAILED"]),
+    terminal_state: z.enum(["REFINING", "ACCEPTED", "REVIEW_REQUIRED", "FAILED", "CANCELLED"]),
     reason: z.string().min(1),
     iteration_records: z.array(IterationReportRecordSchema),
   })
@@ -443,6 +443,29 @@ export const BackendCapabilityManifestSchema = z
     }
   });
 
+export const CancellationEvidenceSchema = z
+  .object({
+    requested_at: z.string().datetime(),
+    phase: z.enum(["read_only", "mutation"]),
+    reason: z.string().min(1),
+    side_effect_started: z.boolean(),
+    interrupted_state: z.enum([
+      "PENDING",
+      "ANALYZING",
+      "CODEX_INPUT_REQUIRED",
+      "PLAN_READY",
+      "APPLYING",
+      "RENDERING",
+      "EVALUATING",
+      "REFINING",
+      "ACCEPTED",
+      "REVIEW_REQUIRED",
+      "FAILED",
+      "CANCELLED",
+    ]),
+  })
+  .strict();
+
 export const SessionManifestSchema = z.object({
   schema_version: z.literal(SCHEMA_VERSION),
   session_id: z.string().min(1),
@@ -473,6 +496,7 @@ export const SessionManifestSchema = z.object({
     exif_sent: z.literal(false),
     preview_sanitized: z.literal(true),
   }),
+  cancellation: CancellationEvidenceSchema.optional(),
 });
 
 export const WorkflowResultSchema = z
@@ -636,6 +660,9 @@ export const ShootManifestSchema = z.object({
   mode: z.literal("dry_run"),
   assets: z.array(ShootAssetSchema),
   decisions: z.array(ShootDecisionSchema),
+  status: z.enum(["RUNNING", "COMPLETED", "CANCELLED"]).default("COMPLETED"),
+  status_reason: z.string().min(1).optional(),
+  pending_asset_ids: z.array(z.string()).default([]),
   duplicate_groups: z.array(
     z.object({ sha256: z.string().regex(/^[a-f0-9]{64}$/), asset_ids: z.array(z.string()) }),
   ),
@@ -683,6 +710,15 @@ export const ShootManifestSchema = z.object({
     elapsed_ms: z.number().int().nonnegative(),
   }),
 });
+
+export const ShootCancellationEvidenceSchema = z
+  .object({
+    requested_at: z.string().datetime(),
+    phase: z.literal("read_only"),
+    reason: z.string().min(1),
+    pending_asset_ids: z.array(z.string().min(1)),
+  })
+  .strict();
 
 export const PropagationPlanSchema = z.object({
   schema_version: z.literal("0.3.0"),

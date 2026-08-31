@@ -2223,3 +2223,71 @@ Cloud-analyzer checkpoint:
   T24 authority boundaries; the terminal output was truncated by the display
   limit, with no file or external state changed. A narrower read is required
   before making any registry-enforcement edit.
+
+## 2026-08-31 - T26 continuation
+
+- Re-read the active worktree `AGENTS.md` and the latest `WORKLOG.md` tail
+  before continuing; branch `codex/roadmap-t09` was clean at `383fa8b`.
+- Initial read-only `gh issue list` from the worktree was blocked by the
+  sandbox network. The approved read-only retry from the worktree then hit
+  Git's dubious-ownership guard; no Git config or remote state was changed.
+- Read-only `git remote get-url origin` with an explicit safe-directory
+  override identified `https://github.com/John-owo/photo-agent.git`; the
+  override was command-local and did not change global configuration.
+- A read-only `gh issue list --repo John-owo/photo-agent` succeeded from
+  `D:\photo`; it showed #21-#28 still open and #29/T26 as the next open ticket.
+- The first equivalent list call's jq quoting failed before the remote query
+  ran; no remote state changed. The subsequent JSON-only list succeeded.
+- Read-only `gh issue view` calls for #29/T26, #30/T27, and #31/T28 succeeded.
+  T26 requires cancellation-safe resumable evidence, lease release,
+  invalid-transition rejection, terminal overwrite rejection, and separate
+  read-only/mutation cancellation tests. T27 needs a real hundreds-photo
+  shoot; T28 is the later registry migration ticket.
+- T26 implementation started locally: added `AbortSignal` cancellation
+  checkpoints, durable session cancellation evidence, read-only cancellation
+  to `CANCELLED`, mutation cancellation to `REVIEW_REQUIRED`, backend lease
+  release evidence, and CLI SIGINT/SIGTERM forwarding. Terminal transitions
+  remain fail-closed.
+- Shoot resume now persists `status: "CANCELLED"`, `pending_asset_ids`, and a
+  schema-validated `cancellation.json`; completed per-asset jobs remain
+  resumable without re-analysis.
+- Added separate read-only and mutation cancellation tests, terminal overwrite
+  coverage, and partial-shoot cancel/resume coverage.
+- `npx.cmd prettier --write src\\schemas.ts src\\runtime.ts src\\types.ts
+  src\\workflow.ts src\\batch.ts src\\cli.ts tests\\workflow.test.ts
+  tests\\milestones.test.ts` passed; only the two modified test files and
+  `src\\runtime.ts` required formatting changes.
+- `npm.cmd run check` passed with exit code 0 after the T26 implementation.
+- `npm.cmd test -- tests\\workflow.test.ts tests\\milestones.test.ts`
+  passed: 2 files / 48 tests.
+- Reviewed the existing runtime state machine, workflow recovery path, shoot
+  resume loop, CLI dispatch, and T26 acceptance boundaries with targeted reads;
+  no Lightroom or photo-library state was accessed or changed.
+- Added the named `CancellationEvidenceSchema` and shoot cancellation schema;
+  session manifests now persist cancellation phase, interrupted state, and
+  mutation uncertainty, while shoot manifests persist status and pending IDs.
+- Added `AbortSignal` checkpoints to single-photo and shoot workflows. CLI
+  SIGINT/SIGTERM now forwards cancellation; read-only cancellation is
+  `CANCELLED`, post-side-effect cancellation is `REVIEW_REQUIRED`, and
+  completed shoot jobs remain resumable.
+- Added durable `backend-lease.json` evidence and safe close handling to the
+  single-photo and recovery paths; terminal states are never overwritten.
+- Added T26 documentation to both implementation records and both READMEs,
+  including the cancellation semantics and CLI status output.
+- `npx.cmd prettier --write` over the T26 source, tests, docs, and READMEs
+  completed successfully; only the intended README files, `src/runtime.ts`,
+  and `tests/workflow.test.ts` required formatting changes.
+- `npm.cmd run check` passed with exit code 0 after the T26 cancellation work.
+- `npm.cmd test -- tests\\workflow.test.ts tests\\milestones.test.ts`
+  passed: 2 files / 48 tests, including separate read-only, mutation, and
+  partial-shoot cancellation coverage.
+- Full T26 verification passed: `npm.cmd test` passed 4 files / 76 tests;
+  `npm.cmd run lint` passed; `npm.cmd run build` passed; and changed-file
+  `npx.cmd prettier --check` passed for both READMEs, v0.2/v0.3 docs, T26
+  source, and tests.
+- Pre-commit `git diff --check` passed with no whitespace errors; Git emitted
+  only its normal LF-to-CRLF working-copy warnings. The diff stat contains the
+  intended T26 source, test, docs, README, and worklog paths only.
+- Explicitly staged the 13 intended T26 files; `git diff --cached --check`
+  passed with no whitespace errors and the cached stat contains only the T26
+  implementation, tests, documentation, README, and worklog changes.

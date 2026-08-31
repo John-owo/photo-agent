@@ -214,6 +214,62 @@ describe("v0.3 shoot workflow", () => {
     expect((await readFile(receivedPath)).length).toBeGreaterThan(0);
   });
 
+  it("writes a resumable cancelled manifest for a partial shoot", async () => {
+    const root = await mkdtemp(join(tmpdir(), "photo-agent-v03-cancelled-shoot-"));
+    await pair(root, "cancel_1");
+    await pair(root, "cancel_2");
+    await pair(root, "cancel_3");
+    const controller = new AbortController();
+    let calls = 0;
+    const analyzer: ShootAnalyzer = {
+      cull: async () => {
+        calls += 1;
+        if (calls === 2) controller.abort("fixture shoot cancellation");
+        return { selection_status: "keep", confidence: 0.9, rationale: "cancellation fixture" };
+      },
+      classify: async () => ({
+        lighting_type: "daylight",
+        confidence: 0.9,
+        rationale: "cancellation fixture",
+      }),
+    };
+    const cancelled = await runShootDryRun({
+      shootRoot: root,
+      sessionRoot: join(root, "sessions"),
+      analyzer,
+      signal: controller.signal,
+    });
+    expect(cancelled.manifest.status).toBe("CANCELLED");
+    expect(cancelled.manifest.decisions).toHaveLength(1);
+    expect(cancelled.manifest.pending_asset_ids).toHaveLength(2);
+    expect(cancelled.manifest.status_reason).toContain("Workflow cancelled during read_only");
+    expect(
+      JSON.parse(await readFile(join(cancelled.sessionDir, "cancellation.json"), "utf8")),
+    ).toMatchObject({
+      phase: "read_only",
+      pending_asset_ids: cancelled.manifest.pending_asset_ids,
+    });
+    const resumed = await resumeShootDryRun({
+      sessionDir: cancelled.sessionDir,
+      analyzer: {
+        cull: async () => ({
+          selection_status: "keep",
+          confidence: 0.9,
+          rationale: "resume fixture",
+        }),
+        classify: async () => ({
+          lighting_type: "daylight",
+          confidence: 0.9,
+          rationale: "resume fixture",
+        }),
+      },
+    });
+    expect(resumed.manifest.status).toBe("COMPLETED");
+    expect(resumed.manifest.pending_asset_ids).toEqual([]);
+    expect(resumed.manifest.summary.resumed_jobs).toBe(1);
+    expect(resumed.manifest.summary.analyzed_jobs).toBe(2);
+  });
+
   it("refuses ambiguous or missing RAW/preview mappings", async () => {
     const root = await mkdtemp(join(tmpdir(), "photo-agent-v03-"));
     await pair(root, "paired");

@@ -6,6 +6,7 @@ import type {
   BackendPhotoIdentitySchema,
   BackendPhotoStateSchema,
   CheckpointEvidenceSchema,
+  CancellationEvidenceSchema,
   CullingDecisionSchema,
   EvaluationArtifactSchema,
   EvaluationResultSchema,
@@ -22,6 +23,7 @@ import type {
   SessionManifestSchema,
   ShootIngestionErrorSchema,
   ShootAssetSchema,
+  ShootCancellationEvidenceSchema,
   ShootDecisionSchema,
   ShootManifestSchema,
   ShootPlanSchema,
@@ -49,6 +51,7 @@ export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifest
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;
 export type BackendPhotoIdentity = z.infer<typeof BackendPhotoIdentitySchema>;
 export type CheckpointEvidence = z.infer<typeof CheckpointEvidenceSchema>;
+export type CancellationEvidence = z.infer<typeof CancellationEvidenceSchema>;
 export type DevelopIterationIntent = z.infer<typeof DevelopIterationIntentSchema>;
 export type DevelopReadbackEvidence = z.infer<typeof DevelopReadbackEvidenceSchema>;
 export type RecoveryEvidence = z.infer<typeof RecoveryEvidenceSchema>;
@@ -67,6 +70,7 @@ export type WorkflowBudget = z.infer<typeof WorkflowBudgetSchema>;
 export type CullingDecision = z.infer<typeof CullingDecisionSchema>;
 export type LightingClassification = z.infer<typeof LightingClassificationSchema>;
 export type ShootAsset = z.infer<typeof ShootAssetSchema>;
+export type ShootCancellationEvidence = z.infer<typeof ShootCancellationEvidenceSchema>;
 export type ShootIngestionError = z.infer<typeof ShootIngestionErrorSchema>;
 export type ShootDecision = z.infer<typeof ShootDecisionSchema>;
 export type ShootManifest = z.infer<typeof ShootManifestSchema>;
@@ -193,6 +197,7 @@ export type WorkflowOptions = {
   evaluator?: EditEvaluator;
   maxIterations?: number;
   budget?: WorkflowBudgetOptions;
+  signal?: AbortSignal;
 };
 
 export type WorkflowResult = z.infer<typeof WorkflowResultSchema>;
