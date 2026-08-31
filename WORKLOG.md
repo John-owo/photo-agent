@@ -2594,3 +2594,7 @@ Cloud-analyzer checkpoint:
   docs `npx.cmd prettier --check`, and `git diff --check`; diff output
   contained only normal LF-to-CRLF warnings. No remote issue, push, merge, PR,
   or issue closure was performed.
+- T42 was committed locally as `2dee101 feat: add existing mask planning
+  boundary`; post-commit status was clean on `codex/roadmap-t09`. The
+  following WORKLOG-only commit records this post-commit evidence; no remote
+  operation was performed.
