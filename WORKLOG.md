@@ -3035,3 +3035,8 @@ Cloud-analyzer checkpoint:
   check emitted only normal LF-to-CRLF warnings. No real OpenAI, Anthropic, or
   local-model benchmark was executed, so provider quality/latency/cost evidence
   remains unknown until an authorized run supplies it.
+- T56 was committed locally as `b5acfa8 feat: add provider benchmark contract`.
+  Post-commit `git status --short --branch`, `git show --stat --oneline
+  --summary HEAD`, and `git log --oneline -12` confirmed the expected nine-file
+  commit on `codex/roadmap-t09` with a clean worktree. No remote operation was
+  performed.
