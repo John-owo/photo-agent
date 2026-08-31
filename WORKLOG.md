@@ -2777,3 +2777,7 @@ Cloud-analyzer checkpoint:
   test/docs/package `npx.cmd prettier --check`, and `git diff --check`; diff
   output contained only normal LF-to-CRLF warnings. No remote issue, push,
   merge, PR, or issue closure was performed.
+- T49 was committed locally as `148aff1 feat: add common regression gate`;
+  `git status --short --branch` and `git show --stat --oneline --summary HEAD`
+  confirmed a clean `codex/roadmap-t09` worktree with the expected ten-file
+  commit. No remote operation was performed.
