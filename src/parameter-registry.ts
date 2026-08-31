@@ -1,7 +1,23 @@
-import { NORMALIZED_PARAMETERS, NormalizedEditPlanSchema } from "./schemas.js";
-import type { NormalizedOperation, NormalizedParameter } from "./types.js";
+import {
+  NORMALIZED_PARAMETERS,
+  NormalizedEditPlanSchema,
+  ParameterRegistrySnapshotSchema,
+  StoredNormalizedEditPlanSchema,
+} from "./schemas.js";
+import type {
+  NormalizedOperation,
+  NormalizedParameter,
+  ParameterRegistrySnapshot,
+  StoredNormalizedEditPlan,
+} from "./types.js";
 
-export const PARAMETER_REGISTRY_VERSION = "0.1.0" as const;
+export const LEGACY_PARAMETER_REGISTRY_VERSION = "0.1.0" as const;
+export const PARAMETER_REGISTRY_VERSION = "0.2.0" as const;
+export const SUPPORTED_PARAMETER_REGISTRY_VERSIONS = [
+  LEGACY_PARAMETER_REGISTRY_VERSION,
+  PARAMETER_REGISTRY_VERSION,
+] as const;
+export const PARAMETER_REGISTRY_MIGRATION_STRATEGY = "baseline-0.1.0-to-0.2.0" as const;
 
 export type ParameterUnit = "ev" | "kelvin" | "points";
 export type ParameterMode = "delta" | "absolute";
@@ -138,6 +154,126 @@ const definitions: Record<NormalizedParameter, ParameterDefinition> = {
 export const PARAMETER_REGISTRY: Readonly<Record<NormalizedParameter, ParameterDefinition>> =
   Object.freeze(definitions);
 
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, canonicalize(nested)]),
+    );
+  }
+  return value;
+}
+
+function sameValue(left: unknown, right: unknown): boolean {
+  return JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right));
+}
+
+function currentRegistrySnapshot(): ParameterRegistrySnapshot {
+  return ParameterRegistrySnapshotSchema.parse({
+    version: PARAMETER_REGISTRY_VERSION,
+    definitions: PARAMETER_REGISTRY,
+  });
+}
+
+export function getParameterRegistrySnapshot(): ParameterRegistrySnapshot {
+  return currentRegistrySnapshot();
+}
+
+export function serializeParameterRegistry(): ParameterRegistrySnapshot {
+  return currentRegistrySnapshot();
+}
+
+function isSupportedRegistryVersion(version: string): boolean {
+  return (SUPPORTED_PARAMETER_REGISTRY_VERSIONS as readonly string[]).includes(version);
+}
+
+export function validateParameterRegistrySnapshot(snapshot: unknown): ParameterRegistrySnapshot {
+  const parsed = ParameterRegistrySnapshotSchema.parse(snapshot);
+  if (!isSupportedRegistryVersion(parsed.version)) {
+    throw new Error(`Unsupported parameter registry version: ${parsed.version}`);
+  }
+  for (const [key, definition] of Object.entries(parsed.definitions)) {
+    if (key !== definition.parameter) {
+      throw new Error(
+        `Parameter registry definition key does not match parameter: ${key} <> ${definition.parameter}`,
+      );
+    }
+    for (const reference of [...definition.conflicts_with, ...definition.depends_on]) {
+      if (!Object.prototype.hasOwnProperty.call(parsed.definitions, reference)) {
+        throw new Error(`Parameter registry references unknown parameter: ${reference}`);
+      }
+    }
+  }
+  return parsed;
+}
+
+function migrationFor(
+  sourceVersion: string,
+): StoredNormalizedEditPlan["parameter_registry_migration"] {
+  if (sourceVersion === PARAMETER_REGISTRY_VERSION) return undefined;
+  if (sourceVersion !== LEGACY_PARAMETER_REGISTRY_VERSION) {
+    throw new Error(`Unsupported parameter registry version: ${sourceVersion}`);
+  }
+  return {
+    from_version: LEGACY_PARAMETER_REGISTRY_VERSION,
+    to_version: PARAMETER_REGISTRY_VERSION,
+    strategy: PARAMETER_REGISTRY_MIGRATION_STRATEGY,
+  };
+}
+
+export function migrateNormalizedPlan(plan: unknown): StoredNormalizedEditPlan {
+  const parsed = NormalizedEditPlanSchema.parse(plan);
+  const declaredVersion = parsed.parameter_registry_version;
+  const declaredMigration = parsed.parameter_registry_migration;
+  const sourceVersion = declaredVersion ?? LEGACY_PARAMETER_REGISTRY_VERSION;
+
+  if (!isSupportedRegistryVersion(sourceVersion)) {
+    throw new Error(`Unsupported parameter registry version: ${sourceVersion}`);
+  }
+  if (declaredMigration) {
+    if (
+      declaredMigration.to_version !== PARAMETER_REGISTRY_VERSION ||
+      declaredMigration.from_version === declaredMigration.to_version ||
+      !isSupportedRegistryVersion(declaredMigration.from_version) ||
+      declaredMigration.strategy !== PARAMETER_REGISTRY_MIGRATION_STRATEGY
+    ) {
+      throw new Error("Unsupported parameter registry migration contract");
+    }
+    if (
+      declaredVersion &&
+      declaredVersion !== PARAMETER_REGISTRY_VERSION &&
+      declaredVersion !== declaredMigration.from_version
+    ) {
+      throw new Error("Parameter registry migration source does not match plan version");
+    }
+  }
+  if (parsed.parameter_registry_snapshot) {
+    const snapshot = validateParameterRegistrySnapshot(parsed.parameter_registry_snapshot);
+    const expectedSnapshotVersion =
+      declaredVersion === PARAMETER_REGISTRY_VERSION ? PARAMETER_REGISTRY_VERSION : sourceVersion;
+    if (snapshot.version !== expectedSnapshotVersion) {
+      throw new Error(
+        `Parameter registry snapshot version ${snapshot.version} does not match plan version ${expectedSnapshotVersion}`,
+      );
+    }
+    if (!sameValue(snapshot.definitions, currentRegistrySnapshot().definitions)) {
+      throw new Error(
+        `Parameter registry snapshot ${snapshot.version} does not match the verified registry definitions`,
+      );
+    }
+  }
+
+  const migration = declaredMigration ?? migrationFor(sourceVersion);
+  return StoredNormalizedEditPlanSchema.parse({
+    ...parsed,
+    parameter_registry_version: PARAMETER_REGISTRY_VERSION,
+    parameter_registry_snapshot: currentRegistrySnapshot(),
+    ...(migration ? { parameter_registry_migration: migration } : {}),
+  });
+}
+
 export function getParameterDefinition(parameter: string): ParameterDefinition {
   const normalized = Object.prototype.hasOwnProperty.call(PARAMETER_REGISTRY, parameter)
     ? (parameter as NormalizedParameter)
@@ -158,16 +294,8 @@ function inRange(value: number, range: readonly [number, number]): boolean {
   return value >= range[0] && value <= range[1];
 }
 
-export function validateNormalizedPlan(
-  plan: unknown,
-): ReturnType<typeof NormalizedEditPlanSchema.parse> {
-  const parsed = NormalizedEditPlanSchema.parse(plan);
-  if (
-    parsed.parameter_registry_version &&
-    parsed.parameter_registry_version !== PARAMETER_REGISTRY_VERSION
-  ) {
-    throw new Error(`Unsupported parameter registry version: ${parsed.parameter_registry_version}`);
-  }
+export function validateNormalizedPlan(plan: unknown): StoredNormalizedEditPlan {
+  const parsed = migrateNormalizedPlan(plan);
   const seen = new Set<string>();
   for (const operation of parsed.operations) {
     const definition = getParameterDefinition(operation.parameter);

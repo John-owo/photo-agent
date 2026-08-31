@@ -41,6 +41,10 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
 - Ctrl-C／SIGTERM 中斷會留下可恢復的 durable 證據：唯讀階段中斷會結束為
   `CANCELLED`；backend side effect 已開始後則結束為 `REVIEW_REQUIRED`，不會悄悄重試
   mutation；backend lease 的釋放結果會記錄在 session 中。
+- normalized plan 會自帶完整的 Parameter Registry snapshot 與明確版本；舊的
+  未標版本／`0.1.0` plan 在進入 translation 或 mutation 前會依明確契約遷移到
+  `0.2.0`。共用的 translator golden-vector runner 會把不同 control group 的
+  預期結果分開驗證。
 - 單張 apply 會先唯讀並驗證 Master；只有明確允許 apply 且計畫含可執行調整時，
   才建立一份帶 session 標記的 Workflow Copy。checkpoint、Develop mutation、讀回與
   render 只會指向已驗證的 Copy。dry-run／no-op 不會建立 Copy；輸入已是 Virtual

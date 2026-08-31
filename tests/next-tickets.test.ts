@@ -11,13 +11,17 @@ import { AcceptingMockEvaluator, ScriptedEvaluator } from "../src/evaluation.js"
 import { writeFixtureJpeg } from "../src/preview.js";
 import { MockProvider } from "../src/providers.js";
 import {
+  LEGACY_PARAMETER_REGISTRY_VERSION,
   PARAMETER_REGISTRY,
+  migrateNormalizedPlan,
   PARAMETER_REGISTRY_VERSION,
   registeredParameters,
+  serializeParameterRegistry,
   selectPropagatableOperations,
   validateNormalizedPlan,
 } from "../src/parameter-registry.js";
-import { resolveLightroomSettings } from "../src/translator.js";
+import { ParameterRegistrySnapshotSchema, StoredNormalizedEditPlanSchema } from "../src/schemas.js";
+import { resolveLightroomSettings, runTranslatorGoldenVectors } from "../src/translator.js";
 import type { EvaluationResult } from "../src/types.js";
 import { runSinglePhoto } from "../src/workflow.js";
 
@@ -277,7 +281,7 @@ describe("T13 preview and final-export seam", () => {
 describe("T16 baseline Parameter Registry", () => {
   it("covers every normalized baseline parameter with units and policy", () => {
     expect(Object.keys(PARAMETER_REGISTRY).sort()).toEqual([...registeredParameters()].sort());
-    expect(PARAMETER_REGISTRY_VERSION).toBe("0.1.0");
+    expect(PARAMETER_REGISTRY_VERSION).toBe("0.2.0");
     for (const definition of Object.values(PARAMETER_REGISTRY)) {
       expect(definition.unit).toBeTruthy();
       expect(definition.absolute_range[0]).toBeLessThan(definition.absolute_range[1]);
@@ -394,6 +398,172 @@ describe("T16 baseline Parameter Registry", () => {
         warnings: [],
       }),
     ).toThrow(/Unsupported parameter registry version/);
+  });
+});
+
+describe("T28 versioned Parameter Registry", () => {
+  it("round-trips the complete registry snapshot without dropping policy fields", () => {
+    const snapshot = serializeParameterRegistry();
+    const roundTripped = ParameterRegistrySnapshotSchema.parse(
+      JSON.parse(JSON.stringify(snapshot)),
+    );
+    expect(roundTripped).toEqual(snapshot);
+    expect(Object.keys(roundTripped.definitions).sort()).toEqual(
+      [...registeredParameters()].sort(),
+    );
+    for (const parameter of registeredParameters()) {
+      expect(roundTripped.definitions[parameter]).toEqual(PARAMETER_REGISTRY[parameter]);
+    }
+  });
+
+  it("migrates unversioned and 0.1.0 plans to a self-describing current plan", () => {
+    const legacy = {
+      schema_version: "0.1.0" as const,
+      parameter_registry_version: LEGACY_PARAMETER_REGISTRY_VERSION,
+      operations: [
+        {
+          parameter: "exposure_ev" as const,
+          mode: "delta" as const,
+          value: 0.2,
+          confidence: 0.9,
+          rationale: "legacy fixture",
+        },
+      ],
+      warnings: [],
+    };
+    const migrated = migrateNormalizedPlan(legacy);
+    expect(migrated.parameter_registry_version).toBe(PARAMETER_REGISTRY_VERSION);
+    expect(migrated.parameter_registry_migration).toEqual({
+      from_version: LEGACY_PARAMETER_REGISTRY_VERSION,
+      to_version: PARAMETER_REGISTRY_VERSION,
+      strategy: "baseline-0.1.0-to-0.2.0",
+    });
+    expect(migrated.parameter_registry_snapshot).toEqual(serializeParameterRegistry());
+    expect(StoredNormalizedEditPlanSchema.parse(JSON.parse(JSON.stringify(migrated)))).toEqual(
+      migrated,
+    );
+
+    const unversioned = migrateNormalizedPlan({
+      ...legacy,
+      parameter_registry_version: undefined,
+    });
+    expect(unversioned.parameter_registry_version).toBe(PARAMETER_REGISTRY_VERSION);
+    expect(unversioned.parameter_registry_migration?.from_version).toBe(
+      LEGACY_PARAMETER_REGISTRY_VERSION,
+    );
+  });
+
+  it("rejects a tampered snapshot and keeps golden vectors independent by control group", () => {
+    const snapshot = serializeParameterRegistry();
+    const tampered = {
+      ...snapshot,
+      definitions: {
+        ...snapshot.definitions,
+        exposure_ev: {
+          ...snapshot.definitions.exposure_ev,
+          absolute_range: [-4, 4] as [number, number],
+        },
+      },
+    };
+    expect(() =>
+      migrateNormalizedPlan({
+        schema_version: "0.1.0",
+        parameter_registry_version: PARAMETER_REGISTRY_VERSION,
+        parameter_registry_snapshot: tampered,
+        operations: [],
+        warnings: [],
+      }),
+    ).toThrow(/does not match the verified registry definitions/);
+
+    const vectors = runTranslatorGoldenVectors([
+      {
+        id: "global-exposure",
+        control_group: "global-tonal",
+        intent: {
+          schema_version: "0.1.0",
+          creative_goal: "brighten",
+          adjustments: [
+            {
+              parameter: "exposure",
+              direction: "increase",
+              strength: "slight",
+              rationale: "lift the subject",
+              confidence: 0.9,
+            },
+          ],
+          overall_confidence: 0.9,
+        },
+        expected_plan: {
+          schema_version: "0.1.0",
+          operations: [
+            {
+              parameter: "exposure_ev",
+              mode: "delta",
+              value: 0.2,
+              confidence: 0.9,
+              rationale: "lift the subject",
+            },
+          ],
+          warnings: [],
+        },
+        current_settings: { Exposure2012: 0 },
+        expected_settings: { Exposure2012: 0.2 },
+      },
+      {
+        id: "white-balance-temperature",
+        control_group: "white-balance",
+        intent: {
+          schema_version: "0.1.0",
+          creative_goal: "warm the scene",
+          adjustments: [
+            {
+              parameter: "temperature",
+              direction: "increase",
+              strength: "medium",
+              rationale: "warm the ambient light",
+              confidence: 0.9,
+            },
+          ],
+          overall_confidence: 0.9,
+        },
+        expected_plan: {
+          schema_version: "0.1.0",
+          operations: [
+            {
+              parameter: "temperature_k",
+              mode: "delta",
+              value: 500,
+              confidence: 0.9,
+              rationale: "warm the ambient light",
+            },
+          ],
+          warnings: [],
+        },
+      },
+    ]);
+    expect(vectors.map((vector) => [vector.id, vector.control_group])).toEqual([
+      ["global-exposure", "global-tonal"],
+      ["white-balance-temperature", "white-balance"],
+    ]);
+    expect(vectors[0]?.settings).toEqual({ Exposure2012: 0.2 });
+    const duplicate = {
+      id: "duplicate",
+      control_group: "empty-plan",
+      intent: {
+        schema_version: "0.1.0" as const,
+        creative_goal: "no-op",
+        adjustments: [],
+        overall_confidence: 1,
+      },
+      expected_plan: {
+        schema_version: "0.1.0" as const,
+        operations: [],
+        warnings: ["No executable adjustment met the confidence threshold; manual review required"],
+      },
+    };
+    expect(() => runTranslatorGoldenVectors([duplicate, duplicate])).toThrow(
+      /Duplicate translator golden vector/,
+    );
   });
 });
 

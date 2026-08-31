@@ -14,6 +14,8 @@ import type {
   IterationReportRecordSchema,
   IterationReportSchema,
   LightingClassificationSchema,
+  ParameterRegistryMigrationSchema,
+  ParameterRegistrySnapshotSchema,
   NormalizedEditPlanSchema,
   NormalizedParameter,
   NormalizedOperationSchema,
@@ -30,10 +32,12 @@ import type {
   ShootReviewFileSchema,
   PropagationPlanSchema,
   SourceAssetPairSchema,
+  TranslatorGoldenVectorSchema,
   WorkflowBudgetSchema,
   DevelopIterationIntentSchema,
   DevelopReadbackEvidenceSchema,
   RecoveryEvidenceSchema,
+  StoredNormalizedEditPlanSchema,
   RepresentativeJobSchema,
   WorkflowCopyIntentSchema,
   WorkflowCopyResultSchema,
@@ -44,8 +48,12 @@ import type {
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
 export type SemanticIntentPlan = z.infer<typeof SemanticIntentPlanSchema>;
 export type NormalizedEditPlan = z.infer<typeof NormalizedEditPlanSchema>;
+export type StoredNormalizedEditPlan = z.infer<typeof StoredNormalizedEditPlanSchema>;
 export type { NormalizedParameter };
 export type NormalizedOperation = z.infer<typeof NormalizedOperationSchema>;
+export type ParameterRegistryMigration = z.infer<typeof ParameterRegistryMigrationSchema>;
+export type ParameterRegistrySnapshot = z.infer<typeof ParameterRegistrySnapshotSchema>;
+export type TranslatorGoldenVector = z.infer<typeof TranslatorGoldenVectorSchema>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;

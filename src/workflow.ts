@@ -11,6 +11,7 @@ import {
 } from "./backend-handshake.js";
 import { ingestPair } from "./ingest.js";
 import { createSanitizedPreview, materializePreviewArtifact } from "./preview.js";
+import { validateNormalizedPlan } from "./parameter-registry.js";
 import {
   resolveLightroomSettings,
   translateIntent,
@@ -782,7 +783,7 @@ async function executePlan(
         });
       }
       evaluatorAttempted = true;
-      const evaluation = EvaluationResultSchema.parse(
+      const parsedEvaluation = EvaluationResultSchema.parse(
         await options.evaluator.evaluate({
           renderPath: evaluationPath,
           iteration,
@@ -790,6 +791,12 @@ async function executePlan(
           readBack,
         }),
       );
+      const evaluation = EvaluationResultSchema.parse({
+        ...parsedEvaluation,
+        ...(parsedEvaluation.refinement_plan
+          ? { refinement_plan: validateNormalizedPlan(parsedEvaluation.refinement_plan) }
+          : {}),
+      });
       throwIfCancellationRequested(options.signal, "mutation", true);
       evaluatorCalls += evaluation.usage?.evaluator_calls ?? 1;
       totalTokens += evaluation.usage?.total_tokens ?? 0;
@@ -1251,9 +1258,16 @@ async function markRecoveryReview(
  */
 export async function recoverSession(options: RecoverSessionOptions): Promise<WorkflowResult> {
   const session = await SessionStore.open(options.sessionDir);
-  const normalizedPlan = await session
-    .readJson<NormalizedEditPlan>("normalized-edit-plan.json")
-    .catch(() => emptyPlan());
+  let normalizedPlan: NormalizedEditPlan;
+  try {
+    normalizedPlan = validateNormalizedPlan(
+      await session.readJson<unknown>("normalized-edit-plan.json"),
+    );
+    await session.writeJson("normalized-edit-plan.json", normalizedPlan);
+  } catch (error) {
+    if (!isMissingArtifact(error)) throw error;
+    normalizedPlan = emptyPlan();
+  }
   const state = session.currentState;
 
   if (state === "ACCEPTED" || state === "FAILED" || state === "CANCELLED") {

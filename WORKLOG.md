@@ -2291,3 +2291,49 @@ Cloud-analyzer checkpoint:
 - Explicitly staged the 13 intended T26 files; `git diff --cached --check`
   passed with no whitespace errors and the cached stat contains only the T26
   implementation, tests, documentation, README, and worklog changes.
+
+## 2026-08-31 - T28 versioned Parameter Registry
+
+- Re-read the referenced task `01a0542f-1b15-7f20-8227-a35a00a45c90` before
+  relying on its ticket-order recommendation. The active worktree was clean
+  on `codex/roadmap-t09` at `b064424` before T28 edits.
+- A read-only `gh issue view 32 --repo John-owo/photo-agent` from the active
+  worktree was blocked by the sandbox network. The approved read-only retry
+  from `D:\photo` succeeded and confirmed T30 is blocked by T28 and the
+  Lightroom MCP capability ticket. The corresponding read-only `gh issue view
+  31` succeeded from `D:\photo` and confirmed T28's three acceptance criteria.
+  No remote issue state changed.
+- Added schema-validated Parameter Registry snapshots containing units, bounds,
+  modes, dependencies, conflicts, confidence thresholds, propagation rules,
+  and backend keys. Current registry version is `0.2.0`; unversioned and
+  legacy `0.1.0` normalized plans migrate through the explicit
+  `baseline-0.1.0-to-0.2.0` contract and receive a complete snapshot.
+- Added fail-closed snapshot/key/reference validation and rejected current
+  plans whose embedded definitions differ from the verified registry. Stored
+  plan recovery now parses, migrates, and rewrites the canonical plan artifact;
+  evaluator refinement plans go through the same validation before reuse.
+- Added shared translator golden-vector schemas and runners. Each vector names
+  its control group, compares normalized operations/warnings, optionally
+  compares resolved backend settings, and cannot silently share duplicate IDs
+  across groups.
+- Added T28 regression coverage for complete snapshot JSON round-trip, legacy
+  and unversioned migration, stored-plan parsing, tampered snapshot rejection,
+  independent control-group vectors, and duplicate-vector rejection. The T16
+  registry version assertion now records the new current version.
+- `npx.cmd prettier --write` completed for the changed source, test, README,
+  and v0.3 implementation files. Targeted `npm.cmd run check`,
+  `npm.cmd test -- tests\\next-tickets.test.ts`, and
+  `npm.cmd test -- tests\\workflow.test.ts` passed (14, 31, and 45 tests in
+  the two test files respectively).
+- Full verification passed: `npm.cmd test` passed 4 files / 79 tests,
+  `npm.cmd run lint`, and `npm.cmd run build` passed. Changed-file
+  `npx.cmd prettier --check` passed for all nine changed implementation,
+  test, and documentation files; `git diff --check` passed with only the
+  normal LF-to-CRLF warnings.
+- No photo file, Lightroom catalog, external backend checkout, remote issue,
+  push, merge, PR, or issue closure was performed. The T28 changes remain
+  unstaged pending final review and local commit.
+- Created the local commit (`feat: version parameter registry plans`) with the
+  staged T28 implementation. Post-commit
+  `git status --porcelain=v1 -b` is clean on `codex/roadmap-t09`; no remote
+  operation was performed.

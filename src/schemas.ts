@@ -62,12 +62,125 @@ export const NormalizedOperationSchema = z.object({
   rationale: z.string().min(1).max(500),
 });
 
+export const ParameterRegistryVersionSchema = z
+  .string()
+  .regex(/^\d+\.\d+\.\d+$/, "Parameter registry version must use MAJOR.MINOR.PATCH");
+
+export const ParameterRangeSchema = z
+  .tuple([z.number().finite(), z.number().finite()])
+  .refine(([minimum, maximum]) => minimum <= maximum, "Parameter range must be ordered");
+
+export const ParameterDefinitionSchema = z
+  .object({
+    parameter: z.string().min(1),
+    semantic_parameter: z.string().min(1),
+    backend_key: z.string().min(1),
+    unit: z.enum(["ev", "kelvin", "points"]),
+    base_step: z.number().finite().positive(),
+    supported: z.boolean(),
+    allowed_modes: z.array(z.enum(["delta", "absolute"])).min(1),
+    absolute_range: ParameterRangeSchema,
+    delta_range: ParameterRangeSchema,
+    conflicts_with: z.array(z.string().min(1)),
+    depends_on: z.array(z.string().min(1)),
+    propagation: z
+      .object({
+        eligible: z.boolean(),
+        required_conditions: z.array(
+          z.enum([
+            "accepted_representative",
+            "same_lighting_cluster",
+            "high_confidence_source",
+            "shortlisted_target",
+          ]),
+        ),
+        minimum_confidence: z.number().min(0).max(1),
+        blocked_reason: z.string().min(1).optional(),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((definition, context) => {
+    if (new Set(definition.allowed_modes).size !== definition.allowed_modes.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["allowed_modes"],
+        message: "Parameter definition contains duplicate modes",
+      });
+    }
+    for (const [field, values] of [
+      ["conflicts_with", definition.conflicts_with],
+      ["depends_on", definition.depends_on],
+    ] as const) {
+      if (new Set(values).size !== values.length) {
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: `Parameter definition contains duplicate ${field} entries`,
+        });
+      }
+      if (values.includes(definition.parameter)) {
+        context.addIssue({
+          code: "custom",
+          path: [field],
+          message: `Parameter definition cannot reference itself in ${field}`,
+        });
+      }
+    }
+  });
+
+export const ParameterRegistrySnapshotSchema = z
+  .object({
+    version: ParameterRegistryVersionSchema,
+    definitions: z.record(z.string().min(1), ParameterDefinitionSchema),
+  })
+  .strict();
+
+export const ParameterRegistrySchema = ParameterRegistrySnapshotSchema;
+
+export const ParameterRegistryMigrationSchema = z
+  .object({
+    from_version: ParameterRegistryVersionSchema,
+    to_version: ParameterRegistryVersionSchema,
+    strategy: z.string().min(1),
+  })
+  .strict();
+
 export const NormalizedEditPlanSchema = z.object({
   schema_version: z.literal(SCHEMA_VERSION),
   parameter_registry_version: z.string().min(1).optional(),
+  parameter_registry_snapshot: ParameterRegistrySnapshotSchema.optional(),
+  parameter_registry_migration: ParameterRegistryMigrationSchema.optional(),
   operations: z.array(NormalizedOperationSchema).max(NORMALIZED_PARAMETERS.length),
   warnings: z.array(z.string().min(1).max(500)),
 });
+
+export const StoredNormalizedEditPlanSchema = NormalizedEditPlanSchema.extend({
+  parameter_registry_version: ParameterRegistryVersionSchema,
+  parameter_registry_snapshot: ParameterRegistrySnapshotSchema,
+}).strict();
+
+const BackendSettingValueSchema = z.union([z.number().finite(), z.string(), z.boolean()]);
+
+export const TranslatorGoldenVectorSchema = z
+  .object({
+    id: z.string().min(1),
+    control_group: z.string().min(1),
+    intent: SemanticIntentPlanSchema,
+    expected_plan: NormalizedEditPlanSchema,
+    current_settings: z.record(z.string(), BackendSettingValueSchema).optional(),
+    expected_settings: z.record(z.string(), BackendSettingValueSchema).optional(),
+  })
+  .strict()
+  .superRefine((vector, context) => {
+    if ((vector.current_settings === undefined) !== (vector.expected_settings === undefined)) {
+      context.addIssue({
+        code: "custom",
+        path: ["expected_settings"],
+        message: "current_settings and expected_settings must be provided together",
+      });
+    }
+  });
 
 const EvaluationResultFieldsSchema = z.object({
   schema_version: z.literal("0.2.0"),
