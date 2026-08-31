@@ -152,6 +152,10 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   crossings, and `ephemeral` retention removes generated preview images from the
   session after the workflow. Legacy `--allow-cloud-preview` remains an explicit
   preview-only compatibility path.
+- The Anthropic adapter conforms to the shared structured provider contract and
+  sends only a sanitized preview when cloud preview is explicitly allowed;
+  provider payloads and credentials stay out of durable artifacts. Live Anthropic
+  API and quality evidence remain unverified until an authorized experiment runs.
 - A single-photo apply reads and verifies the Master first, then lazily creates
   one session-marked Workflow Copy only when apply is approved and the plan has
   an executable adjustment. Checkpoints, Develop mutation, read-back, and render

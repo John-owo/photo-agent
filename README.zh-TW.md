@@ -113,6 +113,10 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
   execution 前檢查；session manifest 只記錄 crossing 的 boolean；`ephemeral`
   retention 會在 workflow 後移除 session 內產生的 preview 圖片。既有
   `--allow-cloud-preview` 仍是明確的 preview-only 相容路徑。
+- Anthropic adapter 已接上共用的 structured provider contract；只有明確允許
+  cloud preview 時才送出 sanitized preview，provider payload 與 credential 不會進入
+  durable artifact。真實 Anthropic API 與品質 evidence 要等獲授權的 experiment，
+  目前仍未驗證。
 - 單張 apply 會先唯讀並驗證 Master；只有明確允許 apply 且計畫含可執行調整時，
   才建立一份帶 session 標記的 Workflow Copy。checkpoint、Develop mutation、讀回與
   render 只會指向已驗證的 Copy。dry-run／no-op 不會建立 Copy；輸入已是 Virtual

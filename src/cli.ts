@@ -13,6 +13,7 @@ import {
   runShootDryRun,
 } from "./batch.js";
 import { AcceptingMockEvaluator, OpenAIEditEvaluator } from "./evaluation.js";
+import { AnthropicProvider } from "./anthropic-provider.js";
 import { CodexProvider, MockProvider, OpenAIProvider } from "./providers.js";
 import { SessionStore } from "./runtime.js";
 import { SemanticIntentPlanSchema } from "./schemas.js";
@@ -26,7 +27,7 @@ const DEFAULT_LIGHTROOM_ENTRY = "D:\\photo\\lightroom-mcp-john\\server\\dist\\in
 
 function usage(): string {
   return [
-    "photo-agent edit-one --raw <RAW> --preview <JPEG> --backend <mock|lightroom> --provider <codex|mock|openai> [--evaluator <none|mock|openai>] [--intent-file <JSON>] [--apply] [--allow-cloud-preview] [budget flags]",
+    "photo-agent edit-one --raw <RAW> --preview <JPEG> --backend <mock|lightroom> --provider <codex|mock|openai|anthropic> [--evaluator <none|mock|openai>] [--intent-file <JSON>] [--apply] [--allow-cloud-preview] [budget flags]",
     "photo-agent resume --session <SESSION_DIR> --intent-file <JSON> --backend <mock|lightroom> [--apply] [--evaluator <none|mock|openai>] [--allow-cloud-preview] [--max-iterations <1-10>] [budget flags]",
     "budget flags: --max-elapsed-ms <ms> --max-renders <n> --max-evaluator-calls <n> --max-total-tokens <n> --max-cost-usd <usd>",
     "photo-agent recover --session <SESSION_DIR> --backend <mock|lightroom> [--photo-id <ID>]",
@@ -129,9 +130,11 @@ async function editOne(argv: string[], signal?: AbortSignal): Promise<number> {
       ? new CodexProvider(parsed.values["intent-file"])
       : providerName === "openai"
         ? new OpenAIProvider()
-        : providerName === "mock"
-          ? new MockProvider()
-          : undefined;
+        : providerName === "anthropic"
+          ? new AnthropicProvider()
+          : providerName === "mock"
+            ? new MockProvider()
+            : undefined;
   if (!provider) throw new Error(`Unsupported provider: ${providerName}`);
   const backend = createBackend(parsed.values.backend, raw, parsed.values["lightroom-mcp-entry"]);
   if (!backend) throw new Error(`Unsupported backend: ${parsed.values.backend}`);

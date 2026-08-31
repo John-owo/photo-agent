@@ -2942,3 +2942,45 @@ Cloud-analyzer checkpoint:
   --oneline --summary HEAD`, and `git log --oneline -8` confirmed the expected
   12-file commit on `codex/roadmap-t09` with a clean worktree. No remote
   operation was performed.
+
+## 2026-08-31 - T53 Anthropic provider adapter boundary
+
+- Read-only `gh issue view 46 --repo John-owo/photo-agent --json
+  number,title,body,labels,state` confirmed T53 requires an Anthropic adapter
+  behind the shared provider contract, identical structured schemas and
+  deterministic behavior, no credentials/provider payloads in durable core
+  artifacts, and sanitized-preview-only cloud transfer. The issue remains
+  blocked by T52 (#45); the open-ticket refresh also showed T56 (#49) waiting
+  on T53/T54/T55. No remote state changed.
+- The initial local inspection used `git status --short --branch`,
+  `git diff --stat`, targeted `git diff` over the T53 source/docs paths, and a
+  handoff-directory listing. It confirmed only the intended T53 files were
+  modified or newly added and that the existing handoff was a prior artifact.
+- Added `AnthropicProvider` with an injected vision runner for deterministic
+  tests and a native fetch runner that reads only the caller-supplied
+  sanitized-preview path at request time. The adapter uses the shared
+  `SemanticIntentPlan` and `ProviderResult` schemas, publishes a versioned
+  capability manifest, records only normalized provider/model/prompt/usage
+  metadata, and never places credentials or raw provider payloads in durable
+  artifacts.
+- Added the CLI provider selection and package export, plus English,
+  Traditional Chinese, and implementation documentation. The runtime request
+  path sends only the explicitly permitted sanitized JPEG preview to the
+  Anthropic API; raw, EXIF, and GPS data remain local-only by manifest and the
+  T55 policy gate.
+- Added two tests covering injected structured-result mapping, capability and
+  sanitized-path forwarding, metadata exclusion, and invalid shared-schema
+  rejection. No Anthropic API request, API key, local model, Lightroom/MCP,
+  visual, or human-quality evidence was used or claimed.
+- `npx.cmd prettier --write src/anthropic-provider.ts src/cli.ts src/index.ts
+  README.md README.zh-TW.md docs/implementation/v0.3.md
+  tests/anthropic-provider.test.ts` passed. `npm.cmd run check`, targeted
+  `npm.cmd test -- --run tests/anthropic-provider.test.ts` (1 file / 2 tests),
+  and `npm.cmd run lint` passed. Full test/build and final changed-file
+  formatting/diff checks are pending below.
+- Final T53 verification passed `npm.cmd test` (20 files / 158 tests),
+  `npm.cmd run check`, `npm.cmd run lint`, `npm.cmd run build`, and changed
+  source/test/docs `npx.cmd prettier --check`. `git diff --check` passed; its
+  output contained only normal LF-to-CRLF warnings. No photo, RAW, sidecar,
+  Lightroom, MCP, credential, provider-service, remote issue, push, merge, PR,
+  or issue-closure state changed.
