@@ -162,6 +162,12 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   latency status, schema compatibility, failures, review rate, and denominator
   metrics explicit; this contract does not claim that the three real runs have
   been executed.
+- Third-party backend/provider plugins now use a strict versioned manifest and
+  public `manifest`/`create()` module contract. Sparse capabilities are valid,
+  but missing required operations, unexpected trust boundaries, and incompatible
+  core API majors fail before the adapter is created. The XMP backend is a
+  create-only example and records `REVIEW_REQUIRED` rather than visual
+  acceptance.
 - A single-photo apply reads and verifies the Master first, then lazily creates
   one session-marked Workflow Copy only when apply is approved and the plan has
   an executable adjustment. Checkpoints, Develop mutation, read-back, and render
@@ -353,5 +359,7 @@ node dist/src/cli.js export-xmp `
 - [v0.1–v0.3 direction](docs/implementation/v0.1-v0.3-direction.zh-TW.md).
 - [Codex handoff contract](docs/codex-provider.md).
 - [Examples](examples/README.md) — reproducible fixture commands.
+- [Plugin contract](docs/plugin-contract.md) — third-party adapter manifest,
+  trust, capabilities, and fail-closed loading.
 - [MIT License](LICENSE).
 - [NOTICE.md](NOTICE.md) — `lightroom-mcp-john` third-party provenance.

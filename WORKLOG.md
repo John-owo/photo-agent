@@ -3045,3 +3045,102 @@ Cloud-analyzer checkpoint:
 
 - Created `D:\photo\_agent_workspace\lightroom\handoffs\photo-agent-roadmap-t09-continuation-20260831-v2.md` after T56 verification. `Get-Item` confirmed the artifact exists and `Get-Content` verified its worktree, implementation-tip commits, evidence counts, external blockers, privacy boundaries, and next actions. The handoff remains outside Git under `_agent_workspace` and does not overwrite the older handoff.
 - The handoff records `e527f82` as the T56 implementation tip; any later HEAD movement is only the docs-only record of this handoff. No photo, RAW, sidecar, Lightroom, MCP, credential, provider service, remote issue, push, merge, PR, or issue-closure state changed.
+
+## 2026-08-31 - current roadmap progress read-only audit
+
+- Read-only active-worktree status and recent log confirmed a clean
+  `codex/roadmap-t09` at `7c17cf3` (`docs: record roadmap handoff`), directly
+  after the T56 verification record `e527f82`. No source, photo, Lightroom, or
+  configured-checkout change was present.
+- Targeted `rg` over this worklog confirmed local implementation and regression
+  evidence through T56. T09/T08 acceptance evidence is already recorded; T14
+  remains pending the actual Lightroom v0.2 closed-loop and human-render gate.
+- The first sandboxed read-only `gh issue list --repo John-owo/photo-agent`
+  failed on the GitHub API socket policy. The approved escalated read-only retry
+  succeeded and returned 50 PhotoAgent issues (#3-#52), all `OPEN`. T58 (#50),
+  T59 (#51), and T60 (#52) are labeled `ready-for-agent`; no remote issue,
+  milestone, push, merge, or closure state changed.
+- An approved escalated read-only `gh issue list --repo John-owo/lightroom-mcp`
+  returned 11 linked issues (#1-#11), all `OPEN`; no remote state changed.
+
+## 2026-08-31 - authorized remote issue closure
+
+- The user explicitly authorized closing remote tickets whose acceptance
+  evidence is complete. Read-only issue-body checks were performed first,
+  including dependency and live/provider gate review; no source, photo,
+  Lightroom, catalog, or configuration state changed during the review.
+- In dependency order, closed Lightroom MCP #2-#5 (T01-T04), PhotoAgent #11-#14
+  (T06-T09), PhotoAgent #4 (T05 v0.1 gate), and PhotoAgent #15-#17 plus #19
+  (T11-T13 and T16). No comments, push, merge, milestone update, or other
+  remote mutation was performed.
+- Read-only post-close verification succeeded: `photo-agent` has 50 total,
+  9 closed, and 41 open; `lightroom-mcp` has 11 total, 4 closed, and 7 open.
+  The closed lists exactly match the authorized 13 tickets. T14 (#18), T17
+  (#20), T27 (#30), and T58-T60 (#50-#52) remain `OPEN` as expected because
+  their live, dependency, or not-yet-started conditions are not complete.
+
+## 2026-08-31 - T58-T60 continuation scope inspection
+
+- Read-only `gh issue view` checks confirmed T58 requires a versioned backend/
+  provider plugin manifest, sparse capability semantics, fail-closed major
+  compatibility, and adapter-author compatibility tests. T59 requires an
+  atomic create-only XMP backend with truthful no-render capability and a real
+  Camera Raw/Lightroom round trip; T60 requires public contract documentation,
+  a community template, and an executable sample. T58 is gated by the open
+  v0.6 gate (#9); T59 additionally depends on T28 (#31); T60 depends on T58
+  and T59. No remote state changed.
+- Added the first local T58/T59 implementation seams: strict public
+  `PluginManifestSchema` and fail-closed `plugin-loader` helpers, plus the
+  create-only `XmpSidecarBackend`, no-render capability manifest, structured
+  review-required export record, and atomic non-overwriting XMP publication.
+  The CLI `export-xmp` path now uses that backend and reports its visual/editor
+  limitation. No source photo, Lightroom checkout, or remote state changed.
+- `npm.cmd run check` passed after the T58/T59 implementation. No live provider,
+  Lightroom/Camera Raw import, render, or human visual check was performed.
+- `npx.cmd prettier --write` completed for the T58/T59 source, tests, CLI,
+  fixture, and worklog files; no formatter errors occurred.
+- Targeted `npm.cmd test -- --run tests/plugin-loader.test.ts
+  tests/xmp-backend.test.ts tests/workflow.test.ts` found one test-fixture
+  expectation error: the real baseline exposure step is `0.2`, while the new
+  T59 test expected `0.1`. Plugin-loader (7 tests), existing workflow (31
+  tests), and the other T59 checks passed; no product failure or external
+  state change occurred.
+- Corrected the T59 fixture expectation and reran targeted coverage:
+  `npm.cmd test -- --run tests/plugin-loader.test.ts tests/xmp-backend.test.ts`
+  passed (2 files / 11 tests).
+- Added T60's English/Traditional Chinese plugin-contract docs, a reusable
+  community XMP plugin template, an executable synthetic plugin workflow, and
+  the `example:plugin` package script. `npx.cmd prettier --write` completed for
+  the T60 docs, examples, README files, package manifest, and worklog.
+- `npm.cmd run check` passed after the T60 documentation/example additions and
+  the T58/T59 source changes.
+- `npm.cmd run lint` failed with three actionable issues: the executable MJS
+  example used global `URL` without importing it, and the atomic XMP cleanup
+  used a throw from `finally`, triggering `no-unsafe-finally`. No runtime or
+  external state changed.
+- Corrected the MJS `URL` import and restructured atomic XMP cleanup so errors
+  are propagated outside `finally`; `npx.cmd prettier --write src/xmp.ts
+  examples/run-plugin-example.mjs` completed.
+- `npm.cmd run lint` passed after the plugin example and atomic XMP cleanup
+  fixes.
+- `npm.cmd run build` passed and emitted the new plugin-loader/XMP-backend
+  runtime files used by the executable example.
+- `npm.cmd run example:plugin` passed. It loaded the community template through
+  the manifest, created a synthetic XMP sidecar, preserved the synthetic source,
+  and correctly reported `render_verified: false` and
+  `visual_acceptance: REVIEW_REQUIRED`.
+- Full `npm.cmd test` passed: 23 test files / 172 tests, including the existing
+  v0.1-v0.3 suites and the new T58/T59 tests. No Lightroom, Camera Raw, local
+  model, provider API, visual, or human acceptance check was performed.
+- Repository-wide `npm.cmd run format:check` failed on 23 pre-existing files
+  (including AGENTS/docs/config files and older source/tests); the new T58/T59
+  source, tests, docs, and examples were not among the reported warnings.
+  This was a formatting baseline issue, not a test or runtime failure.
+- Targeted `npx.cmd prettier --check` passed for all T58/T59 source/tests and
+  all T60 docs/examples plus the updated README and package manifest.
+- `git diff --check` passed; output contained only the repository's normal
+  LF-to-CRLF working-copy warnings.
+- Final status inspection shows only the intended T58-T60 source, test, docs,
+  example, package, README, and worklog changes on `codex/roadmap-t09`; no
+  Lightroom checkout, photo asset, or generated source artifact is tracked in
+  the worktree.

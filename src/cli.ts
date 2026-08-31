@@ -18,10 +18,10 @@ import { CodexProvider, MockProvider, OpenAIProvider } from "./providers.js";
 import { SessionStore } from "./runtime.js";
 import { SemanticIntentPlanSchema } from "./schemas.js";
 import { OpenAIShootAnalyzer } from "./shoot-analyzers.js";
-import { resolveLightroomSettings, translateIntent } from "./translator.js";
+import { translateIntent } from "./translator.js";
 import type { WorkflowBudgetOptions } from "./types.js";
 import { recoverSession, resumeCodexSession, runSinglePhoto } from "./workflow.js";
-import { writeXmpSidecar } from "./xmp.js";
+import { XmpSidecarBackend } from "./xmp-backend.js";
 
 const DEFAULT_LIGHTROOM_ENTRY = "D:\\photo\\lightroom-mcp-john\\server\\dist\\index.js";
 
@@ -283,14 +283,24 @@ async function exportXmp(argv: string[]): Promise<number> {
     number | string | boolean
   >;
   const plan = translateIntent(intent);
-  const settings = resolveLightroomSettings(current, plan);
   const output = resolve(outputPath);
-  if (output.toLowerCase() === raw.toLowerCase()) {
-    throw new Error("XMP output cannot overwrite the RAW source");
-  }
-  const path = await writeXmpSidecar(output, settings);
+  const result = await new XmpSidecarBackend().exportXmpSidecar({
+    sourcePath: raw,
+    destinationPath: output,
+    currentSettings: current,
+    plan,
+  });
   console.log(
-    JSON.stringify({ path, operations: plan.operations.length, warnings: plan.warnings }, null, 2),
+    JSON.stringify(
+      {
+        ...result,
+        path: result.sidecar_path,
+        operations: plan.operations.length,
+        warnings: plan.warnings,
+      },
+      null,
+      2,
+    ),
   );
   return 0;
 }

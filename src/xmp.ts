@@ -1,11 +1,12 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { access, link, mkdir, open, unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { dirname, extname, resolve } from "node:path";
 
 import { resolveLightroomSettings } from "./translator.js";
 import type { NormalizedEditPlan } from "./types.js";
 
 const XMP_EXTENSION = ".xmp";
-const SUPPORTED_XMP_KEYS = new Set([
+export const XMP_SUPPORTED_SETTINGS = [
   "WhiteBalance",
   "Temperature",
   "Tint",
@@ -20,7 +21,8 @@ const SUPPORTED_XMP_KEYS = new Set([
   "Dehaze",
   "Vibrance",
   "Saturation",
-]);
+] as const;
+const SUPPORTED_XMP_KEYS = new Set<string>(XMP_SUPPORTED_SETTINGS);
 
 export type DevelopSettings = Record<string, number | string | boolean>;
 
@@ -78,8 +80,54 @@ export async function writeXmpSidecar(
     throw new Error(`XMP output must use the .xmp extension: ${destination}`);
   }
   await mkdir(dirname(destination), { recursive: true });
-  await writeFile(destination, createXmpSidecar(settings), { encoding: "utf8", flag: "wx" });
+  await writeNewFileAtomically(destination, createXmpSidecar(settings));
   return destination;
+}
+
+/**
+ * Publish a complete new file without replacing an existing path. A temporary
+ * file is fully written and synced first; an exclusive hard-link publication
+ * makes the completed bytes visible without an overwrite race.
+ */
+async function writeNewFileAtomically(destination: string, content: string): Promise<void> {
+  try {
+    await access(destination);
+    throw new Error(`XMP sidecar refuses to overwrite existing file: ${destination}`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+
+  const temporary = `${destination}.${randomUUID()}.tmp`;
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(temporary, "wx");
+    await handle.writeFile(content, "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+  } catch (error) {
+    if (handle) await handle.close().catch(() => undefined);
+    await unlink(temporary).catch(() => undefined);
+    throw error;
+  }
+
+  let publicationError: unknown;
+  try {
+    await link(temporary, destination);
+  } catch (error) {
+    publicationError =
+      (error as NodeJS.ErrnoException).code === "EEXIST"
+        ? new Error(`XMP sidecar refuses to overwrite existing file: ${destination}`)
+        : error;
+  }
+  let cleanupError: unknown;
+  try {
+    await unlink(temporary);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") cleanupError = error;
+  }
+  if (publicationError) throw publicationError;
+  if (cleanupError) throw cleanupError;
 }
 
 export async function exportXmpSidecar(

@@ -122,6 +122,11 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
   run 都明確保存 provider/model、adapter/prompt 版本、cost／latency 狀態、schema
   compatibility、failure、review rate 與 denominator；這個 contract 不宣稱三個真實
   provider run 已經執行。
+- 第三方 backend/provider plugin 現在使用嚴格的有版本 manifest 與公開的
+  `manifest`／`create()` 模組契約。能力可以是 sparse，但缺少 workflow 要求的
+  operation、trust boundary 不符或 core API major 不相容，都會在建立 adapter 前
+  fail closed。XMP backend 是只建立新 sidecar 的範例，輸出會記錄
+  `REVIEW_REQUIRED`，不會冒充視覺接受。
 - 單張 apply 會先唯讀並驗證 Master；只有明確允許 apply 且計畫含可執行調整時，
   才建立一份帶 session 標記的 Workflow Copy。checkpoint、Develop mutation、讀回與
   render 只會指向已驗證的 Copy。dry-run／no-op 不會建立 Copy；輸入已是 Virtual
@@ -288,6 +293,8 @@ node dist/src/cli.js export-xmp `
 - [v0.1–v0.3 後續方向](docs/implementation/v0.1-v0.3-direction.zh-TW.md)。
 - [Codex 交接契約](docs/codex-provider.zh-TW.md)。
 - [Examples](examples/README.md) — 可重現的 fixture 指令。
+- [Plugin contract](docs/plugin-contract.zh-TW.md) — 第三方 adapter 的 manifest、
+  trust、capability 與 fail-closed 載入規則。
 - [MIT License](LICENSE)。
 - [NOTICE.md](NOTICE.md) — `lightroom-mcp-john` 第三方 provenance 說明。
 - 英文版：[README.md](README.md)。

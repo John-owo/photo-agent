@@ -3174,6 +3174,67 @@ export const BackendCapabilityManifestSchema = z
     }
   });
 
+export const PLUGIN_TYPES = ["backend", "provider"] as const;
+
+/** Public manifest shared by third-party backend and provider adapters. */
+export const PluginManifestSchema = z
+  .object({
+    plugin_type: z.enum(PLUGIN_TYPES),
+    plugin_id: z.string().min(1).max(200),
+    plugin_version: SemverSchema,
+    core_api_version: SemverSchema,
+    capabilities: z.array(z.string().min(1).max(200)).max(256),
+    trust_boundary: z
+      .object({
+        transport: z.string().min(1).max(200),
+        authentication: z.string().min(1).max(200),
+        cloud: z.boolean(),
+      })
+      .strict(),
+    operations: z.record(z.string().min(1).max(200), OperationSemanticsSchema),
+  })
+  .strict()
+  .superRefine((manifest, context) => {
+    const seen = new Set<string>();
+    for (const capability of manifest.capabilities) {
+      if (seen.has(capability)) {
+        context.addIssue({
+          code: "custom",
+          path: ["capabilities"],
+          message: `Duplicate plugin capability: ${capability}`,
+        });
+      }
+      seen.add(capability);
+      const semantics = manifest.operations[capability];
+      if (!semantics) {
+        context.addIssue({
+          code: "custom",
+          path: ["operations", capability],
+          message: `Missing operation semantics for plugin capability: ${capability}`,
+        });
+      } else if (!semantics.supported) {
+        context.addIssue({
+          code: "custom",
+          path: ["operations", capability, "supported"],
+          message: `Unsupported operation cannot be advertised as a plugin capability: ${capability}`,
+        });
+      }
+    }
+  });
+
+export const XmpSidecarExportRecordSchema = z
+  .object({
+    backend: z.literal("xmp-sidecar"),
+    operation: z.literal("create_xmp_sidecar"),
+    source_path: z.string().min(1),
+    sidecar_path: z.string().min(1),
+    settings: z.record(z.string(), BackendSettingValueSchema),
+    render_verified: z.literal(false),
+    visual_acceptance: z.literal("REVIEW_REQUIRED"),
+    limitations: z.array(z.string().min(1).max(500)).min(1).max(8),
+  })
+  .strict();
+
 export const ProviderCapabilityManifestSchema = z
   .object({
     schema_version: z.literal(SCHEMA_VERSION),

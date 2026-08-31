@@ -13,6 +13,16 @@ npm.cmd run build
 npm.cmd run example
 ```
 
+Run the public plugin-contract example. It loads the community XMP backend
+through the versioned manifest, creates a synthetic sidecar, checks that the
+synthetic source is unchanged, and reports `REVIEW_REQUIRED` because this
+backend cannot render or prove Camera Raw/Lightroom interpretation:
+
+```powershell
+npm.cmd run build
+npm.cmd run example:plugin
+```
+
 These JSON fixtures exercise the deterministic intent-to-parameter and XMP
 fallback paths without shipping a RAW or preview photo in the repository.
 
@@ -27,3 +37,7 @@ node dist/src/cli.js export-xmp `
 The output path must not already exist. The command never overwrites a source
 RAW or an existing XMP sidecar. Inspect the generated sidecar in a disposable
 Lightroom/Camera Raw test catalog before using it on a real photo.
+
+The adapter manifest and loader contract are documented in
+`docs/plugin-contract.md` and `docs/plugin-contract.zh-TW.md`. The reusable
+community template is `examples/plugins/xmp-sidecar-plugin.mjs`.

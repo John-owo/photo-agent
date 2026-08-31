@@ -132,6 +132,8 @@ import type {
   PrivacyPolicySchema,
   SessionPrivacyRecordSchema,
   SessionPrivacySchema,
+  PluginManifestSchema,
+  XmpSidecarExportRecordSchema,
 } from "./schemas.js";
 
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
@@ -241,6 +243,8 @@ export type SessionPrivacyRecord = z.infer<typeof SessionPrivacyRecordSchema>;
 export type SessionPrivacy = z.infer<typeof SessionPrivacySchema>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
+export type PluginManifest = z.infer<typeof PluginManifestSchema>;
+export type XmpSidecarExportRecord = z.infer<typeof XmpSidecarExportRecordSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;
 export type BackendPhotoIdentity = z.infer<typeof BackendPhotoIdentitySchema>;
 export type CheckpointEvidence = z.infer<typeof CheckpointEvidenceSchema>;
