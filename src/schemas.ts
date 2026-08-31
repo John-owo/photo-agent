@@ -225,6 +225,8 @@ export const STYLE_HISTORY_PROTECTED_ATTRIBUTES = ["natural_skin_tones"] as cons
 export const STYLE_HISTORY_MIN_MATCH_SCORE = 0.55;
 export const STYLE_HISTORY_MIN_CONFIDENCE = 0.65;
 export const STYLE_HISTORY_DEFAULT_MAX_RESULTS = 8;
+export const STYLE_HISTORY_EVALUATION_REGISTRY_VERSION = "0.1.0" as const;
+export const STYLE_HISTORY_EVALUATION_MAX_CASES = 100_000;
 
 export const SemanticAdjustmentSchema = z.object({
   parameter: z.enum(SEMANTIC_PARAMETERS),
@@ -1655,6 +1657,169 @@ export const StyleHistoryGoldenVectorSchema = z
     snapshot: StyleHistorySnapshotSchema,
     query: StyleHistoryQuerySchema,
     expected_result: StyleHistoryRetrievalSchema,
+  })
+  .strict();
+
+const StyleHistoryShootIdsSchema = z.array(z.string().min(1).max(200)).max(100_000);
+
+export const StyleHistoryEvaluationSplitSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    split_id: z.string().min(1).max(200),
+    split_revision: z.string().min(1).max(200),
+    split_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    construction_shoot_ids: StyleHistoryShootIdsSchema.min(1),
+    held_out_shoot_ids: StyleHistoryShootIdsSchema.min(1),
+    excluded_shoot_ids: StyleHistoryShootIdsSchema,
+  })
+  .strict()
+  .superRefine((split, context) => {
+    const lists = [
+      ["construction_shoot_ids", split.construction_shoot_ids],
+      ["held_out_shoot_ids", split.held_out_shoot_ids],
+      ["excluded_shoot_ids", split.excluded_shoot_ids],
+    ] as const;
+    const seen = new Set<string>();
+    for (const [field, ids] of lists) {
+      for (const [index, id] of ids.entries()) {
+        if (seen.has(id)) {
+          context.addIssue({
+            code: "custom",
+            path: [field, index],
+            message: `Style history evaluation shoot id may only appear once: ${id}`,
+          });
+        }
+        seen.add(id);
+      }
+    }
+  });
+
+export const StyleHistoryEvaluationRequestSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    evaluation_registry_version: z.literal(STYLE_HISTORY_EVALUATION_REGISTRY_VERSION),
+    evaluation_id: z.string().min(1).max(200),
+    split: StyleHistoryEvaluationSplitSchema,
+    protected_attributes: z
+      .array(z.enum(STYLE_HISTORY_PROTECTED_ATTRIBUTES))
+      .max(STYLE_HISTORY_PROTECTED_ATTRIBUTES.length),
+    max_results: z.number().int().positive().max(32),
+    max_examples: z.number().int().positive().max(STYLE_HISTORY_EVALUATION_MAX_CASES),
+    min_confidence: z.number().min(0).max(1),
+  })
+  .strict()
+  .superRefine((request, context) => {
+    if (new Set(request.protected_attributes).size !== request.protected_attributes.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["protected_attributes"],
+        message: "Style history evaluation protected attributes may not contain duplicates",
+      });
+    }
+  });
+
+export const StyleHistoryEvaluationCaseSchema = z
+  .object({
+    held_out_example_id: z.string().min(1).max(200),
+    held_out_shoot_id: z.string().min(1).max(200),
+    reference_example_ids: z.array(z.string().min(1).max(200)).max(32),
+    matched: z.boolean(),
+    top_match_score: z.number().min(0).max(1).optional(),
+    evidence_confidence: z.number().min(0).max(1),
+    failures: z.array(z.string().min(1).max(500)).max(16),
+    review_outcomes: z.array(z.string().min(1).max(500)).max(16),
+  })
+  .strict()
+  .superRefine((evaluationCase, context) => {
+    const hasReferences = evaluationCase.reference_example_ids.length > 0;
+    if (evaluationCase.matched !== hasReferences) {
+      context.addIssue({
+        code: "custom",
+        path: ["matched"],
+        message: "Style history evaluation matched must reflect reference_example_ids",
+      });
+    }
+    if (evaluationCase.matched && evaluationCase.top_match_score === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["top_match_score"],
+        message: "Matched Style history evaluation cases require top_match_score",
+      });
+    }
+    if (!evaluationCase.matched && evaluationCase.top_match_score !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["top_match_score"],
+        message: "Unmatched Style history evaluation cases may not report top_match_score",
+      });
+    }
+  });
+
+export const StyleHistoryEvaluationReportSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    evaluation_registry_version: z.literal(STYLE_HISTORY_EVALUATION_REGISTRY_VERSION),
+    history_registry_version: z.literal(STYLE_HISTORY_REGISTRY_VERSION),
+    evaluation_id: z.string().min(1).max(200),
+    dataset_id: z.string().min(1).max(200),
+    dataset_revision: z.string().min(1).max(200),
+    dataset_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    split_id: z.string().min(1).max(200),
+    split_revision: z.string().min(1).max(200),
+    split_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    construction_population: z.number().int().nonnegative(),
+    population: z.number().int().nonnegative(),
+    sample_size: z.number().int().nonnegative(),
+    matched_sample_size: z.number().int().nonnegative(),
+    evidence_confidence: z.number().min(0).max(1),
+    cases: z.array(StyleHistoryEvaluationCaseSchema).max(STYLE_HISTORY_EVALUATION_MAX_CASES),
+    failures: z.array(z.string().min(1).max(500)).max(64),
+    review_outcomes: z.array(z.string().min(1).max(500)).max(64),
+  })
+  .strict()
+  .superRefine((report, context) => {
+    if (report.sample_size !== report.cases.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["sample_size"],
+        message: "Style history evaluation sample_size must equal cases length",
+      });
+    }
+    const matchedCount = report.cases.filter((evaluationCase) => evaluationCase.matched).length;
+    if (report.matched_sample_size !== matchedCount) {
+      context.addIssue({
+        code: "custom",
+        path: ["matched_sample_size"],
+        message: "Style history evaluation matched_sample_size must equal matched cases",
+      });
+    }
+    if (report.sample_size > report.population) {
+      context.addIssue({
+        code: "custom",
+        path: ["sample_size"],
+        message: "Style history evaluation sample_size may not exceed population",
+      });
+    }
+    const seen = new Set<string>();
+    for (const [index, evaluationCase] of report.cases.entries()) {
+      if (seen.has(evaluationCase.held_out_example_id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["cases", index, "held_out_example_id"],
+          message: `Style history evaluation example may only appear once: ${evaluationCase.held_out_example_id}`,
+        });
+      }
+      seen.add(evaluationCase.held_out_example_id);
+    }
+  });
+
+export const StyleHistoryEvaluationGoldenVectorSchema = z
+  .object({
+    id: z.string().min(1),
+    control_group: z.string().min(1),
+    snapshot: StyleHistorySnapshotSchema,
+    request: StyleHistoryEvaluationRequestSchema,
+    expected_report: StyleHistoryEvaluationReportSchema,
   })
   .strict();
 

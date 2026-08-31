@@ -2679,3 +2679,34 @@ Cloud-analyzer checkpoint:
   history`; `git status --short --branch` and `git show --stat --oneline
   --summary HEAD` confirmed a clean `codex/roadmap-t09` worktree with the
   expected eight-file commit. No remote operation was performed.
+
+## 2026-08-31 - T46 held-out Style Memory evaluation boundary
+
+- A targeted `rg` inspection initially used the unavailable Unix `head`
+  command and failed with PowerShell's command-not-found error; no project
+  state changed. The same inspection was rerun with PowerShell
+  `Select-Object` and confirmed the T45 registry locations.
+- Added a versioned Style Memory evaluation contract with a frozen,
+  hash-identified shoot-level split, explicit construction/held-out/excluded
+  shoot sets, strict split coverage validation, held-out case/report schemas,
+  population/sample-size/evidence-confidence metrics, failure/review outcome
+  disclosure, deterministic truncation, and isolated golden-vector runners.
+- Added `evaluateStyleHistoryHeldOut`, which builds retrieval input only from
+  construction shoots, evaluates only held-out examples, records failed or
+  context-incomplete cases as review-required, and never reads or mutates
+  Lightroom, photos, RAW metadata, or backend settings.
+- The first T46 targeted `npm.cmd run check` and
+  `npm.cmd test -- --run tests/style-history-evaluation.test.ts` exposed a
+  missing `StyleHistoryEvaluationCaseSchema` import. After adding the import,
+  `npx.cmd prettier --write src/style-history-evaluation.ts`,
+  `npm.cmd run check`, and the targeted suite passed (1 file / 4 tests).
+- T46 documentation was added to `README.md`, `README.zh-TW.md`, and
+  `docs/implementation/v0.3.md`. Final formatting used
+  `npx.cmd prettier --write src/schemas.ts src/types.ts src/index.ts
+  src/style-history-evaluation.ts tests/style-history-evaluation.test.ts
+  README.md README.zh-TW.md docs/implementation/v0.3.md`.
+- Final T46 verification passed `npm.cmd run check`, `npm.cmd test` (13 files
+  / 128 tests), `npm.cmd run lint`, `npm.cmd run build`, changed-source/
+  test/docs `npx.cmd prettier --check`, and `git diff --check`; diff output
+  contained only normal LF-to-CRLF warnings. No remote issue, push, merge, PR,
+  or issue closure was performed.

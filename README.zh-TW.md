@@ -83,6 +83,10 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
   lens、ISO、delivery 做 scene-conditioned matching。可選的 perceptual profile 只產生
   relationship，不複製 raw settings；受保護的 natural-skin reference、失敗例、無關
   match 與低 confidence history 都會被排除並留下明確 outcome。
+- Style Memory 的 held-out evaluation 將 construction 與 held-out membership 固定在
+  shoot 層級，只能從 construction shoots 檢索；failed 或 context 不完整的 held-out
+  case 不納入有效 scoring，並回報 population、sample size、evidence confidence、
+  failures 與 review outcomes。
 - 單張 apply 會先唯讀並驗證 Master；只有明確允許 apply 且計畫含可執行調整時，
   才建立一份帶 session 標記的 Workflow Copy。checkpoint、Develop mutation、讀回與
   render 只會指向已驗證的 Copy。dry-run／no-op 不會建立 Copy；輸入已是 Virtual

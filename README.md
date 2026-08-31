@@ -117,6 +117,10 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   Optional perceptual profiles produce relationships rather than copied raw
   settings; protected natural-skin references, failed examples, irrelevant
   matches, and low-confidence history are excluded with explicit outcomes.
+- Style Memory held-out evaluation freezes construction and held-out membership
+  at the shoot level, retrieves only from construction shoots, excludes failed
+  or context-incomplete held-out cases from scoring, and reports population,
+  sample size, evidence confidence, failures, and review outcomes.
 - A single-photo apply reads and verifies the Master first, then lazily creates
   one session-marked Workflow Copy only when apply is approved and the plan has
   an executable adjustment. Checkpoints, Develop mutation, read-back, and render

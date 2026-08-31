@@ -91,6 +91,11 @@ import type {
   StylePriorRequestSchema,
   StylePriorSchema,
   StyleHistoryExampleSchema,
+  StyleHistoryEvaluationCaseSchema,
+  StyleHistoryEvaluationGoldenVectorSchema,
+  StyleHistoryEvaluationReportSchema,
+  StyleHistoryEvaluationRequestSchema,
+  StyleHistoryEvaluationSplitSchema,
   StyleHistoryGoldenVectorSchema,
   StyleHistoryMatchSchema,
   StyleHistoryQuerySchema,
@@ -162,6 +167,13 @@ export type StyleHistoryQuery = z.infer<typeof StyleHistoryQuerySchema>;
 export type StyleHistoryMatch = z.infer<typeof StyleHistoryMatchSchema>;
 export type StyleHistoryRetrieval = z.infer<typeof StyleHistoryRetrievalSchema>;
 export type StyleHistoryGoldenVector = z.infer<typeof StyleHistoryGoldenVectorSchema>;
+export type StyleHistoryEvaluationSplit = z.infer<typeof StyleHistoryEvaluationSplitSchema>;
+export type StyleHistoryEvaluationRequest = z.infer<typeof StyleHistoryEvaluationRequestSchema>;
+export type StyleHistoryEvaluationCase = z.infer<typeof StyleHistoryEvaluationCaseSchema>;
+export type StyleHistoryEvaluationReport = z.infer<typeof StyleHistoryEvaluationReportSchema>;
+export type StyleHistoryEvaluationGoldenVector = z.infer<
+  typeof StyleHistoryEvaluationGoldenVectorSchema
+>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;
