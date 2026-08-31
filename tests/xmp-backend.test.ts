@@ -1,4 +1,4 @@
-import { readFile, mkdtemp, writeFile } from "node:fs/promises";
+import { copyFile, readFile, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -68,9 +68,62 @@ describe("T59 XMP sidecar backend", () => {
     expect(await readFile(destinationPath, "utf8")).toContain('crs:Exposure2012="0.2"');
   });
 
-  it("refuses source overwrite and preserves a pre-existing sidecar", async () => {
+  it("emits Lightroom import metadata and preserves tint for custom white balance", async () => {
+    const { sourcePath } = await fixture();
+    const plan = translateIntent(
+      SemanticIntentPlanSchema.parse({
+        schema_version: "0.1.0",
+        creative_goal: "cool a warm cast without changing tint",
+        adjustments: [
+          {
+            parameter: "exposure",
+            direction: "increase",
+            strength: "slight",
+            rationale: "fixture",
+            confidence: 0.9,
+          },
+          {
+            parameter: "temperature",
+            direction: "decrease",
+            strength: "slight",
+            rationale: "fixture",
+            confidence: 0.9,
+          },
+        ],
+        overall_confidence: 0.9,
+      }),
+    );
+    const destinationPath = join(
+      await mkdtemp(join(tmpdir(), "photo-agent-t59-xmp-wb-")),
+      "sample.xmp",
+    );
+
+    const result = await new XmpSidecarBackend().exportXmpSidecar({
+      sourcePath,
+      destinationPath,
+      currentSettings: { Exposure2012: 0, Temperature: 4850, Tint: 31 },
+      plan,
+    });
+    const content = await readFile(destinationPath, "utf8");
+
+    expect(result.settings).toEqual({
+      Exposure2012: 0.2,
+      Temperature: 4600,
+      Tint: 31,
+      WhiteBalance: "Custom",
+    });
+    expect(content).toContain('crs:Version="18.5"');
+    expect(content).toContain('crs:CompatibleVersion="285212672"');
+    expect(content).toContain('crs:ProcessVersion="15.4"');
+    expect(content).toContain('crs:HasSettings="True"');
+    expect(content).toContain('crs:Temperature="4600"');
+    expect(content).toContain('crs:Tint="31"');
+  });
+
+  it("refuses source and existing-sidecar destinations without losing unrelated XMP fields", async () => {
     const { root, sourcePath, plan } = await fixture();
     const backend = new XmpSidecarBackend();
+    const sourceBefore = await readFile(sourcePath);
     await expect(
       backend.exportXmpSidecar({
         sourcePath,
@@ -79,9 +132,14 @@ describe("T59 XMP sidecar backend", () => {
         plan,
       }),
     ).rejects.toThrow(/source asset/i);
+    await expect(readFile(sourcePath)).resolves.toEqual(sourceBefore);
 
     const destinationPath = join(root, "existing.xmp");
-    await writeFile(destinationPath, "do not replace", "utf8");
+    await copyFile(
+      new URL("./fixtures/existing-sidecar-with-unrelated-fields.xmp", import.meta.url),
+      destinationPath,
+    );
+    const sidecarBefore = await readFile(destinationPath);
     await expect(
       backend.exportXmpSidecar({
         sourcePath,
@@ -90,7 +148,10 @@ describe("T59 XMP sidecar backend", () => {
         plan,
       }),
     ).rejects.toThrow(/overwrite|existing/i);
-    await expect(readFile(destinationPath, "utf8")).resolves.toBe("do not replace");
+    const sidecarAfter = await readFile(destinationPath);
+    expect(sidecarAfter).toEqual(sidecarBefore);
+    expect(sidecarAfter.toString("utf8")).toContain('xmp:Rating="4"');
+    expect(sidecarAfter.toString("utf8")).toContain("protected-keyword");
   });
 
   it("fails before creating output for an unsupported normalized setting", async () => {

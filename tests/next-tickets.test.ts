@@ -366,7 +366,7 @@ describe("T16 baseline Parameter Registry", () => {
           warnings: [],
         },
       ),
-    ).toEqual({ Exposure2012: 1.25, Temperature: 5450, WhiteBalance: "Custom" });
+    ).toEqual({ Exposure2012: 1.25, Temperature: 5450, Tint: 0, WhiteBalance: "Custom" });
     expect(
       selectPropagatableOperations(
         {
@@ -407,6 +407,74 @@ describe("T16 baseline Parameter Registry", () => {
         warnings: [],
       }),
     ).toThrow(/Unsupported parameter registry version/);
+  });
+
+  it("requires the complete custom-white-balance capability before mutation", () => {
+    const temperatureOnlyPlan = {
+      schema_version: "0.1.0" as const,
+      operations: [
+        {
+          parameter: "temperature_k" as const,
+          mode: "delta" as const,
+          value: -250,
+          confidence: 0.9,
+          rationale: "white balance fixture",
+        },
+      ],
+      warnings: [],
+    };
+    const tintOnlyPlan = {
+      schema_version: "0.1.0" as const,
+      operations: [
+        {
+          parameter: "tint" as const,
+          mode: "delta" as const,
+          value: 5,
+          confidence: 0.9,
+          rationale: "white balance fixture",
+        },
+      ],
+      warnings: [],
+    };
+    const partialManifest = BackendCapabilityManifestSchema.parse({
+      ...MOCK_CAPABILITIES,
+      operations: {
+        ...MOCK_CAPABILITIES.operations,
+        apply_global_adjustment: {
+          ...MOCK_CAPABILITIES.operations.apply_global_adjustment,
+          supported_settings: ["Temperature"],
+        },
+      },
+    });
+    const completeManifest = BackendCapabilityManifestSchema.parse({
+      ...partialManifest,
+      operations: {
+        ...partialManifest.operations,
+        apply_global_adjustment: {
+          ...partialManifest.operations.apply_global_adjustment,
+          supported_settings: ["Temperature", "Tint", "WhiteBalance"],
+        },
+      },
+    });
+    const tintOnlyManifest = BackendCapabilityManifestSchema.parse({
+      ...partialManifest,
+      operations: {
+        ...partialManifest.operations,
+        apply_global_adjustment: {
+          ...partialManifest.operations.apply_global_adjustment,
+          supported_settings: ["Tint"],
+        },
+      },
+    });
+
+    expect(() => assertBackendSupportsPlan(partialManifest, temperatureOnlyPlan)).toThrow(
+      /Tint, WhiteBalance/,
+    );
+    expect(() => assertBackendSupportsPlan(tintOnlyManifest, tintOnlyPlan)).toThrow(
+      /Temperature, WhiteBalance/,
+    );
+    expect(() => assertBackendSupportsPlan(completeManifest, temperatureOnlyPlan)).not.toThrow();
+    expect(() => assertBackendSupportsPlan(completeManifest, tintOnlyPlan)).not.toThrow();
   });
 });
 

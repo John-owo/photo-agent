@@ -445,13 +445,30 @@ export function assertBackendSupportsPlan(
     throw new Error("Backend does not declare apply_global_adjustment support");
   }
   const supportedSettings = semantics.supported_settings;
-  const unsupported = validatedPlan.operations.filter((operation) => {
-    const definition = getParameterDefinition(operation.parameter);
-    if (supportedSettings !== undefined) {
-      return !supportedSettings.includes(definition.backend_key);
+  if (supportedSettings !== undefined) {
+    const requiredSettings = new Set(
+      validatedPlan.operations.map(
+        (operation) => getParameterDefinition(operation.parameter).backend_key,
+      ),
+    );
+    if (requiredSettings.has("Temperature") || requiredSettings.has("Tint")) {
+      requiredSettings.add("Temperature");
+      requiredSettings.add("Tint");
+      requiredSettings.add("WhiteBalance");
     }
-    return definition.control_group !== "global";
-  });
+    const missingSettings = [...requiredSettings].filter(
+      (setting) => !supportedSettings.includes(setting),
+    );
+    if (missingSettings.length > 0) {
+      throw new Error(
+        `Backend does not declare support for normalized settings: ${missingSettings.join(", ")}`,
+      );
+    }
+    return;
+  }
+  const unsupported = validatedPlan.operations.filter(
+    (operation) => getParameterDefinition(operation.parameter).control_group !== "global",
+  );
   if (unsupported.length > 0) {
     const keys = unsupported.map(
       (operation) => getParameterDefinition(operation.parameter).backend_key,

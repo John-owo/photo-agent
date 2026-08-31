@@ -3151,3 +3151,404 @@ Cloud-analyzer checkpoint:
 - The follow-up worklog-only commit `00a0de0 docs: record plugin backend
   verification` was created successfully; the preceding status/log check
   showed the expected clean `codex/roadmap-t09` worktree.
+
+## 2026-08-31 T59 real XMP/Lightroom round-trip verification
+
+- Read the referenced task `01a05643-8e9d-72f0-ad62-b96c5c7f56ec` before
+  relying on its T59 continuation instructions. The attached Lightroom status
+  screenshot was treated as evidence/context, not as an instruction. Its
+  `Running: true` state showed the plugin had started, while sockets were not
+  connected and requests were still zero at capture time.
+- Read `D:\photo\PHOTO_WORKSPACE.md`, the active worktree `AGENTS.md` and
+  `WORKLOG.md`, the Lightroom checkout boundary files, and the RAW/Lightroom
+  skill references before the live check. No photo-library file was moved,
+  renamed, deleted, or overwritten.
+- Attempted the user-authorized Computer Use fallback through the documented
+  node bridge. Initialization failed twice before any UI input with
+  `Importing module "node:process" is not allowed in node_repl`; no Computer
+  Use action was performed.
+- `Get-NetTCPConnection -LocalPort 58763,58764` initially found no client
+  connection. A sandboxed start of the configured Lightroom MCP server failed
+  because the sandbox could not read the existing token file:
+  `Lightroom MCP token file not found at C:\Users\John\.config\lightroom-mcp\token`.
+  The exact temporary bridge process was stopped; no catalog or photo state
+  changed in that attempt.
+- Started the configured server entry
+  `D:\photo\lightroom-mcp-john\server\dist\index.js` with plugin install
+  disabled and an isolated lock directory, using the existing token only.
+  The controlled bridge connected to request port `58763` and response port
+  `58764`; MCP `initialize` and `tools/list` passed against
+  `lightroom-mcp-server` `0.10.0` with 18 tools. The bridge was stopped cleanly
+  after verification.
+- Live MCP `search_photos(filename=DSC_5349)` found the original
+  `E:\Lr\2026\2026-07-25\DSC_5349.NEF` as catalog id `976316`; the selected-photo
+  check also identified that original. Baseline metadata readback was
+  `Exposure 0`, `WhiteBalance As Shot`, `Temperature 4850`, `Tint 31`.
+- Source preflight and post-check passed: the original RAW remained
+  `19,045,888` bytes with SHA-256
+  `0DD6DAF48F5D3683A847F79C0D59226F600913D93BF6398008CF21BD1AD34A82`, and no
+  adjacent source XMP existed before or after the test. A copy-only RAW in
+  `_agent_workspace\lightroom\verification\t59-xmp-roundtrip-20260831-dsc5349`
+  had the same size and hash.
+- `npm.cmd run build` passed in the active worktree. The documented
+  `node dist/src/cli.js export-xmp` command passed against the copied RAW and
+  created `DSC_5349.xmp` with `Exposure2012=0.2`, `Temperature=4600`, and
+  `WhiteBalance=Custom`. XML parsing passed; the output correctly reported
+  `render_verified=false` and `visual_acceptance=REVIEW_REQUIRED`. The XMP
+  lacked `HasSettings`, `Version`, `CompatibleVersion`, `ProcessVersion`, and
+  explicit `Tint` fields.
+- Live MCP `import_photos` imported only the copied RAW, not the original, as
+  catalog id `1011831`. Readback was partial and failed the intended exact
+  round-trip: exposure `0.2` passed and WB mode `Custom` passed, but
+  temperature read `5500` instead of `4600`, and tint read `10` instead of the
+  existing `31`.
+- Created a second copy-only diagnostic sidecar in
+  `_agent_workspace\lightroom\verification\t59-xmp-roundtrip-20260831-dsc5349-variant`
+  with standard Lightroom version/process fields, `HasSettings=True`, and
+  explicit `Tint=+31`. Live MCP imported it as catalog id `1012002`; readback
+  passed exactly: `Exposure 0.2`, `Temperature 4600`, `Tint 31`, and
+  `WhiteBalance Custom`. This isolates the failure to the current minimal XMP
+  output format. No product source was changed.
+- Wrote the verification evidence README at
+  `D:\photo\_agent_workspace\lightroom\verification\t59-xmp-roundtrip-20260831-dsc5349\README.md`.
+  The final bridge check reported no client connections on ports `58763` and
+  `58764`; Lightroom's log recorded the client disconnect. The original
+  catalog item's post-check still read `Exposure 0`, `As Shot`, `4850`, `31`.
+- Result: local T59 build/tests remain passing, but the real Lightroom
+  round-trip is `REVIEW_REQUIRED` / not accepted until the exporter emits the
+  required fields and a separate visual/human gate is completed. No render or
+  human visual acceptance was claimed in this run.
+- Final verification commands: `git diff --check` passed with only the
+  repository's normal LF-to-CRLF working-copy warning; `git status --short
+  --branch` showed `codex/roadmap-t09` with only the intended `WORKLOG.md`
+  modification; `git diff --stat` reported 67 inserted lines in `WORKLOG.md`.
+- Post-log verification also passed: `git diff --check` emitted only the
+  normal LF-to-CRLF warning, `git status --short --branch` still showed only
+  `M WORKLOG.md`, and the T59 section starts at line 3155.
+
+## 2026-08-31 T59 exporter fix
+
+- Re-read the active worktree instructions and T59 verification evidence before
+  changing code. Targeted source inspection localized the defect to
+  `resolveLightroomSettings` dropping the current Tint when a temperature
+  operation creates a custom white balance, and `createXmpSidecar` emitting no
+  Lightroom version/process/settings metadata.
+- Added a regression test in `tests/xmp-backend.test.ts` for the exact real
+  Lightroom case (`Temperature 4850 -> 4600`, existing `Tint 31`). The
+  pre-fix `npm.cmd test -- tests/xmp-backend.test.ts` run failed as expected:
+  the resolved settings omitted `Tint`; the other four tests passed.
+- One targeted inspection command initially requested missing files
+  `tests/translator.test.ts` and `tests/xmp.test.ts`; those paths do not exist
+  in this worktree. The available XMP coverage is in `tests/xmp-backend.test.ts`
+  and `tests/workflow.test.ts`. A separate initial config read requested the
+  missing `eslint.config.mjs`; the worktree uses `eslint.config.js`.
+
+- Implemented the T59 fix in `src/translator.ts` and `src/xmp.ts`: custom white
+  balance now carries both the changed temperature and the current numeric
+  Tint, and generated sidecars now include the Lightroom compatibility/process
+  metadata plus a dynamic `HasSettings` marker. The pre-fix regression test is
+  now covered by the implementation.
+- Updated the translator golden expectation for the complete custom WB state.
+  Targeted verification `npm.cmd test -- tests/xmp-backend.test.ts
+  tests/next-tickets.test.ts` passed: 2 files, 22 tests.
+- Verification `npm.cmd run check` passed (`tsc --noEmit`).
+- Verification `npm.cmd run lint` passed (`eslint .`).
+- Verification `npm.cmd run format:check` failed on the repository's known
+  formatting baseline: Prettier reported 23 pre-existing files, including
+  `WORKLOG.md`; this is not limited to the T59 changes.
+- Targeted verification `npx.cmd prettier --check src/translator.ts src/xmp.ts
+  tests/xmp-backend.test.ts tests/next-tickets.test.ts` passed; all changed
+  source and test files are formatted.
+- Full verification `npm.cmd test` passed: 23 test files, 173 tests.
+- Full verification `npm.cmd run build` passed (`tsc -p tsconfig.json`).
+- Created a new copy-only live verification folder
+  `D:\photo\_agent_workspace\lightroom\verification\t59-xmp-roundtrip-20260831-dsc5349-fixed`,
+  copied the source RAW without moving/renaming it, and reused the recorded
+  baseline settings JSON. The copied RAW was `19,045,888` bytes.
+- Ran the rebuilt CLI `node dist/src/cli.js export-xmp` against the new copy;
+  it passed and produced settings `{ Exposure2012: 0.2, Temperature: 4600,
+  Tint: 31, WhiteBalance: Custom }`, with the truthful
+  `render_verified=false` / `visual_acceptance=REVIEW_REQUIRED` result.
+- Parsed the rebuilt XMP as XML and checked all eight expected fields; parser
+  and field-presence verification passed. Artifact size was 890 bytes and its
+  SHA-256 was
+  `EB4388050F54D2B0037DD988D25B63EDEFF6BF6273CF622C19971A8CBE8B6CF2`.
+- Restarted the controlled Lightroom MCP bridge against the rebuilt CLI and
+  imported only the fixed copy as catalog id `1012175`. Live Lightroom
+  readback passed exactly: `Exposure 0.2`, `Temperature 4600`, `Tint 31`, and
+  `WhiteBalance Custom`.
+- Live post-fix safety verification of original catalog id `976316` passed:
+  it remained `Exposure 0`, `As Shot`, `Temperature 4850`, `Tint 31`. The
+  original RAW remained `19,045,888` bytes with the recorded SHA-256 and still
+  had no adjacent XMP. The bridge was stopped; the final socket check reported
+  `NO_BRIDGE_CLIENT_CONNECTIONS`, and the Lightroom log recorded the client
+  disconnect.
+- The first attempt to patch the verification README failed because its
+  expected context did not match the actual line wrapping; no file was changed
+  by that failed patch. A narrower patch then updated the README with the
+  post-fix import/readback result and retained the visual-review boundary.
+- Final diff review verification passed: `git diff --check` reported no
+  whitespace errors and only the repository's normal LF-to-CRLF warnings;
+  `git status --short --branch` showed only the intended five worktree files
+  modified on `codex/roadmap-t09` (`WORKLOG.md`, `src/translator.ts`,
+  `src/xmp.ts`, and the two related test files).
+
+## 2026-08-31 T59 Lightroom render verification
+
+- Created the new empty render destination
+  `D:\photo\_agent_workspace\lightroom\verification\t59-xmp-roundtrip-20260831-dsc5349-fixed\render-20260831`
+  for the fixed-copy export. No source or catalog develop mutation was
+  requested or performed.
+- Started the controlled Lightroom MCP bridge and exported catalog id
+  `1012175` as one JPEG to the new empty destination. Lightroom reported
+  `Exported 1 photos`; the output was `DSC_5349.jpg` at 6048x4032. The first
+  post-export metadata command was run from `D:\photo` rather than the
+  PhotoAgent worktree and failed with `ERR_MODULE_NOT_FOUND` for `sharp`; no
+  render file was affected and the socket cleanup check still reported no
+  bridge client connections.
+- Re-ran the render-file verification from the active worktree. `sharp`
+  decoded the JPEG successfully as 6048x4032 sRGB, 3-channel, non-progressive
+  JPEG with an embedded profile; channel statistics had non-constant full
+  ranges. The render SHA-256 is
+  `7054EDCE416CDF95D9A326412C052B96F2601A8DF9492A88D504ADC350C83496`.
+  A 1200x800 PNG inspection derivative was generated at
+  `D:\photo\_agent_workspace\lightroom\verification\t59-xmp-roundtrip-20260831-dsc5349-fixed\render-20260831\DSC_5349-preview.png`.
+  Visual inspection of that derivative showed the complete squirrel frame;
+  the earlier gray lower half was a large-JPEG previewer issue, not a
+  Lightroom export failure. Final socket check reported
+  `NO_BRIDGE_CLIENT_CONNECTIONS`.
+- Final worktree verification passed: `git diff --check` found no whitespace
+  errors and only the repository's normal LF-to-CRLF warnings; `git status`
+  showed the five intended modified worktree files on `codex/roadmap-t09`.
+
+## 2026-08-31 T09/T58-T60 validation handoff
+
+- Created the non-overwriting handoff artifact
+  `D:\photo\_agent_workspace\lightroom\handoffs\photo-agent-roadmap-t09-t58-t60-validation-handoff-20260831-v3.md`.
+- The handoff separates completed T58/T60 local implementation and T59 live
+  XMP/render evidence from the still-unverified Lightroom virtual-copy,
+  larger-adjustment, mask/new-feature, reopen/read-back, existing-XMP
+  preservation, and current human-render gates. It records the exact
+  worktree, branch, source-safety boundary, evidence paths, and next-run
+  sequence for a sleeping-user continuation.
+- The older handoffs were preserved; no photo, RAW, sidecar, Lightroom
+  checkout, catalog, remote issue, push, merge, or issue closure was changed.
+- Handoff verification passed: `Get-Item` confirmed the new file exists at
+  5,857 bytes; targeted `rg` found all required sections; `git diff --check`
+  found no whitespace errors and only the repository's normal LF-to-CRLF
+  warnings; status remained the five intended T59 files modified on
+  `codex/roadmap-t09`.
+
+## 2026-08-31 T09 validation continuation from handoff v3
+
+- Resumed from the v3 handoff without re-running the already-passed full test
+  suite. Read the workspace/project instructions, the RAW/Lightroom skill and
+  its workflow/style/MCP references, then confirmed the active worktree is
+  `codex/roadmap-t09` at `34a3112` with the five intentionally preserved T59
+  modifications.
+- A delegated, bounded test task strengthened the existing-XMP safety proof.
+  `tests/xmp-backend.test.ts` now copies a synthetic existing sidecar containing
+  Camera Raw settings plus unrelated XMP Rating, Label, and keyword fields,
+  then verifies that create-only export refuses the destination and leaves the
+  source and sidecar byte-for-byte unchanged. Added the synthetic fixture at
+  `tests/fixtures/existing-sidecar-with-unrelated-fields.xmp`; no production
+  source, photo, real sidecar, or Lightroom catalog item was changed.
+- This proof intentionally covers create-only/refuse-existing behavior. It does
+  not claim that PhotoAgent merges settings into an existing XMP, nor does it
+  prove a real existing-sidecar Lightroom round trip.
+- Delegated verification passed: `npm.cmd test -- tests/xmp-backend.test.ts`
+  (1 file / 5 tests), targeted TypeScript Prettier, XML parsing of the fixture,
+  and targeted `git diff --check`. The first delegated Prettier command that
+  also passed the `.xmp` fixture failed because Prettier could not infer an XMP
+  parser; the corrected split used Prettier for TypeScript and a real XML parser
+  for the XMP fixture.
+- Main-agent integration verification repeated the narrow checks successfully:
+  `npm.cmd test -- tests/xmp-backend.test.ts` passed 5/5, targeted Prettier
+  passed, PowerShell `[xml]` parsing printed `FIXTURE_XML_PARSE_PASS`, and
+  targeted `git diff --check` found no whitespace error (only the normal
+  LF-to-CRLF warning).
+- Targeted inspection of the configured `D:\photo\lightroom-mcp-john` source
+  found the current bridge's read/global-adjustment/export surface but no
+  executable `create_virtual_copy` or local-mask mutation tool. An initial
+  compound `rg` command failed from malformed PowerShell/regex quoting; the
+  corrected literal/targeted searches completed and found no virtual-copy or
+  local-mask implementation in that checkout.
+- Lightroom PID `201012` was running and responsive during the preflight. The
+  latest plugin log recorded the prior successful T59 import/readback/export,
+  but no bridge client was connected during this continuation.
+- Per the handoff's authorized fallback, Computer Use initialization was
+  attempted before any UI action. The direct `@oai/sky` import failed with
+  `Importing module "node:process" is not allowed in node_repl`; a clean kernel
+  reset and one retry failed identically. No Lightroom UI input, virtual copy,
+  Develop mutation, mask, render, source-file write, or remote operation was
+  performed. The 5349 virtual-copy/mask/reopen/render gate therefore remains
+  blocked on a human Lightroom UI step or a future working Computer Use/runtime
+  or mask-capable backend.
+- A subsequent read-only configuration check corrected the handoff's stale
+  backend-path assumption: `D:\photo\.codex\config.toml` currently points to
+  `D:\photo\_agent_workspace\git-worktrees\lightroom-mcp-roadmap-integration\server\dist\index.js`,
+  whose static contract contains `create_virtual_copy` and
+  `reconcile_virtual_copy`. The earlier `D:\photo\lightroom-mcp-john` checkout
+  remains an 18-tool surface and was not modified.
+- An initial targeted `rg` over the integration E2E runner failed because the
+  compound regex was malformed by PowerShell quoting. Corrected literal
+  searches located the supported one-shot MCP runner without changing files.
+- The first sandboxed live `list-tools` probe failed before an MCP call because
+  it could not create `C:\Users\John\.config\lightroom-mcp`. The approved
+  unsandboxed retry then failed safely because an existing bridge lock named
+  PID `75184`. Read-only process and elevated command-line checks verified that
+  exact PID as the old 18-tool
+  `D:\photo\lightroom-mcp-john\server\dist\index.js`; it held no current
+  58763/58764 socket. With explicit approval, only that Node bridge PID was
+  stopped. Lightroom PID `201012` remained running and untouched.
+- A fresh approved live `tools/list` through the configured integration server
+  succeeded and exposed 20 tools, including the identity-safe
+  `create_virtual_copy` and read-only `reconcile_virtual_copy`. It still exposed
+  no subject/sky/brush mask create, mutation, or readback API.
+- Live Master readback for catalog id `976316` confirmed UUID
+  `CE78E689-61FE-490E-B1B2-4D29A1D510E4`, `is_virtual_copy=false`, zero prior
+  Virtual Copies, and the preserved baseline Exposure `0`, Contrast `0`,
+  Highlights `0`, Shadows `0`, Vibrance `0`, White Balance `As Shot`,
+  Temperature `4850`, and Tint `31`.
+- `create_virtual_copy` ran once with fixed operation id
+  `t09-5349-mask-validation-20260831-v1` and returned `created`, not a timeout.
+  It created Workflow Copy catalog id `1012348`, UUID
+  `B36C05B4-FECC-4D09-8E9A-59DAFD772345`, with verified Master relationship and
+  verified selection restoration. No retry or reconciliation call was needed.
+- Copy metadata readback confirmed the same Master UUID and unchanged Develop
+  baseline. A new, initially empty validation root was created at
+  `D:\photo\_agent_workspace\lightroom\verification\t09-5349-virtual-copy-mask-validation-20260831-v1`;
+  Lightroom exported the baseline Copy into `before-global-mask`.
+- Applied only five absolute global values to Copy `1012348`: Exposure `0.5`,
+  Contrast `15`, Highlights `-20`, Shadows `20`, and Vibrance `10`. The live
+  mutation returned success; immediate readback matched all five values
+  exactly. A separate Master readback remained at the original values and now
+  listed exactly the one expected Workflow Copy.
+- Lightroom exported the global-adjusted, pre-mask Copy into the separate new
+  `after-global-before-mask` folder. Both before/global-after JPEGs decoded as
+  full-size 6048x4032 sRGB, 3-channel JPEGs with embedded ICC profiles and
+  non-constant channel ranges. Their SHA-256 values are respectively
+  `C7A951401E5340EEA4431500E782D05DE2E79A83119E40F9BE9C9C2B68B1034D`
+  and `E1A92EBCE49D2D7D2044732FED5BFB9BE3233BCE53208CD637E2D25FAA662750`.
+  This is technical evidence only; no visual acceptance is claimed.
+- Source post-check passed: `DSC_5349.NEF` remained `19,045,888` bytes with
+  SHA-256
+  `0DD6DAF48F5D3683A847F79C0D59226F600913D93BF6398008CF21BD1AD34A82`,
+  its recorded timestamp, and no adjacent XMP.
+- Added the non-source evidence README under the new validation root. It records
+  the stable identities, settings, render hashes, and the only remaining manual
+  step: on Copy `1012348`, create `T09 Subject Local`, set local Exposure
+  `+0.35` and Temp `+8`, confirm global sliders, close/reopen Lightroom, and
+  confirm the mask persists. The `after-mask` folder remains intentionally
+  empty. Final mask render/readback and the user's human render gate remain
+  pending; MCP cannot substitute for mask-tree UI verification.
+- Final local checks confirmed the README exists, `after-mask` contains zero
+  files, old bridge PID `75184` is absent, and there are zero established
+  58763/58764 bridge connections. PhotoAgent `git diff --check` passed with only
+  normal line-ending warnings; status contains the preserved T59 files plus the
+  new XMP fixture.
+- The first cross-worktree `git -C ... status` check failed with Git's dubious
+  ownership guard under the sandbox user. A non-persistent per-command
+  `-c safe.directory=...` retry succeeded: the integration worktree still has
+  only its pre-existing modified `WORKLOG.md`, and integration `git diff
+  --check` reported no whitespace error (only the normal line-ending warning).
+  No global Git configuration was changed.
+
+## 2026-09-01 final validation continuation
+
+- Resumed from
+  `photo-agent-roadmap-t09-t58-t60-validation-handoff-20260831-v3.md` and
+  re-read the workspace/project rules plus the RAW/Lightroom skill references.
+  The supplied screenshot was inspected and shows Lightroom MCP running with
+  both request and response sockets enabled; it is connectivity evidence only,
+  not render acceptance.
+- The user explicitly authorized force termination of Lightroom PID `224616`.
+  A subsequent read-only `Get-Process -Id 224616` check returned
+  `PID_224616_ABSENT`. The original catalog and source assets remain preserved;
+  all successful T62 operations used the isolated catalog copy.
+- Re-measured the authoritative T62 `clean-v3` before/after pair with Sharp raw
+  RGB output. Pixels with maximum-channel delta over 10 occupied `6.6269%` of
+  the frame with bounding box `x=363..1413`, `y=536..948`. In the normalized
+  Brush corridor `x=0.15..0.72`, `y=0.39..0.67`, mean maximum-channel delta was
+  `9.6553` and `41.5432%` exceeded 10; outside it, mean was `0.0468` and only
+  `0.0025%` exceeded 10. The inside/outside mean ratio was `206.41`. This is
+  objective evidence of a localized edit rather than a whole-frame shift.
+- Delegated repetitive regression to a Luna worker. Fresh results: targeted
+  `tests/xmp-backend.test.ts` plus `tests/next-tickets.test.ts` passed `22/22`;
+  `npm run check`, lint, build, and changed-file Prettier checks passed; full
+  Vitest passed `23` files and `173/173` tests; the fixture parsed as real XML
+  and retained Rating `4` plus `protected-keyword`; `git diff --check` passed
+  with only the pre-existing line-ending warnings. The worker changed no files.
+- An independent XMP preservation audit confirmed the intended contract: the
+  exporter is create-only and refuses an entire operation when the target XMP
+  already exists. It does not merge settings into an existing sidecar, so no
+  merge-support claim is made.
+- Created a new non-overwriting verification package at
+  `D:\photo\_agent_workspace\lightroom\verification\t59-existing-xmp-preservation-20260901-dsc5349-v1`
+  from an already existing `_agent_workspace` RAW copy and the repository's
+  existing-XMP fixture. No file under `E:\Lr` was touched.
+- Ran the built CLI twice: output to the RAW path refused with exit `1` and
+  `XMP sidecar output cannot overwrite the source asset`; output to the
+  existing XMP refused with exit `1` and
+  `XMP sidecar refuses to overwrite existing file`. Before/after snapshots
+  proved the RAW remained `19,045,888` bytes with SHA-256
+  `0DD6DAF48F5D3683A847F79C0D59226F600913D93BF6398008CF21BD1AD34A82`
+  and the XMP remained `667` bytes with SHA-256
+  `15B5672C8003AA6B14CB0EE1EEF20F53FA71D2E9FD6FB4679920FF7EEFA1F67C`;
+  size and timestamps were unchanged. XML parsing passed and Rating `4`, Label
+  `Green`, and `protected-keyword` remained present. Temporary residue count
+  was zero. An earlier combined hash-table inventory did not render hashes
+  clearly, so the authoritative before/after snapshot script was run afterward.
+- Added the real-file preservation README and marked the old T09 manual mask
+  instructions as superseded by the clean T62 Brush validation. The agent-side
+  gates for handoff items 1-5 and 7 are now evidenced. Item 6 remains explicitly
+  user-owned: only the user can inspect the clean render pair and declare
+  `render PASS`.
+- A final delegated read-only diff review found one P2 capability-contract gap:
+  a temperature-only or tint-only plan resolves to the complete custom-WB
+  mutation (`Temperature`, `Tint`, and `WhiteBalance`), while
+  `assertBackendSupportsPlan` previously checked only the explicitly requested
+  backend key. A partial backend manifest could therefore pass before a
+  Workflow Copy was created and later receive undeclared settings.
+- Added a regression test for a backend declaring only `Temperature`. The
+  required red run `npm.cmd test -- tests/next-tickets.test.ts` failed exactly
+  because the partial manifest did not throw (`1` failed / `17` passed),
+  confirming the gap before the implementation changed.
+- Updated `assertBackendSupportsPlan` so any temperature/tint plan requires the
+  complete `Temperature`, `Tint`, and `WhiteBalance` setting set whenever the
+  backend provides an explicit `supported_settings` list. Backends without an
+  explicit list retain the existing control-group compatibility behavior.
+- Post-fix targeted verification passed: `tests/next-tickets.test.ts` plus
+  `tests/xmp-backend.test.ts` passed `23/23`; `npm.cmd run check` and
+  `npm.cmd run lint` also passed. A delegated final full-suite/build/format/diff
+  rerun was started after this fix.
+- Added the symmetric tint-only partial-capability assertion and reran the
+  targeted test plus formatting check: `tests/next-tickets.test.ts` passed
+  `18/18`, and Prettier passed for `src/parameter-registry.ts` and the test.
+- The final delegated regression after both custom-WB assertions were visible
+  passed: full Vitest `23` files / `174/174` tests, `npm.cmd run build`, targeted
+  Prettier for all six changed source/test files, and `git diff --check` all
+  exited `0`; diff-check output contained only normal LF-to-CRLF warnings.
+- A final independent read-only re-review found no remaining P1/P2 issues. It
+  confirmed the full custom-WB capability requirement is checked before
+  Workflow Copy creation in both single-photo and batch paths and that the
+  regression covers temperature-only, tint-only, and complete capability
+  manifests. Targeted reviewer verification passed `23/23`. Residual boundaries
+  remain explicit: no existing-XMP merge claim, no generalized cross-version
+  compatibility claim, and the user-owned human `render PASS` is still pending.
+- The first post-commit cross-worktree status command was launched from
+  `D:\photo` without the required per-command `-C` paths, so all four Git
+  subcommands failed safely with `fatal: not a git repository`; the separate
+  PID check still confirmed `PID_224616_ABSENT`. No files or Git state changed
+  from that failed read-only command. Corrected worktree-local status checks
+  followed.
+- A goal-continuation current-state audit rechecked both worktrees, the
+  authoritative T62 clean render hashes, the working-copy RAW/XMP hashes, the
+  explicit Subject/Sky and create-only boundaries, and PID `224616`. Both
+  branches were clean before this log update; all hashes matched the recorded
+  values and the PID remained absent.
+- Added the non-source final validation matrix
+  `D:\photo\_agent_workspace\lightroom\handoffs\photo-agent-t09-t58-t60-final-validation-matrix-20260901-v1.md`.
+  It maps all seven handoff requirements to current authoritative evidence and
+  keeps the overall goal active solely for the user-owned T62 clean-render
+  `render PASS`; no automated or agent visual check is presented as that gate.

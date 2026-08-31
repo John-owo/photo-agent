@@ -71,6 +71,24 @@ export function resolveLightroomSettings(
     settings[key] = Number(next.toFixed(4));
   }
   if (settings.Temperature !== undefined || settings.Tint !== undefined) {
+    if (settings.Temperature === undefined) {
+      const temperature = current.Temperature;
+      if (typeof temperature !== "number") {
+        throw new Error(
+          "Lightroom read-back did not provide numeric Temperature; refusing custom white balance",
+        );
+      }
+      settings.Temperature = Number(temperature.toFixed(4));
+    }
+    if (settings.Tint === undefined) {
+      const tint = current.Tint;
+      if (typeof tint !== "number") {
+        throw new Error(
+          "Lightroom read-back did not provide numeric Tint; refusing custom white balance",
+        );
+      }
+      settings.Tint = Number(tint.toFixed(4));
+    }
     settings.WhiteBalance = "Custom";
   }
   return settings;

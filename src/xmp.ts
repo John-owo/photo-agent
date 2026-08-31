@@ -6,6 +6,8 @@ import { resolveLightroomSettings } from "./translator.js";
 import type { NormalizedEditPlan } from "./types.js";
 
 const XMP_EXTENSION = ".xmp";
+type XmpValue = number | string | boolean;
+
 export const XMP_SUPPORTED_SETTINGS = [
   "WhiteBalance",
   "Temperature",
@@ -23,6 +25,22 @@ export const XMP_SUPPORTED_SETTINGS = [
   "Saturation",
 ] as const;
 const SUPPORTED_XMP_KEYS = new Set<string>(XMP_SUPPORTED_SETTINGS);
+
+// Lightroom accepts the settings reliably when the sidecar carries the same
+// compatibility metadata as a Lightroom/Camera Raw XMP export.
+const LIGHTROOM_XMP_METADATA: ReadonlyArray<readonly [string, XmpValue]> = [
+  ["PresetType", "Normal"],
+  ["SupportsAmount", false],
+  ["SupportsColor", true],
+  ["SupportsMonochrome", true],
+  ["SupportsHighDynamicRange", true],
+  ["SupportsNormalDynamicRange", true],
+  ["SupportsSceneReferred", true],
+  ["SupportsOutputReferred", true],
+  ["Version", "18.5"],
+  ["CompatibleVersion", 285212672],
+  ["ProcessVersion", "15.4"],
+];
 
 export type DevelopSettings = Record<string, number | string | boolean>;
 
@@ -46,20 +64,22 @@ function assertSupportedSettings(settings: DevelopSettings): void {
   }
 }
 
-/** Create a minimal Lightroom-compatible XMP sidecar for global develop settings. */
+/** Create a Lightroom-compatible XMP sidecar for global develop settings. */
 export function createXmpSidecar(settings: DevelopSettings): string {
   assertSupportedSettings(settings);
-  const attributes = Object.entries(settings)
-    .sort(([left], [right]) => left.localeCompare(right))
+  const attributes = [
+    ...LIGHTROOM_XMP_METADATA,
+    ["HasSettings", Object.keys(settings).length > 0] as const,
+    ...Object.entries(settings).sort(([left], [right]) => left.localeCompare(right)),
+  ]
     .map(([key, value]) => `        crs:${key}="${escapeXml(formatXmpValue(value))}"`)
     .join("\n");
-  const descriptionAttributes = attributes ? `\n${attributes}` : "";
   return [
     '<?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>',
     '<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="photo-agent v0.1">',
     '  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">',
     '    <rdf:Description rdf:about="" xmlns:crs="http://ns.adobe.com/camera-raw-settings/1.0/"',
-    `${descriptionAttributes} />`,
+    `\n${attributes} />`,
     "  </rdf:RDF>",
     "</x:xmpmeta>",
     '<?xpacket end="w"?>',
