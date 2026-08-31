@@ -70,6 +70,12 @@ import type {
   FinishingPayloadSchema,
   FinishingPlanSchema,
   FinishingReadbackSchema,
+  ColorGradingGoldenVectorSchema,
+  ColorGradingIntentSchema,
+  ColorGradingOperationSchema,
+  ColorGradingPayloadSchema,
+  ColorGradingPlanSchema,
+  ColorGradingReadbackSchema,
 } from "./schemas.js";
 
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
@@ -108,6 +114,12 @@ export type FinishingIntent = z.infer<typeof FinishingIntentSchema>;
 export type FinishingPlan = z.infer<typeof FinishingPlanSchema>;
 export type FinishingReadback = z.infer<typeof FinishingReadbackSchema>;
 export type FinishingGoldenVector = z.infer<typeof FinishingGoldenVectorSchema>;
+export type ColorGradingOperation = z.infer<typeof ColorGradingOperationSchema>;
+export type ColorGradingPayload = z.infer<typeof ColorGradingPayloadSchema>;
+export type ColorGradingIntent = z.infer<typeof ColorGradingIntentSchema>;
+export type ColorGradingPlan = z.infer<typeof ColorGradingPlanSchema>;
+export type ColorGradingReadback = z.infer<typeof ColorGradingReadbackSchema>;
+export type ColorGradingGoldenVector = z.infer<typeof ColorGradingGoldenVectorSchema>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;

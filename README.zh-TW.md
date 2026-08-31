@@ -65,6 +65,11 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
   bounded control，並保留 structured geometry readback。Crop／rotation 一律帶有
   明確的 per-photo human-review requirement；在真實 backend 證明 unrelated state
   preservation 前，propagation 仍禁止。
+- Modern Color Grading planning 依 process version 分界，將 shadows、midtones、
+  highlights、global wheel、blending、balance 分成獨立 bounded control。Legacy
+  split toning 沒有 fallback 路徑；只有 backend 明確宣告所需 process version、
+  controls、具體 settings 與 read／checkpoint／render prerequisite，才可進入未來
+  execution 評估。Propagation 仍禁止，不支援的 intent 會明確交給人工接手。
 - 單張 apply 會先唯讀並驗證 Master；只有明確允許 apply 且計畫含可執行調整時，
   才建立一份帶 session 標記的 Workflow Copy。checkpoint、Develop mutation、讀回與
   render 只會指向已驗證的 Copy。dry-run／no-op 不會建立 Copy；輸入已是 Virtual

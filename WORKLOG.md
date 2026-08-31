@@ -2506,3 +2506,50 @@ Cloud-analyzer checkpoint:
   docs `npx.cmd prettier --check`, and `git diff --check` with only normal
   LF-to-CRLF warnings. No remote issue, push, merge, PR, or issue closure was
   performed.
+- T38 was committed locally as `25823ab feat: add finishing framing
+  planning`; post-commit status was clean on `codex/roadmap-t09`. No remote
+  operation was performed.
+
+## 2026-08-31 - T40 truthful Color Grading planning boundary
+
+- Read-only `gh issue view 37 --repo John-owo/photo-agent --json ...` confirmed
+  T40 requires modern Color Grading translator golden vectors, capability
+  refusal, stable translation, readback, review behavior, and no silent mixing
+  with another control group. It remains blocked by PhotoAgent #31 and
+  Lightroom MCP #11.
+- Read-only `gh issue view 11 --repo John-owo/lightroom-mcp --json ...`
+  confirmed modern Color Grading must never advertise legacy split toning;
+  every declared control needs bounded write, Checkpoint, readback, render,
+  and live evidence, while unsupported process versions must omit the
+  capability instead of partially approximating it. It remains blocked by
+  Lightroom MCP #5 and PhotoAgent #6. No remote state changed.
+- Added the separate modern Color Grading registry and planning boundary:
+  process-version-scoped wheel controls, independently typed shared controls,
+  bounded settings, explicit capability/readback checks, manual-handoff
+  assessment, and isolated golden-vector runners. Legacy split toning has no
+  schema path in this registry, and the current adapter still has no
+  structured Color Grading mutation method.
+- `npm.cmd run check` passed. The first targeted
+  `npm.cmd test -- --run tests/color-grading.test.ts` run passed 5 tests but
+  exposed a test-only duplicate-vector fixture that passed runner output back
+  into the input schema; the fixture was corrected to reuse the original
+  vector input.
+- After the fixture correction, `npm.cmd test -- --run
+  tests/color-grading.test.ts` passed 1 file / 6 tests.
+- Final T40 verification initially passed `npm.cmd run check`, `npm.cmd test`
+  (9 files / 110 tests), `npm.cmd run build`, changed-source/test/docs
+  `npx.cmd prettier --check`, and `git diff --check`; `npm.cmd run lint`
+  exposed only a type-only import style error in the new module. The imports
+  were narrowed to `import type`; normal LF-to-CRLF warnings remained the only
+  diff-check output.
+- After the import correction, the second full verification passed `npm.cmd
+  run check`, `npm.cmd test` (9 files / 110 tests), `npm.cmd run lint`, and
+  `npm.cmd run build`. The changed-file Prettier check then exposed the
+  expected import-format difference in `src/color-grading.ts`; the file is
+  being formatted before the final verification pass. `git diff --check`
+  still reported only normal LF-to-CRLF warnings.
+- After formatting `src/color-grading.ts`, the final T40 verification passed
+  `npm.cmd run check`, `npm.cmd test` (9 files / 110 tests), `npm.cmd run lint`,
+  `npm.cmd run build`, changed-source/test/docs `npx.cmd prettier --check`,
+  and `git diff --check`; diff output contained only normal LF-to-CRLF
+  warnings. No remote issue, push, merge, PR, or issue closure was performed.

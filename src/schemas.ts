@@ -147,6 +147,20 @@ export const FINISHING_PROPAGATION_POLICY = {
   blocked_reason: "Finishing and framing changes require per-photo review before propagation",
 } as const;
 
+export const COLOR_GRADING_REGISTRY_VERSION = "0.1.0" as const;
+export const COLOR_GRADING_WHEEL_VARIANTS = [
+  "shadows",
+  "midtones",
+  "highlights",
+  "global",
+] as const;
+export const COLOR_GRADING_SHARED_CONTROLS = ["blending", "balance"] as const;
+export const COLOR_GRADING_PROPAGATION_POLICY = {
+  eligible: false,
+  blocked_reason:
+    "Modern Color Grading is process-version and photo-context sensitive; per-photo proof is required before propagation",
+} as const;
+
 export const SemanticAdjustmentSchema = z.object({
   parameter: z.enum(SEMANTIC_PARAMETERS),
   direction,
@@ -1096,6 +1110,182 @@ export const FinishingGoldenVectorSchema = z
     }
   });
 
+const ColorGradingHueSchema = z.number().finite().min(0).max(360);
+const ColorGradingSaturationSchema = z.number().finite().min(0).max(100);
+const ColorGradingLuminanceSchema = z.number().finite().min(-100).max(100);
+
+const ColorGradingWheelValueFieldsSchema = z
+  .object({
+    hue: ColorGradingHueSchema,
+    saturation: ColorGradingSaturationSchema,
+    luminance: ColorGradingLuminanceSchema,
+  })
+  .strict();
+
+export const ColorGradingWheelPayloadSchema = ColorGradingWheelValueFieldsSchema.extend({
+  kind: z.literal("wheel"),
+  variant: z.enum(COLOR_GRADING_WHEEL_VARIANTS),
+}).strict();
+
+const ColorGradingBlendingPayloadSchema = z
+  .object({
+    kind: z.literal("shared"),
+    control: z.literal("blending"),
+    value: z.number().finite().min(0).max(100),
+  })
+  .strict();
+
+const ColorGradingBalancePayloadSchema = z
+  .object({
+    kind: z.literal("shared"),
+    control: z.literal("balance"),
+    value: z.number().finite().min(-100).max(100),
+  })
+  .strict();
+
+export const ColorGradingSharedPayloadSchema = z.discriminatedUnion("control", [
+  ColorGradingBlendingPayloadSchema,
+  ColorGradingBalancePayloadSchema,
+]);
+
+export const ColorGradingPayloadSchema = z.union([
+  ColorGradingWheelPayloadSchema,
+  ColorGradingSharedPayloadSchema,
+]);
+
+export const ColorGradingWheelOperationSchema = ColorGradingWheelValueFieldsSchema.extend({
+  kind: z.literal("wheel"),
+  variant: z.enum(COLOR_GRADING_WHEEL_VARIANTS),
+  mode: z.literal("absolute"),
+  confidence: z.number().min(0).max(1),
+  rationale: z.string().min(1).max(500),
+}).strict();
+
+const ColorGradingBlendingOperationSchema = z
+  .object({
+    kind: z.literal("shared"),
+    control: z.literal("blending"),
+    mode: z.literal("absolute"),
+    value: z.number().finite().min(0).max(100),
+    confidence: z.number().min(0).max(1),
+    rationale: z.string().min(1).max(500),
+  })
+  .strict();
+
+const ColorGradingBalanceOperationSchema = z
+  .object({
+    kind: z.literal("shared"),
+    control: z.literal("balance"),
+    mode: z.literal("absolute"),
+    value: z.number().finite().min(-100).max(100),
+    confidence: z.number().min(0).max(1),
+    rationale: z.string().min(1).max(500),
+  })
+  .strict();
+
+export const ColorGradingSharedOperationSchema = z.discriminatedUnion("control", [
+  ColorGradingBlendingOperationSchema,
+  ColorGradingBalanceOperationSchema,
+]);
+
+export const ColorGradingOperationSchema = z.union([
+  ColorGradingWheelOperationSchema,
+  ColorGradingSharedOperationSchema,
+]);
+
+function colorGradingOperationIdentity(operation: {
+  kind: string;
+  variant?: string;
+  control?: string;
+}): string {
+  return operation.kind === "wheel"
+    ? `wheel:${operation.variant ?? "unknown"}`
+    : `shared:${operation.control ?? "unknown"}`;
+}
+
+function validateUniqueColorGradingOperations(
+  operations: readonly { kind: string; variant?: string; control?: string }[],
+  context: z.RefinementCtx,
+): void {
+  const seen = new Set<string>();
+  for (const operation of operations) {
+    const identity = colorGradingOperationIdentity(operation);
+    if (seen.has(identity)) {
+      context.addIssue({
+        code: "custom",
+        path: ["operations"],
+        message: `Color Grading operation may only appear once: ${identity}`,
+      });
+    }
+    seen.add(identity);
+  }
+}
+
+export const ColorGradingIntentSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    color_grading_mode: z.literal("modern"),
+    process_version: z.string().min(1).max(100),
+    creative_goal: z.string().min(1).max(500),
+    operations: z.array(ColorGradingOperationSchema).max(6),
+    overall_confidence: z.number().min(0).max(1),
+  })
+  .strict()
+  .superRefine((intent, context) =>
+    validateUniqueColorGradingOperations(intent.operations, context),
+  );
+
+export const ColorGradingPlanSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    color_grading_registry_version: z.literal(COLOR_GRADING_REGISTRY_VERSION),
+    color_grading_mode: z.literal("modern"),
+    process_version: z.string().min(1).max(100),
+    operations: z.array(ColorGradingOperationSchema).max(6),
+    warnings: z.array(z.string().min(1).max(500)).max(16),
+    propagation_policy: z
+      .object({
+        eligible: z.literal(false),
+        blocked_reason: z.string().min(1).max(500),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((plan, context) => validateUniqueColorGradingOperations(plan.operations, context));
+
+export const ColorGradingReadbackSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    color_grading_registry_version: z.literal(COLOR_GRADING_REGISTRY_VERSION),
+    color_grading_mode: z.literal("modern"),
+    process_version: z.string().min(1).max(100),
+    operations: z.array(ColorGradingPayloadSchema).max(6),
+  })
+  .strict()
+  .superRefine((readback, context) =>
+    validateUniqueColorGradingOperations(readback.operations, context),
+  );
+
+export const ColorGradingGoldenVectorSchema = z
+  .object({
+    id: z.string().min(1),
+    control_group: z.string().min(1),
+    intent: ColorGradingIntentSchema,
+    expected_plan: ColorGradingPlanSchema,
+    current_readback: ColorGradingReadbackSchema.optional(),
+    expected_readback: ColorGradingReadbackSchema.optional(),
+  })
+  .strict()
+  .superRefine((vector, context) => {
+    if ((vector.current_readback === undefined) !== (vector.expected_readback === undefined)) {
+      context.addIssue({
+        code: "custom",
+        path: ["expected_readback"],
+        message: "current_readback and expected_readback must be provided together",
+      });
+    }
+  });
+
 const EvaluationResultFieldsSchema = z.object({
   schema_version: z.literal("0.2.0"),
   verdict: z.enum(["accept", "refine", "review"]),
@@ -1425,6 +1615,9 @@ export const OperationSemanticsSchema = z
     supported_geometry_variants: z.array(z.enum(OPTICS_GEOMETRY_VARIANTS)).optional(),
     supported_finishing_controls: z.array(z.enum(FINISHING_OPERATION_VARIANTS)).optional(),
     supported_framing_variants: z.array(z.enum(FINISHING_FRAMING_VARIANTS)).optional(),
+    supported_color_grading_wheels: z.array(z.enum(COLOR_GRADING_WHEEL_VARIANTS)).optional(),
+    supported_color_grading_controls: z.array(z.enum(COLOR_GRADING_SHARED_CONTROLS)).optional(),
+    supported_color_grading_process_versions: z.array(z.string().min(1).max(100)).optional(),
   })
   .strict();
 

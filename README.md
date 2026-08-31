@@ -95,6 +95,13 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   rotation always carry an explicit per-photo human-review requirement;
   propagation is disabled until unrelated-state preservation is proven by a
   real backend.
+- Modern Color Grading planning is process-version scoped: shadows, midtones,
+  highlights, global wheels, blending, and balance are separate bounded
+  control groups. Legacy split toning has no fallback path; backends must
+  declare the requested process version, controls, concrete settings, and
+  read/checkpoint/render prerequisites before execution can be considered.
+  Propagation remains disabled and unsupported intent returns an explicit
+  manual handoff.
 - A single-photo apply reads and verifies the Master first, then lazily creates
   one session-marked Workflow Copy only when apply is approved and the plan has
   an executable adjustment. Checkpoints, Develop mutation, read-back, and render
