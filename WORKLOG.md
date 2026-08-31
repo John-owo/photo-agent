@@ -2989,3 +2989,49 @@ Cloud-analyzer checkpoint:
   --summary HEAD`, and `git log --oneline -10` confirmed the expected eight-file
   commit on `codex/roadmap-t09` with a clean worktree. No remote operation was
   performed.
+
+## 2026-08-31 - T56 provider benchmark comparison contract
+
+- Read-only `gh issue view 49 --repo John-owo/photo-agent --json
+  number,title,body,labels,state` first failed inside the sandbox because the
+  GitHub API socket was forbidden; the same read-only command was then allowed
+  with the required escalation and confirmed T56 requires OpenAI, Anthropic,
+  and local comparison on one benchmark, identical schemas/workflow/privacy
+  disclosures, and provider/model, prompt, cost, latency, failure, review-rate,
+  and denominator evidence. The issue remains externally blocked by T53/T54/T55
+  (#46/#47/#48); no remote state changed.
+- Added `ProviderBenchmarkRunSchema` and
+  `ProviderBenchmarkComparisonSchema`. A comparison requires the three
+  provider IDs, one frozen PhotoAgent Bench identity, one active privacy policy,
+  and explicit schema-compatibility status. Each run carries normalized
+  provider/model and adapter/prompt identity, reliability counts and review
+  rate, reported/partial/unknown latency, reported/unknown cost, privacy audit,
+  failures, and review outcomes. Schema refinements preserve denominator
+  consistency and reject unsupported claims such as compatible results with
+  incomplete case checks.
+- Added `buildProviderBenchmarkRun` and
+  `buildProviderBenchmarkComparison`. They parse and discard the supplied
+  `ProviderResult` payload after validating its shared schema, enforce the T55
+  provider boundary before materializing a run, require result/manifest/privacy
+  consistency, and never call a model. Incomplete local evidence remains
+  `blocked`/`not_observed` with unknown latency and cost rather than invented
+  values.
+- Added three tests for three-provider same-benchmark comparison, denominator
+  and metric preservation, local-only cloud refusal, incomplete local evidence,
+  and mixed benchmark identity refusal. Documentation and package exports were
+  updated. The first T56 `npm.cmd run check` failed because a strict optional
+  fixture property explicitly contained `undefined`; the fixture was corrected.
+  The first targeted test then failed because the fixture test split omitted
+  portrait and landscape; reference cases and a complete 10-condition test
+  split were added. `npx.cmd prettier --write` on the changed T56 files,
+  `npm.cmd run check`, and targeted `npm.cmd test -- --run
+  tests/provider-benchmark.test.ts` (1 file / 3 tests) now pass.
+- Full T56 verification and commit are pending. No photo, RAW, sidecar,
+  Lightroom, MCP, provider API, local model, visual, human, or remote issue
+  state was changed or claimed.
+- Final T56 verification passed `npm.cmd run check`, `npm.cmd run lint`,
+  `npm.cmd test` (21 files / 161 tests), `npm.cmd run build`, changed
+  source/test/docs `npx.cmd prettier --check`, and `git diff --check`; the diff
+  check emitted only normal LF-to-CRLF warnings. No real OpenAI, Anthropic, or
+  local-model benchmark was executed, so provider quality/latency/cost evidence
+  remains unknown until an authorized run supplies it.

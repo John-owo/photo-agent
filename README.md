@@ -156,6 +156,12 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   sends only a sanitized preview when cloud preview is explicitly allowed;
   provider payloads and credentials stay out of durable artifacts. Live Anthropic
   API and quality evidence remain unverified until an authorized experiment runs.
+- Provider benchmark comparisons now require OpenAI, Anthropic, and the local
+  experiment to use one frozen PhotoAgent Bench identity and one active privacy
+  policy. Each run keeps provider/model and adapter/prompt versions, cost and
+  latency status, schema compatibility, failures, review rate, and denominator
+  metrics explicit; this contract does not claim that the three real runs have
+  been executed.
 - A single-photo apply reads and verifies the Master first, then lazily creates
   one session-marked Workflow Copy only when apply is approved and the plan has
   an executable adjustment. Checkpoints, Develop mutation, read-back, and render

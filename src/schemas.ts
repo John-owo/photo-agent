@@ -252,6 +252,12 @@ export const PROVIDER_CAPABILITIES = [
 ] as const;
 export const LOCAL_PROVIDER_REGISTRY_VERSION = "0.1.0" as const;
 export const LOCAL_PROVIDER_ID = "local-experimental" as const;
+export const PROVIDER_BENCHMARK_REGISTRY_VERSION = "0.1.0" as const;
+export const PROVIDER_BENCHMARK_REQUIRED_PROVIDERS = [
+  "openai",
+  "anthropic",
+  LOCAL_PROVIDER_ID,
+] as const;
 export const PRIVACY_POLICY_VERSION = "0.1.0" as const;
 export const PRIVACY_PREVIEW_RETENTION = ["session", "ephemeral"] as const;
 
@@ -3285,6 +3291,349 @@ export const ProviderResultSchema = z
     metadata: ProviderMetadataSchema,
   })
   .strict();
+
+const ProviderBenchmarkRunStatusSchema = z.enum(["completed", "blocked", "review_required"]);
+
+const ProviderBenchmarkLatencySchema = z
+  .object({
+    status: z.enum(["reported", "partial", "unknown"]),
+    measured_ms: z.array(z.number().finite().nonnegative()).max(100_000),
+  })
+  .strict()
+  .superRefine((latency, context) => {
+    if (latency.status === "unknown" && latency.measured_ms.length > 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["measured_ms"],
+        message: "Unknown provider benchmark latency may not contain measurements",
+      });
+    }
+    if (latency.status !== "unknown" && latency.measured_ms.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["measured_ms"],
+        message: "Reported provider benchmark latency needs at least one measurement",
+      });
+    }
+  });
+
+const ProviderBenchmarkCostSchema = z
+  .object({
+    status: z.enum(["reported", "unknown"]),
+    estimated_usd: z.number().finite().nonnegative().optional(),
+  })
+  .strict()
+  .superRefine((cost, context) => {
+    if (cost.status === "reported" && cost.estimated_usd === undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["estimated_usd"],
+        message: "Reported provider benchmark cost needs an estimated_usd value",
+      });
+    }
+    if (cost.status === "unknown" && cost.estimated_usd !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["estimated_usd"],
+        message: "Unknown provider benchmark cost may not contain an estimate",
+      });
+    }
+  });
+
+const ProviderBenchmarkSchemaCompatibilitySchema = z
+  .object({
+    status: z.enum(["compatible", "incompatible", "not_observed"]),
+    checked_case_count: z.number().int().nonnegative(),
+    failures: z.array(z.string().min(1).max(500)).max(16),
+  })
+  .strict()
+  .superRefine((compatibility, context) => {
+    if (compatibility.status === "compatible" && compatibility.failures.length > 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["failures"],
+        message: "Compatible provider benchmark schema results may not contain failures",
+      });
+    }
+    if (compatibility.status === "incompatible" && compatibility.failures.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["failures"],
+        message: "Incompatible provider benchmark schema results need failure evidence",
+      });
+    }
+    if (compatibility.status === "not_observed" && compatibility.checked_case_count !== 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["checked_case_count"],
+        message: "Unobserved provider benchmark schema results must have zero checked cases",
+      });
+    }
+  });
+
+const ProviderBenchmarkReliabilitySchema = z
+  .object({
+    population: z.number().int().nonnegative(),
+    sample_size: z.number().int().nonnegative(),
+    pass_count: z.number().int().nonnegative(),
+    failure_count: z.number().int().nonnegative(),
+    review_required_count: z.number().int().nonnegative(),
+    review_rate: z.number().min(0).max(1),
+  })
+  .strict()
+  .superRefine((reliability, context) => {
+    if (
+      reliability.sample_size !== reliability.population ||
+      reliability.pass_count + reliability.failure_count + reliability.review_required_count !==
+        reliability.population
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["population"],
+        message: "Provider benchmark reliability must preserve the benchmark denominator",
+      });
+    }
+  });
+
+export const ProviderBenchmarkRunSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    provider_benchmark_registry_version: z.literal(PROVIDER_BENCHMARK_REGISTRY_VERSION),
+    provider: z
+      .object({
+        provider_id: z.string().min(1).max(200),
+        model: z.string().min(1).max(200),
+        adapter_version: SemverSchema,
+        prompt_version: z.string().min(1).max(200),
+        prompt_hash: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict(),
+    capabilities: ProviderCapabilityManifestSchema,
+    benchmark: PhotoAgentBenchReportSchema,
+    privacy: SessionPrivacyRecordSchema,
+    reliability: ProviderBenchmarkReliabilitySchema,
+    latency: ProviderBenchmarkLatencySchema,
+    cost: ProviderBenchmarkCostSchema,
+    schema_compatibility: ProviderBenchmarkSchemaCompatibilitySchema,
+    status: ProviderBenchmarkRunStatusSchema,
+    failures: z.array(z.string().min(1).max(500)).max(128),
+    review_outcomes: z.array(z.string().min(1).max(500)).max(128),
+  })
+  .strict()
+  .superRefine((run, context) => {
+    if (run.provider.provider_id !== run.capabilities.provider_id) {
+      context.addIssue({
+        code: "custom",
+        path: ["provider", "provider_id"],
+        message: "Provider benchmark metadata must match the capability manifest",
+      });
+    }
+    if (
+      run.reliability.population !== run.benchmark.population ||
+      run.reliability.sample_size !== run.benchmark.sample_size ||
+      run.reliability.pass_count !== run.benchmark.pass_count ||
+      run.reliability.failure_count !== run.benchmark.failure_count ||
+      run.reliability.review_required_count !== run.benchmark.review_required_count
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["reliability"],
+        message: "Provider benchmark reliability must match its PhotoAgent Bench report",
+      });
+    }
+    const expectedReviewRate =
+      run.benchmark.population === 0
+        ? 0
+        : run.benchmark.review_required_count / run.benchmark.population;
+    if (Math.abs(run.reliability.review_rate - expectedReviewRate) > 1e-12) {
+      context.addIssue({
+        code: "custom",
+        path: ["reliability", "review_rate"],
+        message: "Provider benchmark review_rate must match the preserved denominator",
+      });
+    }
+    if (
+      run.latency.status === "reported" &&
+      run.latency.measured_ms.length !== run.reliability.sample_size
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["latency", "measured_ms"],
+        message: "Reported provider benchmark latency needs one value per benchmark case",
+      });
+    }
+    if (
+      run.latency.status === "partial" &&
+      run.latency.measured_ms.length >= run.reliability.sample_size
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["latency", "status"],
+        message: "Complete provider benchmark latency must be marked reported",
+      });
+    }
+    if (run.schema_compatibility.checked_case_count > run.reliability.sample_size) {
+      context.addIssue({
+        code: "custom",
+        path: ["schema_compatibility", "checked_case_count"],
+        message: "Provider benchmark schema checks may not exceed the benchmark denominator",
+      });
+    }
+    if (
+      run.schema_compatibility.status === "compatible" &&
+      run.schema_compatibility.checked_case_count !== run.reliability.sample_size
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["schema_compatibility", "checked_case_count"],
+        message: "Compatible provider benchmark schemas need one check per benchmark case",
+      });
+    }
+    if (run.status === "completed" && run.schema_compatibility.status !== "compatible") {
+      context.addIssue({
+        code: "custom",
+        path: ["status"],
+        message: "Completed provider benchmarks require observed compatible schemas",
+      });
+    }
+    if (
+      run.status !== "completed" &&
+      run.failures.length === 0 &&
+      run.review_outcomes.length === 0
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["status"],
+        message: "Blocked or review-required provider benchmarks need failure or review evidence",
+      });
+    }
+  });
+
+const ProviderBenchmarkIdentitySchema = z
+  .object({
+    benchmark_registry_version: z.literal(PHOTO_AGENT_BENCH_REGISTRY_VERSION),
+    dataset_id: z.string().min(1).max(200),
+    dataset_revision: z.string().min(1).max(200),
+    dataset_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    split_id: z.string().min(1).max(200),
+    split_revision: z.string().min(1).max(200),
+    split_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
+export const ProviderBenchmarkComparisonSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    provider_benchmark_registry_version: z.literal(PROVIDER_BENCHMARK_REGISTRY_VERSION),
+    comparison_id: z.string().min(1).max(200),
+    benchmark_identity: ProviderBenchmarkIdentitySchema,
+    active_privacy_policy: PrivacyPolicySchema,
+    runs: z.array(ProviderBenchmarkRunSchema).min(3).max(16),
+    schema_compatibility: z
+      .object({
+        status: z.enum(["compatible", "incompatible", "not_observed"]),
+        checked_provider_count: z.number().int().nonnegative(),
+        failures: z.array(z.string().min(1).max(500)).max(128),
+      })
+      .strict(),
+    status: ProviderBenchmarkRunStatusSchema,
+    failures: z.array(z.string().min(1).max(500)).max(256),
+    review_outcomes: z.array(z.string().min(1).max(500)).max(256),
+  })
+  .strict()
+  .superRefine((comparison, context) => {
+    const providerIds = new Set<string>();
+    for (const [index, run] of comparison.runs.entries()) {
+      if (providerIds.has(run.provider.provider_id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["runs", index, "provider", "provider_id"],
+          message: `Provider benchmark provider may only appear once: ${run.provider.provider_id}`,
+        });
+      }
+      providerIds.add(run.provider.provider_id);
+      const identityFields = [
+        "benchmark_registry_version",
+        "dataset_id",
+        "dataset_revision",
+        "dataset_sha256",
+        "split_id",
+        "split_revision",
+        "split_sha256",
+      ] as const;
+      for (const field of identityFields) {
+        if (run.benchmark[field] !== comparison.benchmark_identity[field]) {
+          context.addIssue({
+            code: "custom",
+            path: ["runs", index, "benchmark", field],
+            message: "Provider benchmark runs must use one identical benchmark identity",
+          });
+        }
+      }
+      if (JSON.stringify(run.privacy.policy) !== JSON.stringify(comparison.active_privacy_policy)) {
+        context.addIssue({
+          code: "custom",
+          path: ["runs", index, "privacy", "policy"],
+          message: "Provider benchmark runs must use the active privacy policy",
+        });
+      }
+    }
+    for (const providerId of PROVIDER_BENCHMARK_REQUIRED_PROVIDERS) {
+      if (!providerIds.has(providerId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["runs"],
+          message: `Provider benchmark is missing required provider: ${providerId}`,
+        });
+      }
+    }
+    const compatibilityStatus = comparison.runs.some(
+      (run) => run.schema_compatibility.status === "incompatible",
+    )
+      ? "incompatible"
+      : comparison.runs.some((run) => run.schema_compatibility.status === "not_observed")
+        ? "not_observed"
+        : "compatible";
+    if (comparison.schema_compatibility.status !== compatibilityStatus) {
+      context.addIssue({
+        code: "custom",
+        path: ["schema_compatibility", "status"],
+        message: "Provider comparison schema status must summarize every provider run",
+      });
+    }
+    const checkedProviderCount = comparison.runs.filter(
+      (run) => run.schema_compatibility.status !== "not_observed",
+    ).length;
+    if (comparison.schema_compatibility.checked_provider_count !== checkedProviderCount) {
+      context.addIssue({
+        code: "custom",
+        path: ["schema_compatibility", "checked_provider_count"],
+        message: "Provider comparison checked_provider_count is inconsistent",
+      });
+    }
+    if (
+      comparison.status === "completed" &&
+      (comparison.runs.some((run) => run.status !== "completed") ||
+        comparison.schema_compatibility.status !== "compatible")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["status"],
+        message: "Completed provider comparisons require completed compatible provider runs",
+      });
+    }
+    if (
+      comparison.status !== "completed" &&
+      comparison.failures.length === 0 &&
+      comparison.review_outcomes.length === 0
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["status"],
+        message: "Blocked or review-required provider comparisons need evidence",
+      });
+    }
+  });
 
 export const LocalProviderExperimentReportSchema = z
   .object({

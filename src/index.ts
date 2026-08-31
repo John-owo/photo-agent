@@ -24,6 +24,7 @@ export * from "./optics-geometry.js";
 export * from "./provider-contract.js";
 export * from "./privacy-policy.js";
 export * from "./providers.js";
+export * from "./provider-benchmark.js";
 export * from "./regression-gate.js";
 export * from "./runtime.js";
 export * from "./schemas.js";

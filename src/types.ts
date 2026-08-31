@@ -126,8 +126,11 @@ import type {
   ProviderCapabilityRequirementsSchema,
   ProviderMetadataSchema,
   ProviderResultSchema,
+  ProviderBenchmarkRunSchema,
+  ProviderBenchmarkComparisonSchema,
   LocalProviderExperimentReportSchema,
   PrivacyPolicySchema,
+  SessionPrivacyRecordSchema,
   SessionPrivacySchema,
 } from "./schemas.js";
 
@@ -230,8 +233,11 @@ export type ProviderCapability = ProviderCapabilityRequirements["required_capabi
 export type ProviderCapabilityAssessment = z.infer<typeof ProviderCapabilityAssessmentSchema>;
 export type ProviderMetadata = z.infer<typeof ProviderMetadataSchema>;
 export type ProviderResult = z.infer<typeof ProviderResultSchema>;
+export type ProviderBenchmarkRun = z.infer<typeof ProviderBenchmarkRunSchema>;
+export type ProviderBenchmarkComparison = z.infer<typeof ProviderBenchmarkComparisonSchema>;
 export type LocalProviderExperimentReport = z.infer<typeof LocalProviderExperimentReportSchema>;
 export type PrivacyPolicy = z.infer<typeof PrivacyPolicySchema>;
+export type SessionPrivacyRecord = z.infer<typeof SessionPrivacyRecordSchema>;
 export type SessionPrivacy = z.infer<typeof SessionPrivacySchema>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
