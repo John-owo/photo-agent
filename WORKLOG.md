@@ -2809,3 +2809,7 @@ Cloud-analyzer checkpoint:
   output contained only normal LF-to-CRLF warnings. Real human blind testing
   remains unverified. No remote issue, push, merge, PR, or issue closure was
   performed.
+- T50 was committed locally as `3b66d03 feat: add evaluator calibration
+  contract`; `git status --short --branch` and `git show --stat --oneline
+  --summary HEAD` confirmed a clean `codex/roadmap-t09` worktree with the
+  expected nine-file commit. No remote operation was performed.
