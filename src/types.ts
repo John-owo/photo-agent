@@ -126,6 +126,7 @@ import type {
   ProviderCapabilityRequirementsSchema,
   ProviderMetadataSchema,
   ProviderResultSchema,
+  LocalProviderExperimentReportSchema,
 } from "./schemas.js";
 
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
@@ -227,6 +228,7 @@ export type ProviderCapability = ProviderCapabilityRequirements["required_capabi
 export type ProviderCapabilityAssessment = z.infer<typeof ProviderCapabilityAssessmentSchema>;
 export type ProviderMetadata = z.infer<typeof ProviderMetadataSchema>;
 export type ProviderResult = z.infer<typeof ProviderResultSchema>;
+export type LocalProviderExperimentReport = z.infer<typeof LocalProviderExperimentReportSchema>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;

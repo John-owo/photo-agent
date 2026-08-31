@@ -15,6 +15,7 @@ export * from "./shoot-grouping.js";
 export * from "./style-priors.js";
 export * from "./style-history-evaluation.js";
 export * from "./ingest.js";
+export * from "./local-provider.js";
 export * from "./mask-adjustment.js";
 export * from "./preview.js";
 export * from "./parameter-registry.js";

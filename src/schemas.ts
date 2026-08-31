@@ -250,6 +250,8 @@ export const PROVIDER_CAPABILITIES = [
   "planning",
   "evaluation",
 ] as const;
+export const LOCAL_PROVIDER_REGISTRY_VERSION = "0.1.0" as const;
+export const LOCAL_PROVIDER_ID = "local-experimental" as const;
 
 export const SemanticAdjustmentSchema = z.object({
   parameter: z.enum(SEMANTIC_PARAMETERS),
@@ -3197,6 +3199,55 @@ export const ProviderResultSchema = z
     metadata: ProviderMetadataSchema,
   })
   .strict();
+
+export const LocalProviderExperimentReportSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    local_provider_registry_version: z.literal(LOCAL_PROVIDER_REGISTRY_VERSION),
+    experiment_id: z.string().min(1).max(200),
+    provider_id: z.literal(LOCAL_PROVIDER_ID),
+    model: z.string().min(1).max(200),
+    hardware_assumptions: z.array(z.string().min(1).max(500)).min(1).max(16),
+    cloud_image_transfer: z.literal(false),
+    population: z.number().int().nonnegative(),
+    sample_size: z.number().int().nonnegative(),
+    latency_ms: z.array(z.number().finite().nonnegative()).max(100_000),
+    quality_evidence: z.array(z.string().min(1).max(500)).max(16),
+    reproducibility_limits: z.array(z.string().min(1).max(500)).min(1).max(16),
+    status: z.enum(["completed", "blocked", "review_required"]),
+    failures: z.array(z.string().min(1).max(500)).max(16),
+  })
+  .strict()
+  .superRefine((report, context) => {
+    if (report.sample_size > report.population) {
+      context.addIssue({
+        code: "custom",
+        path: ["sample_size"],
+        message: "Local provider experiment sample_size may not exceed population",
+      });
+    }
+    if (report.sample_size !== report.latency_ms.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["latency_ms"],
+        message: "Local provider experiment latency_ms must have one value per sample",
+      });
+    }
+    if (report.status === "completed" && report.failures.length > 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["failures"],
+        message: "Completed local provider experiments may not contain failures",
+      });
+    }
+    if (report.status !== "completed" && report.failures.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["failures"],
+        message: "Blocked or review-required local provider experiments need failure details",
+      });
+    }
+  });
 
 export const CancellationEvidenceSchema = z
   .object({

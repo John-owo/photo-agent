@@ -104,6 +104,10 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
   contract。Mock、Codex-local、OpenAI analysis path 都會揭露 data boundary；不支援的
   comparison／ranking／planning／evaluation capability 會在 provider execution 前 fail
   closed，既有 OpenAI cloud-preview explicit opt-in 不變。
+- local-model experiment boundary 使用注入的 local VLM runner，只把呼叫端提供的
+  sanitized-preview path 傳給本機 runner，能力固定為 local-only 的 analysis，並驗證
+  structured intent；quality、latency、hardware 限制要明確記錄，不會補造 evidence。
+  這個 contract 本身不宣稱已有可用的 local model runtime 或品質結果。
 - 單張 apply 會先唯讀並驗證 Master；只有明確允許 apply 且計畫含可執行調整時，
   才建立一份帶 session 標記的 Workflow Copy。checkpoint、Develop mutation、讀回與
   render 只會指向已驗證的 Copy。dry-run／no-op 不會建立 Copy；輸入已是 Virtual

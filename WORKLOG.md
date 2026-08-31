@@ -2843,3 +2843,51 @@ Cloud-analyzer checkpoint:
   contract`; `git status --short --branch` and `git show --stat --oneline
   --summary HEAD` confirmed a clean `codex/roadmap-t09` worktree with the
   expected ten-file commit. No remote operation was performed.
+
+## 2026-08-31 - T54 local-model provider experiment boundary
+
+- Read-only `gh issue view 47 --repo John-owo/photo-agent --json
+  number,title,body,labels,state` confirmed T54 asks for one local VLM provider
+  experiment, no cloud image transfer, explicit missing-capability behavior,
+  and quality/latency/hardware/reproducibility evidence. The issue remains
+  blocked by T52 (#45); no remote state changed.
+- Runtime discovery found Ollama at
+  `C:\Users\John\AppData\Local\AMD\AI_Bundle\Ollama\ollama.exe` and LM
+  Studio's `lms` at `C:\Users\John\.lmstudio\bin\lms.exe`; `llama-server` and
+  `llama-cli` were not found. `ollama list` failed because the process could
+  not create `C:\Users\John\AppData\Local\Ollama` (`Access is denied`) and
+  timed out waiting for its server. `lms ls` only printed
+  `Waking up LM Studio service...`, remained hung through bounded polling, and
+  was interrupted with exit code 1. No local VLM quality, latency, or hardware
+  result was therefore claimed.
+- Added `LocalVisionLanguageProvider` with an injected runner contract. It
+  forwards only the caller-supplied sanitized-preview path and model name,
+  declares an analysis-only local capability manifest with raw/EXIF/GPS/preview
+  local-only boundaries, validates the returned `SemanticIntentPlan`, and
+  emits a generic `ProviderResult` with `cloudPreview: false`.
+- Added a strict local experiment report schema requiring population/sample,
+  latency, quality evidence, hardware assumptions, reproducibility limits,
+  explicit status, and failure details. It preserves zero/unknown evidence and
+  rejects inconsistent denominators or completed reports with failures.
+- Added three local-provider tests covering sanitized-path forwarding,
+  unsupported-capability refusal, invalid-output rejection, and blocked reports
+  with no invented quality or latency. An initial combined documentation patch
+  did not match the repository's wrapped README text and made no changes; the
+  documentation was then applied in smaller verified patches.
+- The first `npm.cmd run check` after the implementation failed on an unused
+  `LOCAL_PROVIDER_REGISTRY_VERSION` import in `src/local-provider.ts`; the
+  import was removed. `npx.cmd prettier --write` on the T54 sources/tests,
+  the corrected `npm.cmd run check`, targeted `npm.cmd test -- --run
+  tests/local-provider.test.ts` (1 file / 3 tests), and `npm.cmd run lint`
+  then passed.
+- Final T54 verification passed `npx.cmd prettier --write` on the changed
+  source/test/docs files, `npm.cmd run check`, `npm.cmd test` (18 files / 147
+  tests), `npm.cmd run lint`, and `npm.cmd run build`. `git diff --check`
+  passed with only normal LF-to-CRLF warnings. The first final
+  `npx.cmd prettier --check` included the not-yet-appended `WORKLOG.md` and
+  correctly reported that file as unformatted. A temporary formatter reflow of
+  historical WORKLOG lines was reverted to preserve the repository baseline;
+  full WORKLOG formatting remains outside this T54 change. No local model
+  service, Lightroom/MCP,
+  visual, human, remote issue, push, merge, PR, or issue-closure evidence was
+  created.
