@@ -102,6 +102,13 @@ import type {
   StyleHistoryRetrievalSchema,
   StyleHistorySnapshotSchema,
   StylePerceptualProfileSchema,
+  PhotoAgentBenchCaseOutcomeSchema,
+  PhotoAgentBenchCaseResultSchema,
+  PhotoAgentBenchCaseSchema,
+  PhotoAgentBenchDatasetSchema,
+  PhotoAgentBenchGoldenVectorSchema,
+  PhotoAgentBenchReportSchema,
+  PhotoAgentBenchSplitSchema,
 } from "./schemas.js";
 
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
@@ -174,6 +181,13 @@ export type StyleHistoryEvaluationReport = z.infer<typeof StyleHistoryEvaluation
 export type StyleHistoryEvaluationGoldenVector = z.infer<
   typeof StyleHistoryEvaluationGoldenVectorSchema
 >;
+export type PhotoAgentBenchCase = z.infer<typeof PhotoAgentBenchCaseSchema>;
+export type PhotoAgentBenchDataset = z.infer<typeof PhotoAgentBenchDatasetSchema>;
+export type PhotoAgentBenchSplit = z.infer<typeof PhotoAgentBenchSplitSchema>;
+export type PhotoAgentBenchCaseOutcome = z.infer<typeof PhotoAgentBenchCaseOutcomeSchema>;
+export type PhotoAgentBenchCaseResult = z.infer<typeof PhotoAgentBenchCaseResultSchema>;
+export type PhotoAgentBenchReport = z.infer<typeof PhotoAgentBenchReportSchema>;
+export type PhotoAgentBenchGoldenVector = z.infer<typeof PhotoAgentBenchGoldenVectorSchema>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;

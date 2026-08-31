@@ -121,6 +121,11 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   at the shoot level, retrieves only from construction shoots, excludes failed
   or context-incomplete held-out cases from scoring, and reports population,
   sample size, evidence confidence, failures, and review outcomes.
+- The PhotoAgent Bench contract freezes dataset and split identities, requires
+  portrait, landscape, street, night, event, backlight, mixed-light, high-ISO,
+  architecture, and action coverage in the test split, and preserves failures
+  and `REVIEW_REQUIRED` cases in the denominator. Missing case outcomes become
+  `REVIEW_REQUIRED`; this contract does not claim a live visual benchmark run.
 - A single-photo apply reads and verifies the Master first, then lazily creates
   one session-marked Workflow Copy only when apply is approved and the plan has
   an executable adjustment. Checkpoints, Develop mutation, read-back, and render

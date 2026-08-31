@@ -87,6 +87,11 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
   shoot 層級，只能從 construction shoots 檢索；failed 或 context 不完整的 held-out
   case 不納入有效 scoring，並回報 population、sample size、evidence confidence、
   failures 與 review outcomes。
+- PhotoAgent Bench contract 會固定 dataset 與 split identity，要求 test split 涵蓋
+  portrait、landscape、street、night、event、backlight、mixed-light、high-ISO、
+  architecture、action 十種條件，並把 failures 與 `REVIEW_REQUIRED` 保留在
+  denominator。缺少 case outcome 時一律變成 `REVIEW_REQUIRED`；這層 contract 不宣稱
+  已完成真實 visual benchmark。
 - 單張 apply 會先唯讀並驗證 Master；只有明確允許 apply 且計畫含可執行調整時，
   才建立一份帶 session 標記的 Workflow Copy。checkpoint、Develop mutation、讀回與
   render 只會指向已驗證的 Copy。dry-run／no-op 不會建立 Copy；輸入已是 Virtual

@@ -2714,3 +2714,34 @@ Cloud-analyzer checkpoint:
   evaluation`; `git status --short --branch` and `git show --stat --oneline
   --summary HEAD` confirmed a clean `codex/roadmap-t09` worktree with the
   expected nine-file commit. No remote operation was performed.
+
+## 2026-08-31 - T48 frozen versioned PhotoAgent Bench contract
+
+- Read-only `gh issue list --repo John-owo/photo-agent --state open` first
+  failed because the sandbox could not access the GitHub API socket. The same
+  read-only request was rerun with reviewed network escalation and returned the
+  roadmap; no remote state changed.
+- Read-only `gh issue view 42 --repo John-owo/photo-agent --json number,title,body,labels,state`
+  confirmed T48 requires portrait, landscape, street, night, event, backlight,
+  mixed light, high ISO, architecture, and action coverage, immutable dataset
+  and shoot-level split identities, and denominator-preserving failures and
+  `REVIEW_REQUIRED` results. The ticket remains blocked by the v0.4 gate; no
+  remote state changed.
+- Added a versioned PhotoAgent Bench dataset/split contract with all ten
+  required conditions, disjoint construction/validation/test/excluded shoot
+  membership, split coverage validation, explicit per-case outcomes, and
+  immutable dataset/split identity in every report.
+- Added an outcome-driven report materializer that scores only the test split,
+  preserves pass/fail/`REVIEW_REQUIRED` counts in the denominator, converts
+  missing outcomes to `REVIEW_REQUIRED`, and reports condition coverage,
+  failures, review outcomes, and isolated golden vectors. It does not run a
+  visual evaluator or claim live benchmark evidence.
+- After `npx.cmd prettier --write src/schemas.ts src/types.ts src/index.ts
+  src/benchmark.ts tests/benchmark.test.ts`, `npm.cmd run check` and
+  `npm.cmd test -- --run tests/benchmark.test.ts` passed (1 file / 4 tests).
+- T48 documentation was added to `README.md`, `README.zh-TW.md`, and
+  `docs/implementation/v0.3.md`. Final verification passed `npm.cmd run check`,
+  `npm.cmd test` (14 files / 132 tests), `npm.cmd run lint`, `npm.cmd run build`,
+  changed-source/test/docs `npx.cmd prettier --check`, and `git diff --check`;
+  diff output contained only normal LF-to-CRLF warnings. No remote issue, push,
+  merge, PR, or issue closure was performed.

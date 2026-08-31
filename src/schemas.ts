@@ -227,6 +227,19 @@ export const STYLE_HISTORY_MIN_CONFIDENCE = 0.65;
 export const STYLE_HISTORY_DEFAULT_MAX_RESULTS = 8;
 export const STYLE_HISTORY_EVALUATION_REGISTRY_VERSION = "0.1.0" as const;
 export const STYLE_HISTORY_EVALUATION_MAX_CASES = 100_000;
+export const PHOTO_AGENT_BENCH_REGISTRY_VERSION = "0.1.0" as const;
+export const PHOTO_AGENT_BENCH_CONDITIONS = [
+  "portrait",
+  "landscape",
+  "street",
+  "night",
+  "event",
+  "backlight",
+  "mixed_light",
+  "high_iso",
+  "architecture",
+  "action",
+] as const;
 
 export const SemanticAdjustmentSchema = z.object({
   parameter: z.enum(SEMANTIC_PARAMETERS),
@@ -1820,6 +1833,219 @@ export const StyleHistoryEvaluationGoldenVectorSchema = z
     snapshot: StyleHistorySnapshotSchema,
     request: StyleHistoryEvaluationRequestSchema,
     expected_report: StyleHistoryEvaluationReportSchema,
+  })
+  .strict();
+
+export const PhotoAgentBenchCaseSchema = z
+  .object({
+    case_id: z.string().min(1).max(200),
+    shoot_id: z.string().min(1).max(200),
+    asset_id: z.string().min(1).max(300),
+    condition: z.enum(PHOTO_AGENT_BENCH_CONDITIONS),
+  })
+  .strict();
+
+export const PhotoAgentBenchDatasetSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    benchmark_registry_version: z.literal(PHOTO_AGENT_BENCH_REGISTRY_VERSION),
+    dataset_id: z.string().min(1).max(200),
+    dataset_revision: z.string().min(1).max(200),
+    dataset_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    cases: z.array(PhotoAgentBenchCaseSchema).min(PHOTO_AGENT_BENCH_CONDITIONS.length).max(100_000),
+  })
+  .strict()
+  .superRefine((dataset, context) => {
+    const seen = new Set<string>();
+    for (const [index, benchmarkCase] of dataset.cases.entries()) {
+      if (seen.has(benchmarkCase.case_id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["cases", index, "case_id"],
+          message: `PhotoAgent Bench case id may only appear once: ${benchmarkCase.case_id}`,
+        });
+      }
+      seen.add(benchmarkCase.case_id);
+    }
+    const represented = new Set(dataset.cases.map((benchmarkCase) => benchmarkCase.condition));
+    for (const condition of PHOTO_AGENT_BENCH_CONDITIONS) {
+      if (!represented.has(condition)) {
+        context.addIssue({
+          code: "custom",
+          path: ["cases"],
+          message: `PhotoAgent Bench dataset is missing condition: ${condition}`,
+        });
+      }
+    }
+  });
+
+const PhotoAgentBenchShootIdsSchema = z.array(z.string().min(1).max(200)).max(100_000);
+
+export const PhotoAgentBenchSplitSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    split_id: z.string().min(1).max(200),
+    split_revision: z.string().min(1).max(200),
+    split_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    construction_shoot_ids: PhotoAgentBenchShootIdsSchema.min(1),
+    validation_shoot_ids: PhotoAgentBenchShootIdsSchema.min(1),
+    test_shoot_ids: PhotoAgentBenchShootIdsSchema.min(1),
+    excluded_shoot_ids: PhotoAgentBenchShootIdsSchema,
+  })
+  .strict()
+  .superRefine((split, context) => {
+    const lists = [
+      ["construction_shoot_ids", split.construction_shoot_ids],
+      ["validation_shoot_ids", split.validation_shoot_ids],
+      ["test_shoot_ids", split.test_shoot_ids],
+      ["excluded_shoot_ids", split.excluded_shoot_ids],
+    ] as const;
+    const seen = new Set<string>();
+    for (const [field, ids] of lists) {
+      for (const [index, id] of ids.entries()) {
+        if (seen.has(id)) {
+          context.addIssue({
+            code: "custom",
+            path: [field, index],
+            message: `PhotoAgent Bench split shoot id may only appear once: ${id}`,
+          });
+        }
+        seen.add(id);
+      }
+    }
+  });
+
+const PhotoAgentBenchVerdictSchema = z.enum(["pass", "fail", "review_required"]);
+
+export const PhotoAgentBenchCaseOutcomeSchema = z
+  .object({
+    case_id: z.string().min(1).max(200),
+    verdict: PhotoAgentBenchVerdictSchema,
+    confidence: z.number().min(0).max(1),
+    evidence: z.array(z.string().min(1).max(500)).min(1).max(16),
+    failures: z.array(z.string().min(1).max(500)).max(16),
+    review_outcomes: z.array(z.string().min(1).max(500)).max(16),
+  })
+  .strict()
+  .superRefine((outcome, context) => {
+    if (outcome.verdict === "fail" && outcome.failures.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["failures"],
+        message: "Failed PhotoAgent Bench cases require failure evidence",
+      });
+    }
+    if (outcome.verdict === "review_required" && outcome.review_outcomes.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["review_outcomes"],
+        message: "REVIEW_REQUIRED PhotoAgent Bench cases require review outcomes",
+      });
+    }
+  });
+
+export const PhotoAgentBenchCaseResultSchema = z
+  .object({
+    case_id: z.string().min(1).max(200),
+    shoot_id: z.string().min(1).max(200),
+    asset_id: z.string().min(1).max(300),
+    condition: z.enum(PHOTO_AGENT_BENCH_CONDITIONS),
+    verdict: PhotoAgentBenchVerdictSchema,
+    confidence: z.number().min(0).max(1),
+    evidence: z.array(z.string().min(1).max(500)).min(1).max(16),
+    failures: z.array(z.string().min(1).max(500)).max(16),
+    review_outcomes: z.array(z.string().min(1).max(500)).max(16),
+  })
+  .strict();
+
+export const PhotoAgentBenchReportSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    benchmark_registry_version: z.literal(PHOTO_AGENT_BENCH_REGISTRY_VERSION),
+    run_id: z.string().min(1).max(200),
+    dataset_id: z.string().min(1).max(200),
+    dataset_revision: z.string().min(1).max(200),
+    dataset_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    split_id: z.string().min(1).max(200),
+    split_revision: z.string().min(1).max(200),
+    split_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    condition_coverage: z.array(
+      z
+        .object({
+          condition: z.enum(PHOTO_AGENT_BENCH_CONDITIONS),
+          population: z.number().int().positive(),
+        })
+        .strict(),
+    ),
+    population: z.number().int().nonnegative(),
+    sample_size: z.number().int().nonnegative(),
+    pass_count: z.number().int().nonnegative(),
+    failure_count: z.number().int().nonnegative(),
+    review_required_count: z.number().int().nonnegative(),
+    cases: z.array(PhotoAgentBenchCaseResultSchema).max(100_000),
+    failures: z.array(z.string().min(1).max(500)).max(64),
+    review_outcomes: z.array(z.string().min(1).max(500)).max(64),
+  })
+  .strict()
+  .superRefine((report, context) => {
+    if (report.population !== report.cases.length || report.sample_size !== report.cases.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["sample_size"],
+        message: "PhotoAgent Bench population and sample_size must equal case count",
+      });
+    }
+    if (
+      report.pass_count + report.failure_count + report.review_required_count !==
+      report.population
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["population"],
+        message: "PhotoAgent Bench verdict counts must preserve the denominator",
+      });
+    }
+    const expectedCoverage = new Set(PHOTO_AGENT_BENCH_CONDITIONS);
+    const seenCoverage = new Set<string>();
+    for (const [index, coverage] of report.condition_coverage.entries()) {
+      if (seenCoverage.has(coverage.condition) || !expectedCoverage.has(coverage.condition)) {
+        context.addIssue({
+          code: "custom",
+          path: ["condition_coverage", index, "condition"],
+          message: `PhotoAgent Bench condition coverage may only appear once: ${coverage.condition}`,
+        });
+      }
+      seenCoverage.add(coverage.condition);
+    }
+    if (seenCoverage.size !== expectedCoverage.size) {
+      context.addIssue({
+        code: "custom",
+        path: ["condition_coverage"],
+        message: "PhotoAgent Bench condition coverage must represent every condition",
+      });
+    }
+    const seenCases = new Set<string>();
+    for (const [index, benchmarkCase] of report.cases.entries()) {
+      if (seenCases.has(benchmarkCase.case_id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["cases", index, "case_id"],
+          message: `PhotoAgent Bench result case may only appear once: ${benchmarkCase.case_id}`,
+        });
+      }
+      seenCases.add(benchmarkCase.case_id);
+    }
+  });
+
+export const PhotoAgentBenchGoldenVectorSchema = z
+  .object({
+    id: z.string().min(1),
+    control_group: z.string().min(1),
+    run_id: z.string().min(1).max(200),
+    dataset: PhotoAgentBenchDatasetSchema,
+    split: PhotoAgentBenchSplitSchema,
+    outcomes: z.array(PhotoAgentBenchCaseOutcomeSchema).max(100_000),
+    expected_report: PhotoAgentBenchReportSchema,
   })
   .strict();
 
