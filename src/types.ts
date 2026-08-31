@@ -114,6 +114,13 @@ import type {
   ControlGroupSuiteDiscoverySchema,
   RegressionGateReportSchema,
   WorkflowRegressionEvidenceSchema,
+  CalibrationPairSchema,
+  EvaluatorCalibrationModelMetricsSchema,
+  EvaluatorCalibrationGoldenVectorSchema,
+  EvaluatorCalibrationReportSchema,
+  EvaluatorCalibrationStudySchema,
+  HumanPairLabelSchema,
+  ModelPairEvaluationSchema,
 } from "./schemas.js";
 
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
@@ -198,6 +205,17 @@ export type BackendCompatibilityCase = z.infer<typeof BackendCompatibilityCaseSc
 export type BackendCompatibilityResult = z.infer<typeof BackendCompatibilityResultSchema>;
 export type WorkflowRegressionEvidence = z.infer<typeof WorkflowRegressionEvidenceSchema>;
 export type RegressionGateReport = z.infer<typeof RegressionGateReportSchema>;
+export type CalibrationPair = z.infer<typeof CalibrationPairSchema>;
+export type HumanPairLabel = z.infer<typeof HumanPairLabelSchema>;
+export type ModelPairEvaluation = z.infer<typeof ModelPairEvaluationSchema>;
+export type EvaluatorCalibrationStudy = z.infer<typeof EvaluatorCalibrationStudySchema>;
+export type EvaluatorCalibrationModelMetrics = z.infer<
+  typeof EvaluatorCalibrationModelMetricsSchema
+>;
+export type EvaluatorCalibrationReport = z.infer<typeof EvaluatorCalibrationReportSchema>;
+export type EvaluatorCalibrationGoldenVector = z.infer<
+  typeof EvaluatorCalibrationGoldenVectorSchema
+>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;

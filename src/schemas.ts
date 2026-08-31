@@ -241,6 +241,7 @@ export const PHOTO_AGENT_BENCH_CONDITIONS = [
   "action",
 ] as const;
 export const REGRESSION_GATE_REGISTRY_VERSION = "0.1.0" as const;
+export const EVALUATOR_CALIBRATION_REGISTRY_VERSION = "0.1.0" as const;
 
 export const SemanticAdjustmentSchema = z.object({
   parameter: z.enum(SEMANTIC_PARAMETERS),
@@ -2185,6 +2186,288 @@ export const RegressionGateReportSchema = z
       });
     }
   });
+
+const CalibrationPreferenceSchema = z.enum(["option_a", "option_b", "tie", "review_required"]);
+
+export const CalibrationPairSchema = z
+  .object({
+    pair_id: z.string().min(1).max(200),
+    benchmark_case_id: z.string().min(1).max(200),
+    option_a_id: z.string().min(1).max(300),
+    option_b_id: z.string().min(1).max(300),
+    presentation_order: z.enum(["option_a_first", "option_b_first"]),
+    blinded: z.literal(true),
+  })
+  .strict()
+  .superRefine((pair, context) => {
+    if (pair.option_a_id === pair.option_b_id) {
+      context.addIssue({
+        code: "custom",
+        path: ["option_b_id"],
+        message: "Calibration pair options must be distinct",
+      });
+    }
+  });
+
+export const HumanPairLabelSchema = z
+  .object({
+    pair_id: z.string().min(1).max(200),
+    source: z.literal("human"),
+    preference: CalibrationPreferenceSchema,
+    unacceptable_result: z.boolean(),
+    evidence: z.array(z.string().min(1).max(500)).min(1).max(16),
+  })
+  .strict();
+
+export const ModelPairEvaluationSchema = z
+  .object({
+    pair_id: z.string().min(1).max(200),
+    provider: z.string().min(1).max(200),
+    model: z.string().min(1).max(200),
+    status: z.enum(["scored", "failed", "review_required"]),
+    preference: CalibrationPreferenceSchema,
+    unacceptable_result: z.boolean(),
+    converged: z.boolean(),
+    recovery_success: z.boolean(),
+    evidence: z.array(z.string().min(1).max(500)).min(1).max(16),
+    failures: z.array(z.string().min(1).max(500)).max(8),
+    review_outcomes: z.array(z.string().min(1).max(500)).max(8),
+  })
+  .strict()
+  .superRefine((evaluation, context) => {
+    if (evaluation.status === "failed" && evaluation.failures.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["failures"],
+        message: "Failed calibration evaluations require failure evidence",
+      });
+    }
+    if (evaluation.status === "review_required" && evaluation.review_outcomes.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["review_outcomes"],
+        message: "REVIEW_REQUIRED calibration evaluations require review outcomes",
+      });
+    }
+    if (evaluation.status !== "scored" && evaluation.preference !== "review_required") {
+      context.addIssue({
+        code: "custom",
+        path: ["preference"],
+        message: "Unscored calibration evaluations may not provide a model preference",
+      });
+    }
+  });
+
+const CalibrationModelSchema = z
+  .object({
+    provider: z.string().min(1).max(200),
+    model: z.string().min(1).max(200),
+  })
+  .strict();
+
+export const EvaluatorCalibrationStudySchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    calibration_registry_version: z.literal(EVALUATOR_CALIBRATION_REGISTRY_VERSION),
+    study_id: z.string().min(1).max(200),
+    benchmark_version: z.string().min(1).max(200),
+    dataset_id: z.string().min(1).max(200),
+    dataset_revision: z.string().min(1).max(200),
+    dataset_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    randomization: z
+      .object({
+        algorithm: z.literal("sha256_seeded_fisher_yates"),
+        seed: z.string().min(1).max(200),
+        assignment_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+        blinded: z.literal(true),
+      })
+      .strict(),
+    pairs: z.array(CalibrationPairSchema).min(1).max(100_000),
+    models: z.array(CalibrationModelSchema).min(2).max(64),
+    human_labels: z.array(HumanPairLabelSchema).max(100_000),
+    model_evaluations: z.array(ModelPairEvaluationSchema).max(6_400_000),
+  })
+  .strict()
+  .superRefine((study, context) => {
+    const pairIds = new Set<string>();
+    for (const [index, pair] of study.pairs.entries()) {
+      if (pairIds.has(pair.pair_id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["pairs", index, "pair_id"],
+          message: `Calibration pair id may only appear once: ${pair.pair_id}`,
+        });
+      }
+      pairIds.add(pair.pair_id);
+    }
+    const modelIds = new Set<string>();
+    for (const [index, model] of study.models.entries()) {
+      const modelId = `${model.provider}:${model.model}`;
+      if (modelIds.has(modelId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["models", index],
+          message: `Calibration model may only appear once: ${modelId}`,
+        });
+      }
+      modelIds.add(modelId);
+    }
+    const modelKeys = new Set(study.models.map((model) => `${model.provider}:${model.model}`));
+    const humanLabelIds = new Set<string>();
+    for (const [index, label] of study.human_labels.entries()) {
+      if (!pairIds.has(label.pair_id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["human_labels", index, "pair_id"],
+          message: `Human calibration label references unknown pair: ${label.pair_id}`,
+        });
+      }
+      if (humanLabelIds.has(label.pair_id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["human_labels", index, "pair_id"],
+          message: `Human calibration label may only appear once: ${label.pair_id}`,
+        });
+      }
+      humanLabelIds.add(label.pair_id);
+    }
+    const evaluationIds = new Set<string>();
+    for (const [index, evaluation] of study.model_evaluations.entries()) {
+      const evaluationKey = `${evaluation.provider}:${evaluation.model}:${evaluation.pair_id}`;
+      if (!pairIds.has(evaluation.pair_id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["model_evaluations", index, "pair_id"],
+          message: `Model calibration evaluation references unknown pair: ${evaluation.pair_id}`,
+        });
+      }
+      if (!modelKeys.has(`${evaluation.provider}:${evaluation.model}`)) {
+        context.addIssue({
+          code: "custom",
+          path: ["model_evaluations", index],
+          message: `Model calibration evaluation references undeclared model: ${evaluation.provider}:${evaluation.model}`,
+        });
+      }
+      if (evaluationIds.has(evaluationKey)) {
+        context.addIssue({
+          code: "custom",
+          path: ["model_evaluations", index],
+          message: `Model calibration evaluation may only appear once: ${evaluationKey}`,
+        });
+      }
+      evaluationIds.add(evaluationKey);
+    }
+  });
+
+export const EvaluatorCalibrationModelMetricsSchema = z
+  .object({
+    provider: z.string().min(1).max(200),
+    model: z.string().min(1).max(200),
+    population: z.number().int().nonnegative(),
+    sample_size: z.number().int().nonnegative(),
+    human_labelled_sample_size: z.number().int().nonnegative(),
+    agreement_sample_size: z.number().int().nonnegative(),
+    agreement_rate: z.number().min(0).max(1),
+    human_unacceptable_rate: z.number().min(0).max(1),
+    unacceptable_result_rate: z.number().min(0).max(1),
+    review_rate: z.number().min(0).max(1),
+    convergence_rate: z.number().min(0).max(1),
+    recovery_success_rate: z.number().min(0).max(1),
+    failures: z.array(z.string().min(1).max(500)).max(64),
+    review_outcomes: z.array(z.string().min(1).max(500)).max(64),
+  })
+  .strict()
+  .superRefine((metrics, context) => {
+    if (metrics.sample_size > metrics.population) {
+      context.addIssue({
+        code: "custom",
+        path: ["sample_size"],
+        message: "Calibration model sample_size may not exceed population",
+      });
+    }
+    if (metrics.human_labelled_sample_size > metrics.sample_size) {
+      context.addIssue({
+        code: "custom",
+        path: ["human_labelled_sample_size"],
+        message: "Human-labelled calibration sample may not exceed model sample",
+      });
+    }
+    if (metrics.agreement_sample_size > metrics.human_labelled_sample_size) {
+      context.addIssue({
+        code: "custom",
+        path: ["agreement_sample_size"],
+        message: "Calibration agreement sample may not exceed human-labelled sample",
+      });
+    }
+  });
+
+export const EvaluatorCalibrationReportSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    calibration_registry_version: z.literal(EVALUATOR_CALIBRATION_REGISTRY_VERSION),
+    study_id: z.string().min(1).max(200),
+    benchmark_version: z.string().min(1).max(200),
+    dataset_id: z.string().min(1).max(200),
+    dataset_revision: z.string().min(1).max(200),
+    dataset_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    randomization: z
+      .object({
+        algorithm: z.literal("sha256_seeded_fisher_yates"),
+        seed: z.string().min(1).max(200),
+        assignment_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+        blinded: z.literal(true),
+      })
+      .strict(),
+    human_label_source: z.literal("human"),
+    population: z.number().int().nonnegative(),
+    sample_size: z.number().int().nonnegative(),
+    human_labelled_count: z.number().int().nonnegative(),
+    unlabelled_count: z.number().int().nonnegative(),
+    models: z.array(EvaluatorCalibrationModelMetricsSchema).min(2).max(64),
+    failures: z.array(z.string().min(1).max(500)).max(128),
+    review_outcomes: z.array(z.string().min(1).max(500)).max(128),
+  })
+  .strict()
+  .superRefine((report, context) => {
+    if (
+      report.sample_size !== report.population ||
+      report.human_labelled_count > report.population
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["sample_size"],
+        message: "Calibration report must preserve the pair population denominator",
+      });
+    }
+    if (report.unlabelled_count !== report.population - report.human_labelled_count) {
+      context.addIssue({
+        code: "custom",
+        path: ["unlabelled_count"],
+        message: "Calibration unlabelled_count must equal population minus human labels",
+      });
+    }
+    const modelIds = new Set<string>();
+    for (const [index, metrics] of report.models.entries()) {
+      const id = `${metrics.provider}:${metrics.model}`;
+      if (modelIds.has(id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["models", index],
+          message: `Calibration report model may only appear once: ${id}`,
+        });
+      }
+      modelIds.add(id);
+    }
+  });
+
+export const EvaluatorCalibrationGoldenVectorSchema = z
+  .object({
+    id: z.string().min(1),
+    control_group: z.string().min(1),
+    study: EvaluatorCalibrationStudySchema,
+    expected_report: EvaluatorCalibrationReportSchema,
+  })
+  .strict();
 
 const EvaluationResultFieldsSchema = z.object({
   schema_version: z.literal("0.2.0"),

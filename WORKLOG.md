@@ -2781,3 +2781,31 @@ Cloud-analyzer checkpoint:
   `git status --short --branch` and `git show --stat --oneline --summary HEAD`
   confirmed a clean `codex/roadmap-t09` worktree with the expected ten-file
   commit. No remote operation was performed.
+
+## 2026-08-31 - T50 evaluator-human calibration contract
+
+- Read-only `gh issue view 44 --repo John-owo/photo-agent --json
+  number,title,body,labels,state` confirmed T50 requires blind randomized
+  pairwise comparison, provider/model and benchmark disclosure, agreement and
+  reliability metrics, and an explicit ban on model-only pseudo-labels. It is
+  blocked by the remote benchmark/gate issues; no remote state changed.
+- Added a calibration study schema with immutable dataset/benchmark identity,
+  seeded blind randomization identity, opaque pair options, explicit
+  `source: human` labels, and separate provider/model evaluations. Added
+  agreement, human/model unacceptable-result, review, convergence, recovery,
+  missing-label, missing-observation, failure, and evidence metrics.
+- Added an evaluator-vs-human materializer and isolated golden vectors. It
+  never substitutes model output for human labels; missing human labels and
+  model observations remain visible in report denominators and review outcomes.
+  This is a local contract only and contains no real human calibration data or
+  visual acceptance claim.
+- After `npx.cmd prettier --write src/schemas.ts src/types.ts src/index.ts
+  src/evaluator-calibration.ts tests/evaluator-calibration.test.ts`,
+  `npm.cmd run check`, `npm.cmd run lint`, and the targeted suite passed (1 file
+  / 4 tests).
+- Final T50 verification passed `npm.cmd run check`, `npm.cmd test` (16 files
+  / 140 tests), `npm.cmd run lint`, `npm.cmd run build`, changed-source/
+  test/docs/package `npx.cmd prettier --check`, and `git diff --check`; diff
+  output contained only normal LF-to-CRLF warnings. Real human blind testing
+  remains unverified. No remote issue, push, merge, PR, or issue closure was
+  performed.

@@ -130,6 +130,12 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   checks that each retains its own regression and golden-vector tests, runs a
   backend compatibility matrix for capabilities, trust, operations, and major
   versions, and fails when workflow evidence or any required group is missing.
+- Evaluator calibration keeps blinded randomized pairs, benchmark/dataset
+  identity, provider/model, and human-label provenance explicit. Agreement,
+  unacceptable-result, review, convergence, recovery, missing-label, and
+  missing-observation metrics are reported without treating model output as
+  human ground truth; real human calibration remains a separate acceptance
+  gate.
 - A single-photo apply reads and verifies the Master first, then lazily creates
   one session-marked Workflow Copy only when apply is approved and the plan has
   an executable adjustment. Checkpoints, Develop mutation, read-back, and render

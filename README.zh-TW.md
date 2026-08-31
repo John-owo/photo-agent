@@ -96,6 +96,10 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
   確認每組仍保有自己的 regression 與 golden-vector tests；另外用 compatibility
   matrix 驗證 capability、trust、operation 與 major version，缺 suite、compatibility
   failure 或 workflow evidence 失敗時會 fail closed。
+- evaluator calibration 會明確記錄 blinded randomized pair、benchmark/dataset identity、
+  provider/model 與 human-label provenance，回報 agreement、unacceptable-result、review、
+  convergence、recovery、缺 label 與缺 observation；不會把 model output 當成 human
+  ground truth，真實真人校準仍是另外的 acceptance gate。
 - 單張 apply 會先唯讀並驗證 Master；只有明確允許 apply 且計畫含可執行調整時，
   才建立一份帶 session 標記的 Workflow Copy。checkpoint、Develop mutation、讀回與
   render 只會指向已驗證的 Copy。dry-run／no-op 不會建立 Copy；輸入已是 Virtual
