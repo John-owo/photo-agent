@@ -103,6 +103,21 @@ export const NORMALIZED_PARAMETERS = [
 
 export type NormalizedParameter = (typeof NORMALIZED_PARAMETERS)[number];
 
+export const TONE_CURVE_REGISTRY_VERSION = "0.1.0" as const;
+export const TONE_CURVE_VARIANTS = ["master", "red", "green", "blue", "parametric"] as const;
+export const TONE_CURVE_POINT_VARIANTS = ["master", "red", "green", "blue"] as const;
+export const TONE_CURVE_PARAMETRIC_COMPONENTS = [
+  "highlights",
+  "lights",
+  "darks",
+  "shadows",
+] as const;
+export const TONE_CURVE_PROPAGATION_POLICY = {
+  eligible: false,
+  blocked_reason:
+    "Structured tone-curve propagation is disabled until per-photo backend readback and rendered proof exist",
+} as const;
+
 export const SemanticAdjustmentSchema = z.object({
   parameter: z.enum(SEMANTIC_PARAMETERS),
   direction,
@@ -243,6 +258,207 @@ export const TranslatorGoldenVectorSchema = z
         code: "custom",
         path: ["expected_settings"],
         message: "current_settings and expected_settings must be provided together",
+      });
+    }
+  });
+
+const ToneCurvePointSchema = z
+  .object({
+    x: z.number().finite().min(0).max(1),
+    y: z.number().finite().min(0).max(1),
+  })
+  .strict();
+
+function validateToneCurvePoints(
+  points: readonly { x: number; y: number }[],
+  context: z.RefinementCtx,
+): void {
+  if (points[0]?.x !== 0) {
+    context.addIssue({
+      code: "custom",
+      path: ["points", 0, "x"],
+      message: "Tone-curve point coordinates must start at x=0",
+    });
+  }
+  if (points.at(-1)?.x !== 1) {
+    context.addIssue({
+      code: "custom",
+      path: ["points", points.length - 1, "x"],
+      message: "Tone-curve point coordinates must end at x=1",
+    });
+  }
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1];
+    const current = points[index];
+    if (previous && current && current.x <= previous.x) {
+      context.addIssue({
+        code: "custom",
+        path: ["points", index, "x"],
+        message: "Tone-curve point x coordinates must be strictly increasing",
+      });
+    }
+  }
+}
+
+export const ToneCurvePointPayloadSchema = z
+  .object({
+    variant: z.enum(TONE_CURVE_POINT_VARIANTS),
+    kind: z.literal("points"),
+    points: z.array(ToneCurvePointSchema).min(2).max(17),
+  })
+  .strict()
+  .superRefine((payload, context) => validateToneCurvePoints(payload.points, context));
+
+export const ToneCurveParametricValuesSchema = z
+  .object({
+    highlights: z.number().finite().min(-100).max(100),
+    lights: z.number().finite().min(-100).max(100),
+    darks: z.number().finite().min(-100).max(100),
+    shadows: z.number().finite().min(-100).max(100),
+  })
+  .strict();
+
+export const ToneCurveParametricPayloadSchema = z
+  .object({
+    variant: z.literal("parametric"),
+    kind: z.literal("parametric"),
+    values: ToneCurveParametricValuesSchema,
+  })
+  .strict();
+
+export const ToneCurvePayloadSchema = z.discriminatedUnion("kind", [
+  ToneCurvePointPayloadSchema,
+  ToneCurveParametricPayloadSchema,
+]);
+
+export const ToneCurvePointOperationSchema = z
+  .object({
+    variant: z.enum(TONE_CURVE_POINT_VARIANTS),
+    kind: z.literal("points"),
+    mode: z.literal("absolute"),
+    points: z.array(ToneCurvePointSchema).min(2).max(17),
+    confidence: z.number().min(0).max(1),
+    rationale: z.string().min(1).max(500),
+  })
+  .strict()
+  .superRefine((operation, context) => validateToneCurvePoints(operation.points, context));
+
+export const ToneCurveParametricOperationSchema = z
+  .object({
+    variant: z.literal("parametric"),
+    kind: z.literal("parametric"),
+    mode: z.literal("absolute"),
+    values: ToneCurveParametricValuesSchema,
+    confidence: z.number().min(0).max(1),
+    rationale: z.string().min(1).max(500),
+  })
+  .strict();
+
+export const ToneCurveOperationSchema = z.discriminatedUnion("kind", [
+  ToneCurvePointOperationSchema,
+  ToneCurveParametricOperationSchema,
+]);
+
+function validateToneCurveOperationSet(
+  operations: readonly { variant: string }[],
+  context: z.RefinementCtx,
+): void {
+  const variants = operations.map((operation) => operation.variant);
+  const seen = new Set<string>();
+  for (const variant of variants) {
+    if (seen.has(variant)) {
+      context.addIssue({
+        code: "custom",
+        path: ["operations"],
+        message: `Tone-curve variant may only appear once: ${variant}`,
+      });
+    }
+    seen.add(variant);
+  }
+  if (variants.includes("master") && variants.some((variant) => variant !== "master")) {
+    context.addIssue({
+      code: "custom",
+      path: ["operations"],
+      message: "Tone-curve master conflicts with RGB and parametric variants",
+    });
+  }
+  if (variants.includes("parametric") && variants.some((variant) => variant !== "parametric")) {
+    context.addIssue({
+      code: "custom",
+      path: ["operations"],
+      message: "Tone-curve parametric mode conflicts with point-curve variants",
+    });
+  }
+}
+
+export const ToneCurveIntentSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    creative_goal: z.string().min(1).max(500),
+    operations: z.array(ToneCurveOperationSchema).max(TONE_CURVE_VARIANTS.length),
+    overall_confidence: z.number().min(0).max(1),
+  })
+  .strict()
+  .superRefine((intent, context) => validateToneCurveOperationSet(intent.operations, context));
+
+export const ToneCurvePlanSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    tone_curve_registry_version: z.literal(TONE_CURVE_REGISTRY_VERSION),
+    operations: z.array(ToneCurveOperationSchema).max(TONE_CURVE_VARIANTS.length),
+    warnings: z.array(z.string().min(1).max(500)).max(16),
+    propagation_policy: z
+      .object({
+        eligible: z.literal(false),
+        blocked_reason: z.string().min(1).max(500),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((plan, context) => validateToneCurveOperationSet(plan.operations, context));
+
+function validateUniqueToneCurveVariants(
+  curves: readonly { variant: string }[],
+  context: z.RefinementCtx,
+): void {
+  const seen = new Set<string>();
+  for (const curve of curves) {
+    if (seen.has(curve.variant)) {
+      context.addIssue({
+        code: "custom",
+        path: ["curves"],
+        message: `Tone-curve readback contains duplicate variant: ${curve.variant}`,
+      });
+    }
+    seen.add(curve.variant);
+  }
+}
+
+export const ToneCurveReadbackSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    tone_curve_registry_version: z.literal(TONE_CURVE_REGISTRY_VERSION),
+    curves: z.array(ToneCurvePayloadSchema).max(TONE_CURVE_VARIANTS.length),
+  })
+  .strict()
+  .superRefine((readback, context) => validateUniqueToneCurveVariants(readback.curves, context));
+
+export const ToneCurveGoldenVectorSchema = z
+  .object({
+    id: z.string().min(1),
+    control_group: z.string().min(1),
+    intent: ToneCurveIntentSchema,
+    expected_plan: ToneCurvePlanSchema,
+    current_readback: ToneCurveReadbackSchema.optional(),
+    expected_readback: ToneCurveReadbackSchema.optional(),
+  })
+  .strict()
+  .superRefine((vector, context) => {
+    if ((vector.current_readback === undefined) !== (vector.expected_readback === undefined)) {
+      context.addIssue({
+        code: "custom",
+        path: ["expected_readback"],
+        message: "current_readback and expected_readback must be provided together",
       });
     }
   });
@@ -569,6 +785,7 @@ export const OperationSemanticsSchema = z
     retry_policy: z.enum(["automatic", "readback_before_retry", "manual_review_only"]),
     safe_to_resume: z.boolean(),
     supported_settings: z.array(z.string().min(1)).optional(),
+    supported_curve_variants: z.array(z.enum(TONE_CURVE_VARIANTS)).optional(),
   })
   .strict();
 

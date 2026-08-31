@@ -72,6 +72,13 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   Color Mixer channels are refused unless the backend declares every setting;
   common translator golden-vector runners keep control-group expectations
   isolated.
+- Structured Tone Curve planning uses a separate `0.1.0` registry for master,
+  RGB point, and parametric curves, with bounded points, explicit mode conflicts,
+  deterministic readback reconciliation, and shared golden vectors. Backends
+  must declare every requested curve variant; curve propagation is disabled by
+  policy until per-photo readback and rendered proof exist. The current adapter
+  has no structured curve mutation method, so this is a planning/refusal
+  boundary only.
 - A single-photo apply reads and verifies the Master first, then lazily creates
   one session-marked Workflow Copy only when apply is approved and the plan has
   an executable adjustment. Checkpoints, Develop mutation, read-back, and render

@@ -46,6 +46,12 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
   遷移到 `0.3.0`。除非 backend 宣告支援每一個 setting，Color Mixer channel
   會先被拒絕；共用的 translator golden-vector runner 會把不同 control group
   的預期結果分開驗證。
+- Structured Tone Curve planning 使用獨立的 `0.1.0` registry，涵蓋 master／RGB
+  point curve 與 parametric curve；點位 bounds、模式互斥、deterministic readback
+  reconcile 與 golden vector 都有 schema 契約。Backend 必須逐一宣告所需 curve
+  variant；在每張照片的 readback 與 render proof 完成前，registry policy 會禁止
+  curve propagation。目前 adapter 尚無 structured curve mutation method，因此
+  這一層只提供 planning／拒絕邊界。
 - 單張 apply 會先唯讀並驗證 Master；只有明確允許 apply 且計畫含可執行調整時，
   才建立一份帶 session 標記的 Workflow Copy。checkpoint、Develop mutation、讀回與
   render 只會指向已驗證的 Copy。dry-run／no-op 不會建立 Copy；輸入已是 Virtual

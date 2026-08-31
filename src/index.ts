@@ -14,6 +14,7 @@ export * from "./providers.js";
 export * from "./runtime.js";
 export * from "./schemas.js";
 export * from "./translator.js";
+export * from "./tone-curve.js";
 export * from "./types.js";
 export * from "./workflow.js";
 export * from "./xmp.js";

@@ -2379,5 +2379,38 @@ Cloud-analyzer checkpoint:
 - Final T30-local verification passed: changed-file `npx.cmd prettier --check`,
   `npm.cmd run lint`, `npm.cmd test` (4 files / 82 tests),
   `npm.cmd run check`, `npm.cmd run build`, and `git diff --check` (only normal
-  LF-to-CRLF warnings). The T30-local changes remain unstaged pending commit;
-  the external Lightroom live gate is intentionally still open.
+  LF-to-CRLF warnings). The external Lightroom live gate is intentionally still
+  open.
+- T30 was then committed locally as `1d31246 feat: add color mixer planning
+  boundary`; `git status --porcelain=v1 -b` confirmed a clean
+  `codex/roadmap-t09` worktree. No remote operation was performed.
+
+## 2026-08-31 - T32 structured tone-curve planning boundary
+
+- Added a separate `0.1.0` Tone Curve Registry contract for master, red, green,
+  and blue point curves plus parametric curves. Point coordinates are bounded
+  to `[0,1]`, require x endpoints `0` and `1`, and require strictly increasing
+  x values; parametric components are bounded to `[-100,100]`. Master and
+  parametric variants have explicit plan conflicts with other variants, while
+  RGB point variants may coexist.
+- Added a readback state schema and deterministic overlay/mismatch helpers.
+  This is a contract/evidence helper only; the current `BackendAdapter` still
+  has no structured tone-curve mutation method, so no backend or photo file is
+  touched.
+- Added shared tone-curve golden-vector runners, duplicate-vector isolation,
+  optional readback expectations, and a fail-closed backend capability check.
+  Undeclared variants return `REVIEW_REQUIRED` through the assessment helper;
+  curve propagation is hard-disabled by the registry policy pending per-photo
+  readback and rendered proof.
+- The first T32 type check passed for source changes but exposed test helper
+  typing: a `readonly unknown[]` fixture was not assignable to the parsed
+  `ToneCurveIntent` operations array. The targeted tone-curve test run itself
+  passed 6 tests; the fixture was corrected and no source issue remained.
+- `npx.cmd prettier --write` and changed-file `npx.cmd prettier --check` passed
+  for the T32 source, test, README, and implementation record. `git diff
+  --check` passed with only the normal LF-to-CRLF warnings. After the fixture
+  correction, `npm.cmd run check`, `npm.cmd test -- tests\\tone-curve.test.ts`,
+  `npm.cmd test` (5 files / 88 tests), `npm.cmd run lint`, and
+  `npm.cmd run build` all passed. No photo file, Lightroom catalog, external
+  backend checkout, remote issue, push, merge, PR, or issue closure was
+  performed.

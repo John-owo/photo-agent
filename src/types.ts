@@ -43,6 +43,14 @@ import type {
   WorkflowCopyResultSchema,
   WorkflowCopyVerificationSchema,
   WorkflowResultSchema,
+  ToneCurveGoldenVectorSchema,
+  ToneCurveIntentSchema,
+  ToneCurveOperationSchema,
+  ToneCurvePayloadSchema,
+  ToneCurvePointPayloadSchema,
+  ToneCurveParametricValuesSchema,
+  ToneCurvePlanSchema,
+  ToneCurveReadbackSchema,
 } from "./schemas.js";
 
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
@@ -54,6 +62,14 @@ export type NormalizedOperation = z.infer<typeof NormalizedOperationSchema>;
 export type ParameterRegistryMigration = z.infer<typeof ParameterRegistryMigrationSchema>;
 export type ParameterRegistrySnapshot = z.infer<typeof ParameterRegistrySnapshotSchema>;
 export type TranslatorGoldenVector = z.infer<typeof TranslatorGoldenVectorSchema>;
+export type ToneCurveOperation = z.infer<typeof ToneCurveOperationSchema>;
+export type ToneCurvePayload = z.infer<typeof ToneCurvePayloadSchema>;
+export type ToneCurvePointPayload = z.infer<typeof ToneCurvePointPayloadSchema>;
+export type ToneCurveParametricValues = z.infer<typeof ToneCurveParametricValuesSchema>;
+export type ToneCurveIntent = z.infer<typeof ToneCurveIntentSchema>;
+export type ToneCurvePlan = z.infer<typeof ToneCurvePlanSchema>;
+export type ToneCurveReadback = z.infer<typeof ToneCurveReadbackSchema>;
+export type ToneCurveGoldenVector = z.infer<typeof ToneCurveGoldenVectorSchema>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;
