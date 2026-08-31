@@ -4,7 +4,11 @@ import { join, resolve } from "node:path";
 
 import { acquireMutationLock } from "./runtime.js";
 import { PROPAGATION_OPERATIONS, requireBackendHandshake } from "./backend-handshake.js";
-import { PARAMETER_REGISTRY_VERSION, selectPropagatableOperations } from "./parameter-registry.js";
+import {
+  assertBackendSupportsPlan,
+  PARAMETER_REGISTRY_VERSION,
+  selectPropagatableOperations,
+} from "./parameter-registry.js";
 import { LIGHTROOM_CHECKPOINT_KEYS, resolveLightroomSettings } from "./translator.js";
 import { PropagationPlanSchema, RepresentativeJobSchema } from "./schemas.js";
 import type {
@@ -486,8 +490,14 @@ export async function applyPropagationPlan(options: {
       try {
         await backend.connect();
         connected = true;
-        await requireBackendHandshake(backend, PROPAGATION_OPERATIONS);
+        const backendManifest = await requireBackendHandshake(backend, PROPAGATION_OPERATIONS);
         handshakeComplete = true;
+        assertBackendSupportsPlan(backendManifest, {
+          schema_version: "0.1.0",
+          parameter_registry_version: PARAMETER_REGISTRY_VERSION,
+          operations: target.operations,
+          warnings: [],
+        });
         const current = await backend.readCurrentEdit(asset.raw_path);
         if (!samePath(current.path, asset.raw_path)) {
           records.push({

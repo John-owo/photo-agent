@@ -5,12 +5,17 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { MockBackend } from "../src/backends.js";
+import { MOCK_CAPABILITIES, MockBackend } from "../src/backends.js";
 import { exportFinal } from "../src/delivery.js";
 import { AcceptingMockEvaluator, ScriptedEvaluator } from "../src/evaluation.js";
 import { writeFixtureJpeg } from "../src/preview.js";
 import { MockProvider } from "../src/providers.js";
 import {
+  assertBackendSupportsPlan,
+  BASELINE_PARAMETER_REGISTRY_VERSION,
+  COLOR_MIXER_CHANNELS,
+  COLOR_MIXER_COMPONENTS,
+  COLOR_MIXER_PARAMETERS,
   LEGACY_PARAMETER_REGISTRY_VERSION,
   PARAMETER_REGISTRY,
   migrateNormalizedPlan,
@@ -20,7 +25,11 @@ import {
   selectPropagatableOperations,
   validateNormalizedPlan,
 } from "../src/parameter-registry.js";
-import { ParameterRegistrySnapshotSchema, StoredNormalizedEditPlanSchema } from "../src/schemas.js";
+import {
+  BackendCapabilityManifestSchema,
+  ParameterRegistrySnapshotSchema,
+  StoredNormalizedEditPlanSchema,
+} from "../src/schemas.js";
 import { resolveLightroomSettings, runTranslatorGoldenVectors } from "../src/translator.js";
 import type { EvaluationResult } from "../src/types.js";
 import { runSinglePhoto } from "../src/workflow.js";
@@ -281,7 +290,7 @@ describe("T13 preview and final-export seam", () => {
 describe("T16 baseline Parameter Registry", () => {
   it("covers every normalized baseline parameter with units and policy", () => {
     expect(Object.keys(PARAMETER_REGISTRY).sort()).toEqual([...registeredParameters()].sort());
-    expect(PARAMETER_REGISTRY_VERSION).toBe("0.2.0");
+    expect(PARAMETER_REGISTRY_VERSION).toBe("0.3.0");
     for (const definition of Object.values(PARAMETER_REGISTRY)) {
       expect(definition.unit).toBeTruthy();
       expect(definition.absolute_range[0]).toBeLessThan(definition.absolute_range[1]);
@@ -436,7 +445,7 @@ describe("T28 versioned Parameter Registry", () => {
     expect(migrated.parameter_registry_migration).toEqual({
       from_version: LEGACY_PARAMETER_REGISTRY_VERSION,
       to_version: PARAMETER_REGISTRY_VERSION,
-      strategy: "baseline-0.1.0-to-0.2.0",
+      strategy: "baseline-0.1.0-via-0.2.0-to-0.3.0",
     });
     expect(migrated.parameter_registry_snapshot).toEqual(serializeParameterRegistry());
     expect(StoredNormalizedEditPlanSchema.parse(JSON.parse(JSON.stringify(migrated)))).toEqual(
@@ -451,6 +460,36 @@ describe("T28 versioned Parameter Registry", () => {
     expect(unversioned.parameter_registry_migration?.from_version).toBe(
       LEGACY_PARAMETER_REGISTRY_VERSION,
     );
+
+    const currentSnapshot = serializeParameterRegistry();
+    const t28Snapshot = {
+      version: BASELINE_PARAMETER_REGISTRY_VERSION,
+      definitions: Object.fromEntries(
+        Object.entries(currentSnapshot.definitions)
+          .filter(
+            ([parameter]) =>
+              !parameter.startsWith("hue_") &&
+              !parameter.startsWith("saturation_") &&
+              !parameter.startsWith("luminance_"),
+          )
+          .map(([parameter, definition]) => {
+            const baselineDefinition = Object.fromEntries(
+              Object.entries(definition).filter(([key]) => key !== "control_group"),
+            );
+            return [parameter, baselineDefinition];
+          }),
+      ),
+    };
+    const migratedFromT28 = migrateNormalizedPlan({
+      ...legacy,
+      parameter_registry_version: BASELINE_PARAMETER_REGISTRY_VERSION,
+      parameter_registry_snapshot: t28Snapshot,
+    });
+    expect(migratedFromT28.parameter_registry_migration).toEqual({
+      from_version: BASELINE_PARAMETER_REGISTRY_VERSION,
+      to_version: PARAMETER_REGISTRY_VERSION,
+      strategy: "baseline-0.2.0-to-0.3.0",
+    });
   });
 
   it("rejects a tampered snapshot and keeps golden vectors independent by control group", () => {
@@ -473,7 +512,7 @@ describe("T28 versioned Parameter Registry", () => {
         operations: [],
         warnings: [],
       }),
-    ).toThrow(/does not match the verified registry definitions/);
+    ).toThrow(/does not match the verified definitions/);
 
     const vectors = runTranslatorGoldenVectors([
       {
@@ -564,6 +603,144 @@ describe("T28 versioned Parameter Registry", () => {
     expect(() => runTranslatorGoldenVectors([duplicate, duplicate])).toThrow(
       /Duplicate translator golden vector/,
     );
+  });
+});
+
+describe("T30 Color Mixer planning", () => {
+  const colorMixerPlan = {
+    schema_version: "0.1.0" as const,
+    parameter_registry_version: PARAMETER_REGISTRY_VERSION,
+    operations: [
+      {
+        parameter: "hue_red" as const,
+        mode: "absolute" as const,
+        value: -100,
+        confidence: 0.95,
+        rationale: "boundary hue fixture",
+      },
+      {
+        parameter: "saturation_magenta" as const,
+        mode: "absolute" as const,
+        value: 100,
+        confidence: 0.95,
+        rationale: "boundary saturation fixture",
+      },
+    ],
+    warnings: [],
+  };
+
+  it("covers every supported channel/component with explicit bounds and backend keys", () => {
+    expect(COLOR_MIXER_CHANNELS).toHaveLength(8);
+    expect(COLOR_MIXER_COMPONENTS).toHaveLength(3);
+    expect(COLOR_MIXER_PARAMETERS).toHaveLength(24);
+    for (const component of COLOR_MIXER_COMPONENTS) {
+      for (const channel of COLOR_MIXER_CHANNELS) {
+        const parameter =
+          `${component.prefix}_${channel}` as (typeof COLOR_MIXER_PARAMETERS)[number];
+        const definition = PARAMETER_REGISTRY[parameter];
+        expect(definition.control_group).toBe("color_mixer");
+        expect(definition.backend_key).toBe(
+          `${component.backendPrefix}${channel[0]!.toUpperCase()}${channel.slice(1)}`,
+        );
+        expect(definition.absolute_range).toEqual([-100, 100]);
+        expect(definition.delta_range).toEqual([-100, 100]);
+        expect(definition.allowed_modes).toEqual(["delta", "absolute"]);
+        expect(definition.propagation.eligible).toBe(true);
+        expect(definition.propagation.minimum_confidence).toBe(0.8);
+      }
+    }
+  });
+
+  it("preserves channel boundaries, rejects out-of-range values, and filters propagation explicitly", () => {
+    expect(
+      resolveLightroomSettings(
+        { HueAdjustmentRed: 0, SaturationAdjustmentMagenta: 0 },
+        colorMixerPlan,
+      ),
+    ).toEqual({ HueAdjustmentRed: -100, SaturationAdjustmentMagenta: 100 });
+    expect(() =>
+      validateNormalizedPlan({
+        ...colorMixerPlan,
+        operations: [
+          {
+            ...colorMixerPlan.operations[0],
+            value: 101,
+          },
+        ],
+      }),
+    ).toThrow(/outside/);
+    expect(
+      selectPropagatableOperations(colorMixerPlan, ["hue_red", "saturation_magenta"]).map(
+        (operation) => operation.parameter,
+      ),
+    ).toEqual(["hue_red", "saturation_magenta"]);
+    expect(selectPropagatableOperations(colorMixerPlan, ["hue_red"])).toHaveLength(1);
+    expect(selectPropagatableOperations(colorMixerPlan, [])).toHaveLength(0);
+    expect(
+      selectPropagatableOperations(
+        {
+          ...colorMixerPlan,
+          operations: [{ ...colorMixerPlan.operations[0], confidence: 0.79 }],
+        },
+        ["hue_red"],
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("refuses Color Mixer before mutation unless the backend declares every setting", async () => {
+    expect(() => assertBackendSupportsPlan(MOCK_CAPABILITIES, colorMixerPlan)).toThrow(
+      /does not declare support/,
+    );
+    const capableManifest = BackendCapabilityManifestSchema.parse({
+      ...MOCK_CAPABILITIES,
+      operations: {
+        ...MOCK_CAPABILITIES.operations,
+        apply_global_adjustment: {
+          ...MOCK_CAPABILITIES.operations.apply_global_adjustment,
+          supported_settings: ["HueAdjustmentRed", "SaturationAdjustmentMagenta"],
+        },
+      },
+    });
+    expect(() => assertBackendSupportsPlan(capableManifest, colorMixerPlan)).not.toThrow();
+
+    const { root, raw, preview } = await fixturePair();
+    const backend = new MockBackend(raw);
+    const result = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: {
+        requiresCloudPreview: false,
+        analyze: async () => ({
+          intent: {
+            schema_version: "0.1.0" as const,
+            creative_goal: "adjust red hue",
+            adjustments: [
+              {
+                parameter: "hue_red" as const,
+                direction: "decrease" as const,
+                strength: "slight" as const,
+                rationale: "fixture color mixer request",
+                confidence: 0.95,
+              },
+            ],
+            overall_confidence: 0.95,
+          },
+          metadata: {
+            provider: "mock" as const,
+            model: "color-mixer-fixture",
+            promptVersion: "color-mixer-fixture-v1",
+            promptHash: "0".repeat(64),
+            cloudPreview: false,
+          },
+        }),
+      },
+      backend,
+      sessionRoot: join(root, "sessions"),
+      apply: true,
+      allowCloudPreview: false,
+    });
+    expect(result.state).toBe("REVIEW_REQUIRED");
+    expect(backend.calls).toEqual(["connect", "handshake", "close"]);
   });
 });
 

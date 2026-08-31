@@ -1,23 +1,33 @@
 import {
+  BASELINE_NORMALIZED_PARAMETERS,
+  COLOR_MIXER_PARAMETERS,
   NORMALIZED_PARAMETERS,
   NormalizedEditPlanSchema,
   ParameterRegistrySnapshotSchema,
   StoredNormalizedEditPlanSchema,
 } from "./schemas.js";
 import type {
+  BackendCapabilityManifest,
   NormalizedOperation,
   NormalizedParameter,
   ParameterRegistrySnapshot,
   StoredNormalizedEditPlan,
 } from "./types.js";
 
+export { COLOR_MIXER_PARAMETERS };
+
 export const LEGACY_PARAMETER_REGISTRY_VERSION = "0.1.0" as const;
-export const PARAMETER_REGISTRY_VERSION = "0.2.0" as const;
+export const BASELINE_PARAMETER_REGISTRY_VERSION = "0.2.0" as const;
+export const PARAMETER_REGISTRY_VERSION = "0.3.0" as const;
 export const SUPPORTED_PARAMETER_REGISTRY_VERSIONS = [
   LEGACY_PARAMETER_REGISTRY_VERSION,
+  BASELINE_PARAMETER_REGISTRY_VERSION,
   PARAMETER_REGISTRY_VERSION,
 ] as const;
-export const PARAMETER_REGISTRY_MIGRATION_STRATEGY = "baseline-0.1.0-to-0.2.0" as const;
+export const BASELINE_PARAMETER_REGISTRY_MIGRATION_STRATEGY = "baseline-0.1.0-to-0.2.0" as const;
+export const PARAMETER_REGISTRY_MIGRATION_STRATEGY = "baseline-0.2.0-to-0.3.0" as const;
+export const LEGACY_TO_CURRENT_PARAMETER_REGISTRY_MIGRATION_STRATEGY =
+  "baseline-0.1.0-via-0.2.0-to-0.3.0" as const;
 
 export type ParameterUnit = "ev" | "kelvin" | "points";
 export type ParameterMode = "delta" | "absolute";
@@ -30,6 +40,7 @@ export type PropagationCondition =
 export type ParameterDefinition = {
   readonly parameter: NormalizedParameter;
   readonly semantic_parameter: string;
+  readonly control_group: "global" | "color_mixer";
   readonly backend_key: string;
   readonly unit: ParameterUnit;
   readonly base_step: number;
@@ -65,6 +76,7 @@ function globalParameter(
   return {
     parameter,
     semantic_parameter: semanticParameter,
+    control_group: "global",
     backend_key: backendKey,
     unit: "points",
     base_step: 8,
@@ -82,10 +94,73 @@ function globalParameter(
   };
 }
 
+export const COLOR_MIXER_CHANNELS = [
+  "red",
+  "orange",
+  "yellow",
+  "green",
+  "aqua",
+  "blue",
+  "purple",
+  "magenta",
+] as const;
+
+export const COLOR_MIXER_COMPONENTS = [
+  { prefix: "hue", backendPrefix: "HueAdjustment" },
+  { prefix: "saturation", backendPrefix: "SaturationAdjustment" },
+  { prefix: "luminance", backendPrefix: "LuminanceAdjustment" },
+] as const;
+
+const COLOR_MIXER_PROPAGATION_CONDITIONS: readonly PropagationCondition[] = [
+  "accepted_representative",
+  "same_lighting_cluster",
+  "high_confidence_source",
+  "shortlisted_target",
+];
+
+function titleCase(value: string): string {
+  return value[0]!.toUpperCase() + value.slice(1);
+}
+
+function colorMixerParameter(
+  parameter: (typeof COLOR_MIXER_PARAMETERS)[number],
+  backendKey: string,
+): ParameterDefinition {
+  return {
+    parameter,
+    semantic_parameter: parameter,
+    control_group: "color_mixer",
+    backend_key: backendKey,
+    unit: "points",
+    base_step: 8,
+    supported: true,
+    allowed_modes: ["delta", "absolute"],
+    absolute_range: POINT_RANGE,
+    delta_range: POINT_DELTA_RANGE,
+    conflicts_with: [],
+    depends_on: [],
+    propagation: {
+      eligible: true,
+      required_conditions: COLOR_MIXER_PROPAGATION_CONDITIONS,
+      minimum_confidence: 0.8,
+    },
+  };
+}
+
+const COLOR_MIXER_DEFINITIONS = Object.fromEntries(
+  COLOR_MIXER_COMPONENTS.flatMap(({ prefix, backendPrefix }) =>
+    COLOR_MIXER_CHANNELS.map((channel) => {
+      const parameter = `${prefix}_${channel}` as (typeof COLOR_MIXER_PARAMETERS)[number];
+      return [parameter, colorMixerParameter(parameter, `${backendPrefix}${titleCase(channel)}`)];
+    }),
+  ),
+) as Record<(typeof COLOR_MIXER_PARAMETERS)[number], ParameterDefinition>;
+
 const definitions: Record<NormalizedParameter, ParameterDefinition> = {
   exposure_ev: {
     parameter: "exposure_ev",
     semantic_parameter: "exposure",
+    control_group: "global",
     backend_key: "Exposure2012",
     unit: "ev",
     base_step: 0.2,
@@ -104,6 +179,7 @@ const definitions: Record<NormalizedParameter, ParameterDefinition> = {
   temperature_k: {
     parameter: "temperature_k",
     semantic_parameter: "temperature",
+    control_group: "global",
     backend_key: "Temperature",
     unit: "kelvin",
     base_step: 250,
@@ -123,6 +199,7 @@ const definitions: Record<NormalizedParameter, ParameterDefinition> = {
   tint: {
     parameter: "tint",
     semantic_parameter: "tint",
+    control_group: "global",
     backend_key: "Tint",
     unit: "points",
     base_step: 5,
@@ -149,6 +226,7 @@ const definitions: Record<NormalizedParameter, ParameterDefinition> = {
   dehaze: globalParameter("dehaze", "dehaze", "Dehaze"),
   vibrance: globalParameter("vibrance", "vibrance", "Vibrance"),
   saturation: globalParameter("saturation", "saturation", "Saturation"),
+  ...COLOR_MIXER_DEFINITIONS,
 };
 
 export const PARAMETER_REGISTRY: Readonly<Record<NormalizedParameter, ParameterDefinition>> =
@@ -209,18 +287,48 @@ export function validateParameterRegistrySnapshot(snapshot: unknown): ParameterR
   return parsed;
 }
 
+function registrySnapshotForVersion(version: string): ParameterRegistrySnapshot {
+  if (version === PARAMETER_REGISTRY_VERSION) return currentRegistrySnapshot();
+  if (
+    version !== LEGACY_PARAMETER_REGISTRY_VERSION &&
+    version !== BASELINE_PARAMETER_REGISTRY_VERSION
+  ) {
+    throw new Error(`Unsupported parameter registry version: ${version}`);
+  }
+  const definitionsForBaseline = Object.fromEntries(
+    BASELINE_NORMALIZED_PARAMETERS.map((parameter) => {
+      const definition = PARAMETER_REGISTRY[parameter];
+      const withoutCurrentOnlyFields = Object.fromEntries(
+        Object.entries(definition).filter(([key]) => key !== "control_group"),
+      );
+      return [parameter, withoutCurrentOnlyFields];
+    }),
+  );
+  return ParameterRegistrySnapshotSchema.parse({
+    version,
+    definitions: definitionsForBaseline,
+  });
+}
+
 function migrationFor(
   sourceVersion: string,
 ): StoredNormalizedEditPlan["parameter_registry_migration"] {
   if (sourceVersion === PARAMETER_REGISTRY_VERSION) return undefined;
-  if (sourceVersion !== LEGACY_PARAMETER_REGISTRY_VERSION) {
-    throw new Error(`Unsupported parameter registry version: ${sourceVersion}`);
+  if (sourceVersion === BASELINE_PARAMETER_REGISTRY_VERSION) {
+    return {
+      from_version: BASELINE_PARAMETER_REGISTRY_VERSION,
+      to_version: PARAMETER_REGISTRY_VERSION,
+      strategy: PARAMETER_REGISTRY_MIGRATION_STRATEGY,
+    };
   }
-  return {
-    from_version: LEGACY_PARAMETER_REGISTRY_VERSION,
-    to_version: PARAMETER_REGISTRY_VERSION,
-    strategy: PARAMETER_REGISTRY_MIGRATION_STRATEGY,
-  };
+  if (sourceVersion === LEGACY_PARAMETER_REGISTRY_VERSION) {
+    return {
+      from_version: LEGACY_PARAMETER_REGISTRY_VERSION,
+      to_version: PARAMETER_REGISTRY_VERSION,
+      strategy: LEGACY_TO_CURRENT_PARAMETER_REGISTRY_MIGRATION_STRATEGY,
+    };
+  }
+  throw new Error(`Unsupported parameter registry version: ${sourceVersion}`);
 }
 
 export function migrateNormalizedPlan(plan: unknown): StoredNormalizedEditPlan {
@@ -233,12 +341,8 @@ export function migrateNormalizedPlan(plan: unknown): StoredNormalizedEditPlan {
     throw new Error(`Unsupported parameter registry version: ${sourceVersion}`);
   }
   if (declaredMigration) {
-    if (
-      declaredMigration.to_version !== PARAMETER_REGISTRY_VERSION ||
-      declaredMigration.from_version === declaredMigration.to_version ||
-      !isSupportedRegistryVersion(declaredMigration.from_version) ||
-      declaredMigration.strategy !== PARAMETER_REGISTRY_MIGRATION_STRATEGY
-    ) {
+    const expectedMigration = migrationFor(declaredMigration.from_version);
+    if (!expectedMigration || !sameValue(declaredMigration, expectedMigration)) {
       throw new Error("Unsupported parameter registry migration contract");
     }
     if (
@@ -258,9 +362,9 @@ export function migrateNormalizedPlan(plan: unknown): StoredNormalizedEditPlan {
         `Parameter registry snapshot version ${snapshot.version} does not match plan version ${expectedSnapshotVersion}`,
       );
     }
-    if (!sameValue(snapshot.definitions, currentRegistrySnapshot().definitions)) {
+    if (!sameValue(snapshot.definitions, registrySnapshotForVersion(sourceVersion).definitions)) {
       throw new Error(
-        `Parameter registry snapshot ${snapshot.version} does not match the verified registry definitions`,
+        `Parameter registry snapshot ${snapshot.version} does not match the verified definitions for version ${expectedSnapshotVersion}`,
       );
     }
   }
@@ -329,6 +433,33 @@ export function validateNormalizedPlan(plan: unknown): StoredNormalizedEditPlan 
     seen.add(operation.parameter);
   }
   return parsed;
+}
+
+export function assertBackendSupportsPlan(
+  manifest: BackendCapabilityManifest,
+  plan: unknown,
+): void {
+  const validatedPlan = validateNormalizedPlan(plan);
+  const semantics = manifest.operations.apply_global_adjustment;
+  if (!semantics || !semantics.supported) {
+    throw new Error("Backend does not declare apply_global_adjustment support");
+  }
+  const supportedSettings = semantics.supported_settings;
+  const unsupported = validatedPlan.operations.filter((operation) => {
+    const definition = getParameterDefinition(operation.parameter);
+    if (supportedSettings !== undefined) {
+      return !supportedSettings.includes(definition.backend_key);
+    }
+    return definition.control_group !== "global";
+  });
+  if (unsupported.length > 0) {
+    const keys = unsupported.map(
+      (operation) => getParameterDefinition(operation.parameter).backend_key,
+    );
+    throw new Error(
+      `Backend does not declare support for normalized settings: ${[...new Set(keys)].join(", ")}`,
+    );
+  }
 }
 
 export function validatePropagationAllowlist(

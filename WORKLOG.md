@@ -2337,3 +2337,47 @@ Cloud-analyzer checkpoint:
   staged T28 implementation. Post-commit
   `git status --porcelain=v1 -b` is clean on `codex/roadmap-t09`; no remote
   operation was performed.
+
+## 2026-08-31 - T30 Color Mixer planning boundary
+
+- Read-only ticket checks confirmed T30 (#32) remains open and blocked by the
+  external Lightroom MCP Color Mixer contract (#6). Read-only external issue
+  checks also confirmed the related tone-curve capability (#7) is not a
+  substitute for Color Mixer support. No external repository or issue state
+  changed.
+- An initial source inspection was accidentally run from `D:\photo` instead of
+  the active worktree and returned expected path-not-found errors; the same
+  targeted read was rerun from the active worktree successfully. No files were
+  changed by the failed inspection.
+- Extended the normalized and semantic contracts with 24 Color Mixer controls:
+  eight channels (`red`, `orange`, `yellow`, `green`, `aqua`, `blue`, `purple`,
+  `magenta`) across hue, saturation, and luminance. Registry version advanced
+  to `0.3.0`; `0.1.0` and T28 `0.2.0` snapshots remain readable through the
+  explicit migration chain, with old snapshots compared against their
+  version-specific baseline before promotion to the current snapshot.
+- Added `control_group` registry metadata, bounded absolute/delta values,
+  backend SDK keys, confidence threshold `0.8`, and explicit allowlist-based
+  propagation policy for Color Mixer controls. Added optional
+  `supported_settings` to backend operation semantics and a fail-closed
+  `assertBackendSupportsPlan` boundary. Single-photo and propagation paths
+  now reject undeclared Color Mixer settings before mutation/Workflow Copy
+  creation.
+- Added T30 regression coverage for all channel/component mappings and
+  boundaries, propagation filtering, capable/ incapable backend manifests, and
+  single-photo refusal with the default mock backend before any read or write
+  beyond handshake/lease close. Documentation states that external Lightroom
+  live capability and rendered proof remain unverified.
+- The first post-expansion `npm.cmd run check` exposed an unused baseline
+  import; it was consumed by the version-specific snapshot migration. The
+  first expanded targeted run exposed stale T16/T28 expected version,
+  migration-strategy, and error-text assertions; those tests were updated. A
+  later check exposed the missing re-export/type inference for
+  `COLOR_MIXER_PARAMETERS`; that export was added. The first full lint run
+  exposed an unused test destructuring variable; it was replaced with a
+  field-filtering fixture. These were local implementation/test corrections;
+  no external state changed.
+- Final T30-local verification passed: changed-file `npx.cmd prettier --check`,
+  `npm.cmd run lint`, `npm.cmd test` (4 files / 82 tests),
+  `npm.cmd run check`, `npm.cmd run build`, and `git diff --check` (only normal
+  LF-to-CRLF warnings). The T30-local changes remain unstaged pending commit;
+  the external Lightroom live gate is intentionally still open.

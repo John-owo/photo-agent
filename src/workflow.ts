@@ -11,7 +11,7 @@ import {
 } from "./backend-handshake.js";
 import { ingestPair } from "./ingest.js";
 import { createSanitizedPreview, materializePreviewArtifact } from "./preview.js";
-import { validateNormalizedPlan } from "./parameter-registry.js";
+import { assertBackendSupportsPlan, validateNormalizedPlan } from "./parameter-registry.js";
 import {
   resolveLightroomSettings,
   translateIntent,
@@ -492,6 +492,15 @@ async function executePlan(
     connected = true;
     const backendManifest = await requireBackendHandshake(options.backend, SINGLE_PHOTO_OPERATIONS);
     throwIfCancellationRequested(options.signal, "read_only");
+    try {
+      assertBackendSupportsPlan(backendManifest, normalizedPlan);
+    } catch (error) {
+      await session.transition("REVIEW_REQUIRED", {
+        reason: "unsupported_backend_settings",
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return resultFor(session, normalizedPlan);
+    }
     await session.updateManifest({
       backend: { name: backendManifest.backend, version: backendManifest.version },
     });
@@ -615,6 +624,21 @@ async function executePlan(
           iteration,
         });
         await finishReport(iteration - 1, nextIterationBudgetReason);
+        return resultFor(session, normalizedPlan, { iterations: iteration - 1 });
+      }
+      try {
+        assertBackendSupportsPlan(backendManifest, activePlan);
+      } catch (error) {
+        const reason = "unsupported_backend_settings";
+        await session.transition("REVIEW_REQUIRED", {
+          reason,
+          iteration,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        completeIteration("REVIEW_REQUIRED", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        await finishReport(iteration - 1, reason);
         return resultFor(session, normalizedPlan, { iterations: iteration - 1 });
       }
       const settings =

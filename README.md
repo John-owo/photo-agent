@@ -68,8 +68,10 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   release is recorded in the session.
 - Normalized plans are self-describing: they persist the complete Parameter
   Registry snapshot, use an explicit registry version, and migrate legacy
-  unversioned/`0.1.0` plans to `0.2.0` before translation or mutation. Common
-  translator golden-vector runners keep control-group expectations isolated.
+  unversioned/`0.1.0`/`0.2.0` plans to `0.3.0` before translation or mutation.
+  Color Mixer channels are refused unless the backend declares every setting;
+  common translator golden-vector runners keep control-group expectations
+  isolated.
 - A single-photo apply reads and verifies the Master first, then lazily creates
   one session-marked Workflow Copy only when apply is approved and the plan has
   an executable adjustment. Checkpoints, Develop mutation, read-back, and render

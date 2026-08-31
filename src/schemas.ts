@@ -5,7 +5,7 @@ export const SCHEMA_VERSION = "0.1.0" as const;
 const direction = z.enum(["increase", "decrease", "unchanged"]);
 const strength = z.enum(["slight", "medium", "strong"]);
 
-export const SEMANTIC_PARAMETERS = [
+const BASELINE_SEMANTIC_PARAMETERS = [
   "exposure",
   "temperature",
   "tint",
@@ -21,7 +21,39 @@ export const SEMANTIC_PARAMETERS = [
   "saturation",
 ] as const;
 
-export const NORMALIZED_PARAMETERS = [
+export const COLOR_MIXER_SEMANTIC_PARAMETERS = [
+  "hue_red",
+  "hue_orange",
+  "hue_yellow",
+  "hue_green",
+  "hue_aqua",
+  "hue_blue",
+  "hue_purple",
+  "hue_magenta",
+  "saturation_red",
+  "saturation_orange",
+  "saturation_yellow",
+  "saturation_green",
+  "saturation_aqua",
+  "saturation_blue",
+  "saturation_purple",
+  "saturation_magenta",
+  "luminance_red",
+  "luminance_orange",
+  "luminance_yellow",
+  "luminance_green",
+  "luminance_aqua",
+  "luminance_blue",
+  "luminance_purple",
+  "luminance_magenta",
+] as const;
+
+export const SEMANTIC_PARAMETERS = [
+  ...BASELINE_SEMANTIC_PARAMETERS,
+  ...COLOR_MIXER_SEMANTIC_PARAMETERS,
+] as const;
+
+export const BASELINE_NORMALIZED_PARAMETERS = [
   "exposure_ev",
   "temperature_k",
   "tint",
@@ -35,6 +67,38 @@ export const NORMALIZED_PARAMETERS = [
   "dehaze",
   "vibrance",
   "saturation",
+] as const;
+
+export const COLOR_MIXER_PARAMETERS = [
+  "hue_red",
+  "hue_orange",
+  "hue_yellow",
+  "hue_green",
+  "hue_aqua",
+  "hue_blue",
+  "hue_purple",
+  "hue_magenta",
+  "saturation_red",
+  "saturation_orange",
+  "saturation_yellow",
+  "saturation_green",
+  "saturation_aqua",
+  "saturation_blue",
+  "saturation_purple",
+  "saturation_magenta",
+  "luminance_red",
+  "luminance_orange",
+  "luminance_yellow",
+  "luminance_green",
+  "luminance_aqua",
+  "luminance_blue",
+  "luminance_purple",
+  "luminance_magenta",
+] as const;
+
+export const NORMALIZED_PARAMETERS = [
+  ...BASELINE_NORMALIZED_PARAMETERS,
+  ...COLOR_MIXER_PARAMETERS,
 ] as const;
 
 export type NormalizedParameter = (typeof NORMALIZED_PARAMETERS)[number];
@@ -74,6 +138,7 @@ export const ParameterDefinitionSchema = z
   .object({
     parameter: z.string().min(1),
     semantic_parameter: z.string().min(1),
+    control_group: z.enum(["global", "color_mixer"]).optional(),
     backend_key: z.string().min(1),
     unit: z.enum(["ev", "kelvin", "points"]),
     base_step: z.number().finite().positive(),
@@ -503,6 +568,7 @@ export const OperationSemanticsSchema = z
     concurrency: z.enum(["parallel_safe", "per_photo_serialized", "exclusive_backend"]),
     retry_policy: z.enum(["automatic", "readback_before_retry", "manual_review_only"]),
     safe_to_resume: z.boolean(),
+    supported_settings: z.array(z.string().min(1)).optional(),
   })
   .strict();
 
