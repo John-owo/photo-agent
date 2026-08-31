@@ -2448,3 +2448,31 @@ Cloud-analyzer checkpoint:
   targeted `apply_patch` restored the pre-existing format. Final formatting
   verification is therefore recorded for changed source, tests, and docs while
   `WORKLOG.md` retains its established baseline.
+
+## 2026-08-31 - T36 context-safe optics and geometry planning boundary
+
+- Read-only external issue check confirmed Lightroom MCP #9 (`[T35] Support
+  lens, profile, and geometry controls`) remains open and requires distinct
+  bounded operations plus current-value read, Checkpoint, readback, render,
+  and capability semantics. No external repository or issue state changed.
+- Added a separate `0.1.0` Optics Registry for lens correction, camera profile,
+  crop, rotation, and perspective operations. Each geometry variant has its own
+  bounds and crop ordering dependency; duplicate operation identities are
+  rejected. Propagation is disabled by policy.
+- Added deterministic setting/readback helpers, independent profile/geometry
+  golden vectors, and capability assessment. A future write requires declared
+  read-current, checkpoint, render, operation-family, profile/geometry variant,
+  and concrete-setting support; unavailable profiles/variants fail closed.
+  The current `BackendAdapter` still has no structured optics mutation method,
+  so no photo, catalog, or external backend file was touched.
+- The first T36 type check exposed two test fixture spreads over a discriminated
+  geometry union; they were replaced with explicitly shaped crop/perspective
+  fixtures. The first targeted test then exposed a duplicate check passing a
+  runner result instead of an input vector; that fixture was corrected and the
+  targeted suite passed 6 tests.
+- `npx.cmd prettier --write` completed for T36 source/tests. Final T36
+  verification passed `npm.cmd run check`, `npm.cmd test` (7 files / 99 tests),
+  `npm.cmd run lint`, `npm.cmd run build`, changed-source/test/docs
+  `npx.cmd prettier --check`, and `git diff --check` with only normal
+  LF-to-CRLF warnings. No remote issue, push, merge, PR, or issue closure was
+  performed.

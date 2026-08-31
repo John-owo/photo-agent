@@ -85,6 +85,11 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   Denoise is intentionally absent; detail propagation remains disabled until
   per-photo evidence exists, and the current adapter has no detail mutation
   method.
+- Context-safe optics planning keeps lens correction, camera profiles, and
+  geometry as separate bounded operations. Profile names and geometry variants
+  require explicit backend declarations, read/checkpoint/render prerequisites,
+  and concrete setting support before any future write; propagation remains
+  disabled and the current adapter has no structured optics mutation method.
 - A single-photo apply reads and verifies the Master first, then lazily creates
   one session-marked Workflow Copy only when apply is approved and the plan has
   an executable adjustment. Checkpoints, Develop mutation, read-back, and render

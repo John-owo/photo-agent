@@ -56,6 +56,11 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
   reduction 控制做 bounds 與保守 dependency 檢查，也提供 deterministic readback
   helper 與完整 capability 宣告。AI Denoise 刻意不加入；在每張照片的 evidence
   完成前 detail propagation 仍禁止，而目前 adapter 尚無 detail mutation method。
+- Context-safe optics planning 將 lens correction、camera profile 與 geometry
+  分成不同 bounded operation。Profile name、geometry variant 必須有 backend
+  明確宣告，且先具備 read／checkpoint／render prerequisite 與完整 setting
+  support 才能進入未來寫入；propagation 仍禁止，目前 adapter 尚無 structured
+  optics mutation method。
 - 單張 apply 會先唯讀並驗證 Master；只有明確允許 apply 且計畫含可執行調整時，
   才建立一份帶 session 標記的 Workflow Copy。checkpoint、Develop mutation、讀回與
   render 只會指向已驗證的 Copy。dry-run／no-op 不會建立 Copy；輸入已是 Virtual

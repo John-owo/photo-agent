@@ -130,6 +130,15 @@ export const DETAIL_PROPAGATION_POLICY = {
     "Scene and ISO-conditioned detail adjustments require per-photo review before propagation",
 } as const;
 
+export const OPTICS_REGISTRY_VERSION = "0.1.0" as const;
+export const OPTICS_LENS_CONTROLS = ["profile_corrections", "chromatic_aberration"] as const;
+export const OPTICS_GEOMETRY_VARIANTS = ["crop", "rotation", "perspective"] as const;
+export const OPTICS_PROPAGATION_POLICY = {
+  eligible: false,
+  blocked_reason:
+    "Optics, profiles, and geometry are photo-specific and require per-photo evidence before propagation",
+} as const;
+
 export const SemanticAdjustmentSchema = z.object({
   parameter: z.enum(SEMANTIC_PARAMETERS),
   direction,
@@ -662,6 +671,210 @@ export const DetailGoldenVectorSchema = z
     }
   });
 
+export const OpticsLensPayloadSchema = z
+  .object({
+    kind: z.literal("lens_correction"),
+    profile_corrections: z.boolean(),
+    chromatic_aberration: z.boolean(),
+  })
+  .strict();
+
+export const OpticsProfilePayloadSchema = z
+  .object({
+    kind: z.literal("profile"),
+    profile_name: z.string().min(1).max(100),
+  })
+  .strict();
+
+const OpticsCropSettingsSchema = z
+  .object({
+    variant: z.literal("crop"),
+    left: z.number().finite().min(0).max(1),
+    top: z.number().finite().min(0).max(1),
+    right: z.number().finite().min(0).max(1),
+    bottom: z.number().finite().min(0).max(1),
+  })
+  .strict()
+  .superRefine((settings, context) => {
+    if (settings.left >= settings.right) {
+      context.addIssue({
+        code: "custom",
+        path: ["left", "right"],
+        message: "Crop left must be less than right",
+      });
+    }
+    if (settings.top >= settings.bottom) {
+      context.addIssue({
+        code: "custom",
+        path: ["top", "bottom"],
+        message: "Crop top must be less than bottom",
+      });
+    }
+  });
+
+const OpticsRotationSettingsSchema = z
+  .object({
+    variant: z.literal("rotation"),
+    angle: z.number().finite().min(-45).max(45),
+  })
+  .strict();
+
+const OpticsPerspectiveSettingsSchema = z
+  .object({
+    variant: z.literal("perspective"),
+    horizontal: z.number().finite().min(-100).max(100),
+    vertical: z.number().finite().min(-100).max(100),
+    scale: z.number().finite().min(0.5).max(2),
+  })
+  .strict();
+
+export const OpticsGeometrySettingsSchema = z.discriminatedUnion("variant", [
+  OpticsCropSettingsSchema,
+  OpticsRotationSettingsSchema,
+  OpticsPerspectiveSettingsSchema,
+]);
+
+export const OpticsGeometryPayloadSchema = z
+  .object({
+    kind: z.literal("geometry"),
+    settings: OpticsGeometrySettingsSchema,
+  })
+  .strict();
+
+export const OpticsPayloadSchema = z.union([
+  OpticsLensPayloadSchema,
+  OpticsProfilePayloadSchema,
+  OpticsGeometryPayloadSchema,
+]);
+
+export const OpticsLensOperationSchema = z
+  .object({
+    kind: z.literal("lens_correction"),
+    mode: z.literal("absolute"),
+    profile_corrections: z.boolean(),
+    chromatic_aberration: z.boolean(),
+    confidence: z.number().min(0).max(1),
+    rationale: z.string().min(1).max(500),
+  })
+  .strict();
+
+export const OpticsProfileOperationSchema = z
+  .object({
+    kind: z.literal("profile"),
+    mode: z.literal("absolute"),
+    profile_name: z.string().min(1).max(100),
+    confidence: z.number().min(0).max(1),
+    rationale: z.string().min(1).max(500),
+  })
+  .strict();
+
+export const OpticsGeometryOperationSchema = z
+  .object({
+    kind: z.literal("geometry"),
+    mode: z.literal("absolute"),
+    settings: OpticsGeometrySettingsSchema,
+    confidence: z.number().min(0).max(1),
+    rationale: z.string().min(1).max(500),
+  })
+  .strict();
+
+export const OpticsOperationSchema = z.union([
+  OpticsLensOperationSchema,
+  OpticsProfileOperationSchema,
+  OpticsGeometryOperationSchema,
+]);
+
+function opticsOperationIdentity(operation: {
+  kind: string;
+  settings?: { variant: string };
+}): string {
+  return operation.kind === "geometry"
+    ? `geometry:${operation.settings?.variant ?? "unknown"}`
+    : operation.kind;
+}
+
+function validateUniqueOpticsOperations(
+  operations: readonly { kind: string; settings?: { variant: string } }[],
+  context: z.RefinementCtx,
+): void {
+  const seen = new Set<string>();
+  for (const operation of operations) {
+    const identity = opticsOperationIdentity(operation);
+    if (seen.has(identity)) {
+      context.addIssue({
+        code: "custom",
+        path: ["operations"],
+        message: `Optics operation may only appear once: ${identity}`,
+      });
+    }
+    seen.add(identity);
+  }
+}
+
+export const OpticsIntentSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    creative_goal: z.string().min(1).max(500),
+    operations: z.array(OpticsOperationSchema).max(5),
+    overall_confidence: z.number().min(0).max(1),
+  })
+  .strict()
+  .superRefine((intent, context) => validateUniqueOpticsOperations(intent.operations, context));
+
+export const OpticsPlanSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    optics_registry_version: z.literal(OPTICS_REGISTRY_VERSION),
+    operations: z.array(OpticsOperationSchema).max(5),
+    warnings: z.array(z.string().min(1).max(500)).max(16),
+    propagation_policy: z
+      .object({
+        eligible: z.literal(false),
+        blocked_reason: z.string().min(1).max(500),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((plan, context) => validateUniqueOpticsOperations(plan.operations, context));
+
+export const OpticsReadbackSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    optics_registry_version: z.literal(OPTICS_REGISTRY_VERSION),
+    operations: z.array(OpticsPayloadSchema).max(5),
+  })
+  .strict()
+  .superRefine((readback, context) =>
+    validateUniqueOpticsOperations(
+      readback.operations.map((operation) =>
+        operation.kind === "geometry"
+          ? { kind: operation.kind, settings: operation.settings }
+          : operation,
+      ),
+      context,
+    ),
+  );
+
+export const OpticsGoldenVectorSchema = z
+  .object({
+    id: z.string().min(1),
+    control_group: z.string().min(1),
+    intent: OpticsIntentSchema,
+    expected_plan: OpticsPlanSchema,
+    current_readback: OpticsReadbackSchema.optional(),
+    expected_readback: OpticsReadbackSchema.optional(),
+  })
+  .strict()
+  .superRefine((vector, context) => {
+    if ((vector.current_readback === undefined) !== (vector.expected_readback === undefined)) {
+      context.addIssue({
+        code: "custom",
+        path: ["expected_readback"],
+        message: "current_readback and expected_readback must be provided together",
+      });
+    }
+  });
+
 const EvaluationResultFieldsSchema = z.object({
   schema_version: z.literal("0.2.0"),
   verdict: z.enum(["accept", "refine", "review"]),
@@ -986,6 +1199,9 @@ export const OperationSemanticsSchema = z
     supported_settings: z.array(z.string().min(1)).optional(),
     supported_curve_variants: z.array(z.enum(TONE_CURVE_VARIANTS)).optional(),
     supported_detail_operations: z.array(z.enum(DETAIL_OPERATION_VARIANTS)).optional(),
+    supported_lens_controls: z.array(z.enum(OPTICS_LENS_CONTROLS)).optional(),
+    supported_profiles: z.array(z.string().min(1)).optional(),
+    supported_geometry_variants: z.array(z.enum(OPTICS_GEOMETRY_VARIANTS)).optional(),
   })
   .strict();
 

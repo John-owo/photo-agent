@@ -11,6 +11,7 @@ export * from "./shoot-grouping.js";
 export * from "./ingest.js";
 export * from "./preview.js";
 export * from "./parameter-registry.js";
+export * from "./optics-geometry.js";
 export * from "./providers.js";
 export * from "./runtime.js";
 export * from "./schemas.js";
