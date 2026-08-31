@@ -108,6 +108,10 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   geometry, opaque fields, other masks, and global settings are preserved.
   Unsupported or uncertain mask state returns a manual handoff; the current
   adapter has no structured mask mutation method.
+- Style Prior planning gives protected explicit preference rules precedence
+  over learned history, records rule evidence/sample counts/confidence, and
+  falls back to general guidance with capped confidence when history is too
+  small. Conflicting or evidence-free outcomes remain review-required.
 - A single-photo apply reads and verifies the Master first, then lazily creates
   one session-marked Workflow Copy only when apply is approved and the plan has
   an executable adjustment. Checkpoints, Develop mutation, read-back, and render

@@ -75,6 +75,10 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
   allowlist 與 bounds，readback 會驗證 geometry、opaque field、其他 mask 與 global
   settings 都被保留。不支援或不確定的 mask state 會交給人工接手，目前 adapter
   尚無 structured mask mutation method。
+- Style Prior planning 讓受保護的 explicit preference rule 優先於 learned history，
+  並記錄每個 prior 的 evidence、sample count、confidence。History 樣本不足時改用
+  confidence 有上限的 general guidance；衝突或沒有 evidence 的結果維持
+  review-required。
 - 單張 apply 會先唯讀並驗證 Master；只有明確允許 apply 且計畫含可執行調整時，
   才建立一份帶 session 標記的 Workflow Copy。checkpoint、Develop mutation、讀回與
   render 只會指向已驗證的 Copy。dry-run／no-op 不會建立 Copy；輸入已是 Virtual

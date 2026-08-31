@@ -207,6 +207,11 @@ export const MASK_PROPAGATION_POLICY = {
     "Existing-mask adjustments are Workflow Copy and mask-schema specific; per-photo preservation proof is required before propagation",
 } as const;
 
+export const PREFERENCE_REGISTRY_VERSION = "0.1.0" as const;
+export const MIN_HISTORICAL_PREFERENCE_SAMPLES = 5;
+export const MIN_HISTORICAL_PREFERENCE_CONFIDENCE = 0.65;
+export const LOW_DATA_STYLE_PRIOR_CONFIDENCE_CAP = 0.5;
+
 export const SemanticAdjustmentSchema = z.object({
   parameter: z.enum(SEMANTIC_PARAMETERS),
   direction,
@@ -1331,6 +1336,143 @@ export const ColorGradingGoldenVectorSchema = z
       });
     }
   });
+
+export const PreferenceContextSchema = z
+  .object({
+    scene_type: z.string().min(1).max(100).optional(),
+    lighting_type: z.string().min(1).max(100).optional(),
+    camera_model: z.string().min(1).max(200).optional(),
+    lens: z.string().min(1).max(200).optional(),
+    tags: z.array(z.string().min(1).max(100)).max(16).optional(),
+  })
+  .strict();
+
+const PreferenceRuleSourceSchema = z.enum(["explicit_protected", "historical", "general_guidance"]);
+
+export const PreferenceRuleSchema = z
+  .object({
+    id: z.string().min(1).max(200),
+    source: PreferenceRuleSourceSchema,
+    protected: z.boolean(),
+    context: PreferenceContextSchema,
+    parameter: z.enum(NORMALIZED_PARAMETERS),
+    mode: z.enum(["delta", "absolute"]),
+    value: z.number().finite(),
+    evidence: z.array(z.string().min(1).max(500)).min(1).max(16),
+    sample_count: z.number().int().nonnegative(),
+    confidence: z.number().min(0).max(1),
+  })
+  .strict()
+  .superRefine((rule, context) => {
+    if (rule.source === "explicit_protected" && !rule.protected) {
+      context.addIssue({
+        code: "custom",
+        path: ["protected"],
+        message: "Explicit preference rules must be protected",
+      });
+    }
+    if (rule.source !== "explicit_protected" && rule.protected) {
+      context.addIssue({
+        code: "custom",
+        path: ["protected"],
+        message: "Only explicit preference rules may be protected",
+      });
+    }
+  });
+
+export const StylePriorSchema = z
+  .object({
+    parameter: z.enum(NORMALIZED_PARAMETERS),
+    mode: z.enum(["delta", "absolute"]),
+    value: z.number().finite(),
+    basis: z.enum(["explicit_protected", "historical", "general_fallback"]),
+    rule_ids: z.array(z.string().min(1).max(200)).min(1).max(16),
+    evidence: z.array(z.string().min(1).max(500)).min(1).max(32),
+    sample_count: z.number().int().nonnegative(),
+    confidence: z.number().min(0).max(1),
+    rationale: z.string().min(1).max(1000),
+  })
+  .strict();
+
+function validateUniquePreferenceRuleIds(
+  rules: readonly { id: string }[],
+  context: z.RefinementCtx,
+): void {
+  const seen = new Set<string>();
+  for (const [index, rule] of rules.entries()) {
+    if (seen.has(rule.id)) {
+      context.addIssue({
+        code: "custom",
+        path: ["rules", index, "id"],
+        message: `Preference rule id may only appear once: ${rule.id}`,
+      });
+    }
+    seen.add(rule.id);
+  }
+}
+
+export const StylePriorRequestSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    context: PreferenceContextSchema,
+    rules: z.array(PreferenceRuleSchema).max(128),
+    general_guidance: z.array(PreferenceRuleSchema).max(NORMALIZED_PARAMETERS.length),
+  })
+  .strict()
+  .superRefine((request, context) => {
+    validateUniquePreferenceRuleIds([...request.rules, ...request.general_guidance], context);
+    request.rules.forEach((rule, index) => {
+      if (rule.source === "general_guidance") {
+        context.addIssue({
+          code: "custom",
+          path: ["rules", index, "source"],
+          message: "General guidance must be supplied in general_guidance",
+        });
+      }
+    });
+    request.general_guidance.forEach((rule, index) => {
+      if (rule.source !== "general_guidance") {
+        context.addIssue({
+          code: "custom",
+          path: ["general_guidance", index, "source"],
+          message: "general_guidance entries must use source general_guidance",
+        });
+      }
+    });
+  });
+
+export const StylePriorPlanSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    preference_registry_version: z.literal(PREFERENCE_REGISTRY_VERSION),
+    context: PreferenceContextSchema,
+    priors: z.array(StylePriorSchema).max(NORMALIZED_PARAMETERS.length),
+    warnings: z.array(z.string().min(1).max(500)).max(16),
+    review_required: z.boolean(),
+  })
+  .strict()
+  .superRefine((plan, context) => {
+    const seen = new Set<string>();
+    for (const [index, prior] of plan.priors.entries()) {
+      if (seen.has(prior.parameter)) {
+        context.addIssue({
+          code: "custom",
+          path: ["priors", index, "parameter"],
+          message: `Style Prior may only appear once per parameter: ${prior.parameter}`,
+        });
+      }
+      seen.add(prior.parameter);
+    }
+  });
+
+export const StylePriorGoldenVectorSchema = z
+  .object({
+    id: z.string().min(1),
+    control_group: z.string().min(1),
+    request: StylePriorRequestSchema,
+    expected_plan: StylePriorPlanSchema,
+  })
+  .strict();
 
 const EvaluationResultFieldsSchema = z.object({
   schema_version: z.literal("0.2.0"),

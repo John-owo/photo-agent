@@ -10,6 +10,7 @@ export * from "./finishing.js";
 export * from "./shoot-analyzers.js";
 export * from "./shoot-metadata.js";
 export * from "./shoot-grouping.js";
+export * from "./style-priors.js";
 export * from "./ingest.js";
 export * from "./mask-adjustment.js";
 export * from "./preview.js";

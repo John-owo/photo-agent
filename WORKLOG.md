@@ -2598,3 +2598,32 @@ Cloud-analyzer checkpoint:
   boundary`; post-commit status was clean on `codex/roadmap-t09`. The
   following WORKLOG-only commit records this post-commit evidence; no remote
   operation was performed.
+
+## 2026-08-31 - T44 explicit preference rules and Style Priors boundary
+
+- Read-only `gh issue view 39 --repo John-owo/photo-agent --json ...` confirmed
+  T44 requires protected explicit preferences to outrank weak historical
+  tendencies, evidence/sample-count/confidence on every Style Prior, and
+  general-guidance fallback for low-sample contexts. It remains blocked by
+  PhotoAgent #6 and #31; no remote state changed.
+- Added a pure Style Prior resolver with explicit-protected precedence,
+  evidence/sample/confidence disclosure, high-data historical thresholds,
+  low-data general-guidance fallback with a confidence cap, conflict review,
+  normalized-operation resolution, and isolated golden vectors. No backend or
+  photo state is involved.
+- The first T44 check/test run passed 3 targeted tests but exposed a missing
+  canonicalization helper used by the golden-vector comparison; the helper
+  is being restored before final verification.
+- After restoring the helper, `npx.cmd prettier --write src/style-priors.ts`
+  completed and `npm.cmd test -- --run tests/style-priors.test.ts` passed 1
+  file / 4 tests. The final full check remains pending.
+- A first final-verification dispatch was rejected before process creation
+  because one parallel check used the mistyped worktree path
+  `D:\photo\_photo\_agent_workspace\git-worktrees\photo-agent-roadmap-integration`;
+  no command ran from that path. The verification is being rerun from the
+  active worktree.
+- Final T44 verification from the active worktree passed `npm.cmd run check`,
+  `npm.cmd test` (11 files / 120 tests), `npm.cmd run lint`, `npm.cmd run
+  build`, changed-source/test/docs `npx.cmd prettier --check`, and `git diff
+  --check`; diff output contained only normal LF-to-CRLF warnings. No remote
+  issue, push, merge, PR, or issue closure was performed.

@@ -84,6 +84,12 @@ import type {
   MaskParameterSettingsSchema,
   MaskReadbackSchema,
   MaskSelectorSchema,
+  PreferenceContextSchema,
+  PreferenceRuleSchema,
+  StylePriorGoldenVectorSchema,
+  StylePriorPlanSchema,
+  StylePriorRequestSchema,
+  StylePriorSchema,
 } from "./schemas.js";
 
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
@@ -136,6 +142,12 @@ export type MaskReadback = z.infer<typeof MaskReadbackSchema>;
 export type MaskAdjustmentIntent = z.infer<typeof MaskAdjustmentIntentSchema>;
 export type MaskAdjustmentPlan = z.infer<typeof MaskAdjustmentPlanSchema>;
 export type MaskGoldenVector = z.infer<typeof MaskGoldenVectorSchema>;
+export type PreferenceContext = z.infer<typeof PreferenceContextSchema>;
+export type PreferenceRule = z.infer<typeof PreferenceRuleSchema>;
+export type StylePrior = z.infer<typeof StylePriorSchema>;
+export type StylePriorRequest = z.infer<typeof StylePriorRequestSchema>;
+export type StylePriorPlan = z.infer<typeof StylePriorPlanSchema>;
+export type StylePriorGoldenVector = z.infer<typeof StylePriorGoldenVectorSchema>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;
