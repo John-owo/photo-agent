@@ -3144,3 +3144,7 @@ Cloud-analyzer checkpoint:
   example, package, README, and worklog changes on `codex/roadmap-t09`; no
   Lightroom checkout, photo asset, or generated source artifact is tracked in
   the worktree.
+- Committed the local T58-T60 continuation as `3e4b0e1 feat: add plugin
+  contract and xmp backend`; post-commit status was clean on
+  `codex/roadmap-t09`. No push, merge, PR, issue closure, Lightroom, or photo
+  state change was performed.
