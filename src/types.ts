@@ -51,6 +51,13 @@ import type {
   ToneCurveParametricValuesSchema,
   ToneCurvePlanSchema,
   ToneCurveReadbackSchema,
+  DetailGoldenVectorSchema,
+  DetailIntentSchema,
+  DetailOperationSchema,
+  DetailPayloadSchema,
+  DetailPlanSchema,
+  DetailPlanningContextSchema,
+  DetailReadbackSchema,
 } from "./schemas.js";
 
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
@@ -70,6 +77,13 @@ export type ToneCurveIntent = z.infer<typeof ToneCurveIntentSchema>;
 export type ToneCurvePlan = z.infer<typeof ToneCurvePlanSchema>;
 export type ToneCurveReadback = z.infer<typeof ToneCurveReadbackSchema>;
 export type ToneCurveGoldenVector = z.infer<typeof ToneCurveGoldenVectorSchema>;
+export type DetailPlanningContext = z.infer<typeof DetailPlanningContextSchema>;
+export type DetailOperation = z.infer<typeof DetailOperationSchema>;
+export type DetailPayload = z.infer<typeof DetailPayloadSchema>;
+export type DetailIntent = z.infer<typeof DetailIntentSchema>;
+export type DetailPlan = z.infer<typeof DetailPlanSchema>;
+export type DetailReadback = z.infer<typeof DetailReadbackSchema>;
+export type DetailGoldenVector = z.infer<typeof DetailGoldenVectorSchema>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;

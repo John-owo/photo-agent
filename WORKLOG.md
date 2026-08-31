@@ -2414,3 +2414,37 @@ Cloud-analyzer checkpoint:
   `npm.cmd run build` all passed. No photo file, Lightroom catalog, external
   backend checkout, remote issue, push, merge, PR, or issue closure was
   performed.
+- T32 was committed locally as `02ae360 feat: add structured tone curve
+  planning`; post-commit status was clean on `codex/roadmap-t09`. No remote
+  operation was performed.
+
+## 2026-08-31 - T34 scene-aware detail planning boundary
+
+- Read-only GitHub checks found T34 (#34) open and blocked by the external
+  Lightroom MCP detail contract (#8); the default sandbox network attempt
+  failed with a socket permission error and the same read-only query was then
+  completed with the approved network boundary. A first external issue read
+  used a mistyped worktree path and failed before process creation; it was
+  rerun from the active worktree successfully. No remote state changed.
+- Added a separate `0.1.0` Detail Registry contract for bounded sharpening and
+  noise-reduction controls, required scene/ISO context, duplicate-operation
+  rejection, conservative low-ISO noise dependency, portrait/high-ISO masking
+  dependencies, and a propagation policy that remains ineligible. Unsupported
+  AI Denoise is intentionally not represented or approximated.
+- Added deterministic backend setting resolution, structured readback overlay
+  and mismatch checks, independent golden-vector runners, and complete
+  capability refusal. The current `BackendAdapter` still has no detail-specific
+  mutation method, so this is planning/refusal evidence only; no photo,
+  catalog, or external backend file was touched.
+- The first T34 type check exposed an inferred unparsed test capability fixture
+  whose operation array widened to `string[]`; parsing it through
+  `BackendCapabilityManifestSchema` fixed the fixture. The targeted detail test
+  then passed 5 tests. `npx.cmd prettier --write` completed for T34 changes;
+  after documentation updates, `npm.cmd run check`, `npm.cmd test` (6 files /
+  93 tests), `npm.cmd run lint`, and `npm.cmd run build` all passed.
+- A broad changed-file `npx.cmd prettier --check` reported only the existing
+  historical `WORKLOG.md` formatting baseline. A temporary `--write` of that
+  log passed but rewrote unrelated historical continuation indentation; a
+  targeted `apply_patch` restored the pre-existing format. Final formatting
+  verification is therefore recorded for changed source, tests, and docs while
+  `WORKLOG.md` retains its established baseline.

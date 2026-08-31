@@ -79,6 +79,12 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   policy until per-photo readback and rendered proof exist. The current adapter
   has no structured curve mutation method, so this is a planning/refusal
   boundary only.
+- Scene-aware detail planning carries scene and ISO context and bounds
+  sharpening/noise-reduction controls, with conservative dependency checks,
+  deterministic readback helpers, and complete capability declarations. AI
+  Denoise is intentionally absent; detail propagation remains disabled until
+  per-photo evidence exists, and the current adapter has no detail mutation
+  method.
 - A single-photo apply reads and verifies the Master first, then lazily creates
   one session-marked Workflow Copy only when apply is approved and the plan has
   an executable adjustment. Checkpoints, Develop mutation, read-back, and render

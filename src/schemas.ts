@@ -118,6 +118,18 @@ export const TONE_CURVE_PROPAGATION_POLICY = {
     "Structured tone-curve propagation is disabled until per-photo backend readback and rendered proof exist",
 } as const;
 
+export const DETAIL_REGISTRY_VERSION = "0.1.0" as const;
+export const DETAIL_OPERATION_VARIANTS = ["sharpening", "noise_reduction"] as const;
+export const DETAIL_NOISE_REDUCTION_MIN_ISO = 800;
+export const DETAIL_HIGH_ISO_THRESHOLD = 6400;
+export const DETAIL_PORTRAIT_MIN_SHARPEN_MASKING = 25;
+export const DETAIL_HIGH_ISO_MIN_SHARPEN_MASKING = 50;
+export const DETAIL_PROPAGATION_POLICY = {
+  eligible: false,
+  blocked_reason:
+    "Scene and ISO-conditioned detail adjustments require per-photo review before propagation",
+} as const;
+
 export const SemanticAdjustmentSchema = z.object({
   parameter: z.enum(SEMANTIC_PARAMETERS),
   direction,
@@ -463,6 +475,193 @@ export const ToneCurveGoldenVectorSchema = z
     }
   });
 
+export const DetailPlanningContextSchema = z
+  .object({
+    scene_type: z.string().min(1).max(100),
+    iso: z.number().int().min(1).max(1_000_000),
+    lighting_type: z.string().min(1).max(100).optional(),
+  })
+  .strict();
+
+export const DetailSharpeningPayloadSchema = z
+  .object({
+    kind: z.literal("sharpening"),
+    amount: z.number().finite().min(0).max(150),
+    radius: z.number().finite().min(0.5).max(3),
+    detail: z.number().finite().min(0).max(100),
+    masking: z.number().finite().min(0).max(100),
+  })
+  .strict();
+
+export const DetailNoiseReductionPayloadSchema = z
+  .object({
+    kind: z.literal("noise_reduction"),
+    luminance: z.number().finite().min(0).max(100),
+    luminance_detail: z.number().finite().min(0).max(100),
+    luminance_contrast: z.number().finite().min(0).max(100),
+    color: z.number().finite().min(0).max(100),
+    color_detail: z.number().finite().min(0).max(100),
+    color_smoothness: z.number().finite().min(0).max(100),
+  })
+  .strict();
+
+export const DetailPayloadSchema = z.discriminatedUnion("kind", [
+  DetailSharpeningPayloadSchema,
+  DetailNoiseReductionPayloadSchema,
+]);
+
+export const DetailSharpeningOperationSchema = z
+  .object({
+    kind: z.literal("sharpening"),
+    mode: z.literal("absolute"),
+    amount: z.number().finite().min(0).max(150),
+    radius: z.number().finite().min(0.5).max(3),
+    detail: z.number().finite().min(0).max(100),
+    masking: z.number().finite().min(0).max(100),
+    confidence: z.number().min(0).max(1),
+    rationale: z.string().min(1).max(500),
+  })
+  .strict();
+
+export const DetailNoiseReductionOperationSchema = z
+  .object({
+    kind: z.literal("noise_reduction"),
+    mode: z.literal("absolute"),
+    luminance: z.number().finite().min(0).max(100),
+    luminance_detail: z.number().finite().min(0).max(100),
+    luminance_contrast: z.number().finite().min(0).max(100),
+    color: z.number().finite().min(0).max(100),
+    color_detail: z.number().finite().min(0).max(100),
+    color_smoothness: z.number().finite().min(0).max(100),
+    confidence: z.number().min(0).max(1),
+    rationale: z.string().min(1).max(500),
+  })
+  .strict();
+
+export const DetailOperationSchema = z.discriminatedUnion("kind", [
+  DetailSharpeningOperationSchema,
+  DetailNoiseReductionOperationSchema,
+]);
+
+function validateUniqueDetailOperations(
+  operations: readonly { kind: string }[],
+  context: z.RefinementCtx,
+): void {
+  const seen = new Set<string>();
+  for (const operation of operations) {
+    if (seen.has(operation.kind)) {
+      context.addIssue({
+        code: "custom",
+        path: ["operations"],
+        message: `Detail operation may only appear once: ${operation.kind}`,
+      });
+    }
+    seen.add(operation.kind);
+  }
+}
+
+function isPortraitDetailScene(sceneType: string): boolean {
+  return /portrait|people|wedding|skin/i.test(sceneType);
+}
+
+function validateDetailDependencies(
+  contextValue: z.infer<typeof DetailPlanningContextSchema>,
+  operations: readonly z.infer<typeof DetailOperationSchema>[],
+  context: z.RefinementCtx,
+): void {
+  for (const [index, operation] of operations.entries()) {
+    if (operation.kind === "noise_reduction" && contextValue.iso < DETAIL_NOISE_REDUCTION_MIN_ISO) {
+      context.addIssue({
+        code: "custom",
+        path: ["operations", index],
+        message: `Noise reduction requires ISO >= ${DETAIL_NOISE_REDUCTION_MIN_ISO}`,
+      });
+    }
+    if (
+      operation.kind === "sharpening" &&
+      isPortraitDetailScene(contextValue.scene_type) &&
+      operation.masking < DETAIL_PORTRAIT_MIN_SHARPEN_MASKING
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["operations", index, "masking"],
+        message: `Portrait sharpening requires masking >= ${DETAIL_PORTRAIT_MIN_SHARPEN_MASKING}`,
+      });
+    }
+    if (
+      operation.kind === "sharpening" &&
+      contextValue.iso >= DETAIL_HIGH_ISO_THRESHOLD &&
+      operation.masking < DETAIL_HIGH_ISO_MIN_SHARPEN_MASKING
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["operations", index, "masking"],
+        message: `High-ISO sharpening requires masking >= ${DETAIL_HIGH_ISO_MIN_SHARPEN_MASKING}`,
+      });
+    }
+  }
+}
+
+export const DetailIntentSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    creative_goal: z.string().min(1).max(500),
+    context: DetailPlanningContextSchema,
+    operations: z.array(DetailOperationSchema).max(DETAIL_OPERATION_VARIANTS.length),
+    overall_confidence: z.number().min(0).max(1),
+  })
+  .strict()
+  .superRefine((intent, context) => validateUniqueDetailOperations(intent.operations, context));
+
+export const DetailPlanSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    detail_registry_version: z.literal(DETAIL_REGISTRY_VERSION),
+    context: DetailPlanningContextSchema,
+    operations: z.array(DetailOperationSchema).max(DETAIL_OPERATION_VARIANTS.length),
+    warnings: z.array(z.string().min(1).max(500)).max(16),
+    propagation_policy: z
+      .object({
+        eligible: z.literal(false),
+        blocked_reason: z.string().min(1).max(500),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((plan, context) => {
+    validateUniqueDetailOperations(plan.operations, context);
+    validateDetailDependencies(plan.context, plan.operations, context);
+  });
+
+export const DetailReadbackSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    detail_registry_version: z.literal(DETAIL_REGISTRY_VERSION),
+    operations: z.array(DetailPayloadSchema).max(DETAIL_OPERATION_VARIANTS.length),
+  })
+  .strict()
+  .superRefine((readback, context) => validateUniqueDetailOperations(readback.operations, context));
+
+export const DetailGoldenVectorSchema = z
+  .object({
+    id: z.string().min(1),
+    control_group: z.string().min(1),
+    intent: DetailIntentSchema,
+    expected_plan: DetailPlanSchema,
+    current_readback: DetailReadbackSchema.optional(),
+    expected_readback: DetailReadbackSchema.optional(),
+  })
+  .strict()
+  .superRefine((vector, context) => {
+    if ((vector.current_readback === undefined) !== (vector.expected_readback === undefined)) {
+      context.addIssue({
+        code: "custom",
+        path: ["expected_readback"],
+        message: "current_readback and expected_readback must be provided together",
+      });
+    }
+  });
+
 const EvaluationResultFieldsSchema = z.object({
   schema_version: z.literal("0.2.0"),
   verdict: z.enum(["accept", "refine", "review"]),
@@ -786,6 +985,7 @@ export const OperationSemanticsSchema = z
     safe_to_resume: z.boolean(),
     supported_settings: z.array(z.string().min(1)).optional(),
     supported_curve_variants: z.array(z.enum(TONE_CURVE_VARIANTS)).optional(),
+    supported_detail_operations: z.array(z.enum(DETAIL_OPERATION_VARIANTS)).optional(),
   })
   .strict();
 

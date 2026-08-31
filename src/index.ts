@@ -3,6 +3,7 @@ export * from "./backend-handshake.js";
 export * from "./batch.js";
 export * from "./batch-edit.js";
 export * from "./delivery.js";
+export * from "./detail.js";
 export * from "./evaluation.js";
 export * from "./shoot-analyzers.js";
 export * from "./shoot-metadata.js";
