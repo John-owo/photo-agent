@@ -64,6 +64,12 @@ import type {
   OpticsPayloadSchema,
   OpticsPlanSchema,
   OpticsReadbackSchema,
+  FinishingGoldenVectorSchema,
+  FinishingIntentSchema,
+  FinishingOperationSchema,
+  FinishingPayloadSchema,
+  FinishingPlanSchema,
+  FinishingReadbackSchema,
 } from "./schemas.js";
 
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
@@ -96,6 +102,12 @@ export type OpticsIntent = z.infer<typeof OpticsIntentSchema>;
 export type OpticsPlan = z.infer<typeof OpticsPlanSchema>;
 export type OpticsReadback = z.infer<typeof OpticsReadbackSchema>;
 export type OpticsGoldenVector = z.infer<typeof OpticsGoldenVectorSchema>;
+export type FinishingOperation = z.infer<typeof FinishingOperationSchema>;
+export type FinishingPayload = z.infer<typeof FinishingPayloadSchema>;
+export type FinishingIntent = z.infer<typeof FinishingIntentSchema>;
+export type FinishingPlan = z.infer<typeof FinishingPlanSchema>;
+export type FinishingReadback = z.infer<typeof FinishingReadbackSchema>;
+export type FinishingGoldenVector = z.infer<typeof FinishingGoldenVectorSchema>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;

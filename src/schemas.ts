@@ -139,6 +139,14 @@ export const OPTICS_PROPAGATION_POLICY = {
     "Optics, profiles, and geometry are photo-specific and require per-photo evidence before propagation",
 } as const;
 
+export const FINISHING_REGISTRY_VERSION = "0.1.0" as const;
+export const FINISHING_OPERATION_VARIANTS = ["vignette", "grain", "framing"] as const;
+export const FINISHING_FRAMING_VARIANTS = ["crop", "rotation"] as const;
+export const FINISHING_PROPAGATION_POLICY = {
+  eligible: false,
+  blocked_reason: "Finishing and framing changes require per-photo review before propagation",
+} as const;
+
 export const SemanticAdjustmentSchema = z.object({
   parameter: z.enum(SEMANTIC_PARAMETERS),
   direction,
@@ -875,6 +883,219 @@ export const OpticsGoldenVectorSchema = z
     }
   });
 
+export const FinishingVignettePayloadSchema = z
+  .object({
+    kind: z.literal("vignette"),
+    amount: z.number().finite().min(-100).max(100),
+    midpoint: z.number().finite().min(0).max(100),
+    roundness: z.number().finite().min(-100).max(100),
+    feather: z.number().finite().min(0).max(100),
+  })
+  .strict();
+
+export const FinishingGrainPayloadSchema = z
+  .object({
+    kind: z.literal("grain"),
+    amount: z.number().finite().min(0).max(100),
+    size: z.number().finite().min(0).max(100),
+    roughness: z.number().finite().min(0).max(100),
+  })
+  .strict();
+
+const FinishingCropSettingsSchema = z
+  .object({
+    variant: z.literal("crop"),
+    left: z.number().finite().min(0).max(1),
+    top: z.number().finite().min(0).max(1),
+    right: z.number().finite().min(0).max(1),
+    bottom: z.number().finite().min(0).max(1),
+  })
+  .strict()
+  .superRefine((settings, context) => {
+    if (settings.left >= settings.right) {
+      context.addIssue({
+        code: "custom",
+        path: ["left", "right"],
+        message: "Framing crop left must be less than right",
+      });
+    }
+    if (settings.top >= settings.bottom) {
+      context.addIssue({
+        code: "custom",
+        path: ["top", "bottom"],
+        message: "Framing crop top must be less than bottom",
+      });
+    }
+  });
+
+const FinishingRotationSettingsSchema = z
+  .object({
+    variant: z.literal("rotation"),
+    angle: z.number().finite().min(-45).max(45),
+  })
+  .strict();
+
+export const FinishingFramingSettingsSchema = z.discriminatedUnion("variant", [
+  FinishingCropSettingsSchema,
+  FinishingRotationSettingsSchema,
+]);
+
+export const FinishingFramingPayloadSchema = z
+  .object({
+    kind: z.literal("framing"),
+    settings: FinishingFramingSettingsSchema,
+  })
+  .strict();
+
+export const FinishingPayloadSchema = z.union([
+  FinishingVignettePayloadSchema,
+  FinishingGrainPayloadSchema,
+  FinishingFramingPayloadSchema,
+]);
+
+export const FinishingVignetteOperationSchema = z
+  .object({
+    kind: z.literal("vignette"),
+    mode: z.literal("absolute"),
+    amount: z.number().finite().min(-100).max(100),
+    midpoint: z.number().finite().min(0).max(100),
+    roundness: z.number().finite().min(-100).max(100),
+    feather: z.number().finite().min(0).max(100),
+    confidence: z.number().min(0).max(1),
+    rationale: z.string().min(1).max(500),
+  })
+  .strict();
+
+export const FinishingGrainOperationSchema = z
+  .object({
+    kind: z.literal("grain"),
+    mode: z.literal("absolute"),
+    amount: z.number().finite().min(0).max(100),
+    size: z.number().finite().min(0).max(100),
+    roughness: z.number().finite().min(0).max(100),
+    confidence: z.number().min(0).max(1),
+    rationale: z.string().min(1).max(500),
+  })
+  .strict();
+
+export const FinishingFramingOperationSchema = z
+  .object({
+    kind: z.literal("framing"),
+    mode: z.literal("absolute"),
+    settings: FinishingFramingSettingsSchema,
+    confidence: z.number().min(0).max(1),
+    rationale: z.string().min(1).max(500),
+  })
+  .strict();
+
+export const FinishingOperationSchema = z.union([
+  FinishingVignetteOperationSchema,
+  FinishingGrainOperationSchema,
+  FinishingFramingOperationSchema,
+]);
+
+function finishingOperationIdentity(operation: {
+  kind: string;
+  settings?: { variant: string };
+}): string {
+  return operation.kind === "framing"
+    ? `framing:${operation.settings?.variant ?? "unknown"}`
+    : operation.kind;
+}
+
+function validateUniqueFinishingOperations(
+  operations: readonly { kind: string; settings?: { variant: string } }[],
+  context: z.RefinementCtx,
+): void {
+  const seen = new Set<string>();
+  for (const operation of operations) {
+    const identity = finishingOperationIdentity(operation);
+    if (seen.has(identity)) {
+      context.addIssue({
+        code: "custom",
+        path: ["operations"],
+        message: `Finishing operation may only appear once: ${identity}`,
+      });
+    }
+    seen.add(identity);
+  }
+}
+
+export const FinishingIntentSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    creative_goal: z.string().min(1).max(500),
+    operations: z.array(FinishingOperationSchema).max(4),
+    overall_confidence: z.number().min(0).max(1),
+  })
+  .strict()
+  .superRefine((intent, context) => validateUniqueFinishingOperations(intent.operations, context));
+
+export const FinishingPlanSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    finishing_registry_version: z.literal(FINISHING_REGISTRY_VERSION),
+    operations: z.array(FinishingOperationSchema).max(4),
+    warnings: z.array(z.string().min(1).max(500)).max(16),
+    human_review_required: z.boolean(),
+    propagation_policy: z
+      .object({
+        eligible: z.literal(false),
+        blocked_reason: z.string().min(1).max(500),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((plan, context) => {
+    validateUniqueFinishingOperations(plan.operations, context);
+    const hasHighRiskFraming = plan.operations.some((operation) => operation.kind === "framing");
+    if (plan.human_review_required !== hasHighRiskFraming) {
+      context.addIssue({
+        code: "custom",
+        path: ["human_review_required"],
+        message: "Crop and rotation require explicit per-photo human review",
+      });
+    }
+  });
+
+export const FinishingReadbackSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    finishing_registry_version: z.literal(FINISHING_REGISTRY_VERSION),
+    operations: z.array(FinishingPayloadSchema).max(4),
+  })
+  .strict()
+  .superRefine((readback, context) =>
+    validateUniqueFinishingOperations(
+      readback.operations.map((operation) =>
+        operation.kind === "framing"
+          ? { kind: operation.kind, settings: operation.settings }
+          : operation,
+      ),
+      context,
+    ),
+  );
+
+export const FinishingGoldenVectorSchema = z
+  .object({
+    id: z.string().min(1),
+    control_group: z.string().min(1),
+    intent: FinishingIntentSchema,
+    expected_plan: FinishingPlanSchema,
+    current_readback: FinishingReadbackSchema.optional(),
+    expected_readback: FinishingReadbackSchema.optional(),
+  })
+  .strict()
+  .superRefine((vector, context) => {
+    if ((vector.current_readback === undefined) !== (vector.expected_readback === undefined)) {
+      context.addIssue({
+        code: "custom",
+        path: ["expected_readback"],
+        message: "current_readback and expected_readback must be provided together",
+      });
+    }
+  });
+
 const EvaluationResultFieldsSchema = z.object({
   schema_version: z.literal("0.2.0"),
   verdict: z.enum(["accept", "refine", "review"]),
@@ -1202,6 +1423,8 @@ export const OperationSemanticsSchema = z
     supported_lens_controls: z.array(z.enum(OPTICS_LENS_CONTROLS)).optional(),
     supported_profiles: z.array(z.string().min(1)).optional(),
     supported_geometry_variants: z.array(z.enum(OPTICS_GEOMETRY_VARIANTS)).optional(),
+    supported_finishing_controls: z.array(z.enum(FINISHING_OPERATION_VARIANTS)).optional(),
+    supported_framing_variants: z.array(z.enum(FINISHING_FRAMING_VARIANTS)).optional(),
   })
   .strict();
 

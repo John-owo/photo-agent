@@ -90,6 +90,11 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   require explicit backend declarations, read/checkpoint/render prerequisites,
   and concrete setting support before any future write; propagation remains
   disabled and the current adapter has no structured optics mutation method.
+- Finishing and framing planning keeps vignette, grain, crop, and rotation as
+  separate bounded controls with structured geometry readback. Crop and
+  rotation always carry an explicit per-photo human-review requirement;
+  propagation is disabled until unrelated-state preservation is proven by a
+  real backend.
 - A single-photo apply reads and verifies the Master first, then lazily creates
   one session-marked Workflow Copy only when apply is approved and the plan has
   an executable adjustment. Checkpoints, Develop mutation, read-back, and render

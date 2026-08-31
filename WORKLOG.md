@@ -2442,6 +2442,9 @@ Cloud-analyzer checkpoint:
   then passed 5 tests. `npx.cmd prettier --write` completed for T34 changes;
   after documentation updates, `npm.cmd run check`, `npm.cmd test` (6 files /
   93 tests), `npm.cmd run lint`, and `npm.cmd run build` all passed.
+- T34 was committed locally as `f8cb580 feat: add scene-aware detail
+  planning`; post-commit status was clean on `codex/roadmap-t09`. No remote
+  operation was performed.
 - A broad changed-file `npx.cmd prettier --check` reported only the existing
   historical `WORKLOG.md` formatting baseline. A temporary `--write` of that
   log passed but rewrote unrelated historical continuation indentation; a
@@ -2474,5 +2477,32 @@ Cloud-analyzer checkpoint:
   verification passed `npm.cmd run check`, `npm.cmd test` (7 files / 99 tests),
   `npm.cmd run lint`, `npm.cmd run build`, changed-source/test/docs
   `npx.cmd prettier --check`, and `git diff --check` with only normal
+  LF-to-CRLF warnings. No remote issue, push, merge, PR, or issue closure was
+  performed.
+- T36 was committed locally as `6af3e10 feat: add optics geometry planning`;
+  post-commit status was clean on `codex/roadmap-t09`. No remote operation was
+  performed.
+
+## 2026-08-31 - T38 finishing and framing planning boundary
+
+- Read-only external issue check confirmed Lightroom MCP #10 (`[T37] Support
+  vignette, grain, crop, and rotation controls`) remains open and requires
+  separate bounded controls, structured geometry, Checkpoint, readback,
+  render, and truthful propagation semantics. No external state changed.
+- Added a separate `0.1.0` Finishing Registry for vignette, grain, crop, and
+  rotation. Crop ordering and rotation bounds are schema-validated; duplicate
+  framing identities fail closed. The plan carries an explicit
+  `human_review_required` flag for crop/rotation and a propagation policy that
+  remains ineligible.
+- Added deterministic setting/readback helpers, independent golden vectors,
+  capability prerequisites, concrete setting allowlists, and review outcomes.
+  Even a capable backend cannot auto-execute crop/rotation without explicit
+  per-photo human review; the current adapter has no structured finishing
+  mutation method, so no photo, catalog, or external backend file was touched.
+- The first T38 type check failed only on two unused schema imports; removing
+  them left the source check clean, and the targeted finishing test passed 5
+  tests. Final verification passed `npm.cmd run check`, `npm.cmd test` (8 files
+  / 104 tests), `npm.cmd run lint`, `npm.cmd run build`, changed source/test/
+  docs `npx.cmd prettier --check`, and `git diff --check` with only normal
   LF-to-CRLF warnings. No remote issue, push, merge, PR, or issue closure was
   performed.
