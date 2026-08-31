@@ -79,6 +79,10 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
   並記錄每個 prior 的 evidence、sample count、confidence。History 樣本不足時改用
   confidence 有上限的 general guidance；衝突或沒有 evidence 的結果維持
   review-required。
+- Style Memory retrieval 使用 versioned dataset hash，依 lighting、subject、camera、
+  lens、ISO、delivery 做 scene-conditioned matching。可選的 perceptual profile 只產生
+  relationship，不複製 raw settings；受保護的 natural-skin reference、失敗例、無關
+  match 與低 confidence history 都會被排除並留下明確 outcome。
 - 單張 apply 會先唯讀並驗證 Master；只有明確允許 apply 且計畫含可執行調整時，
   才建立一份帶 session 標記的 Workflow Copy。checkpoint、Develop mutation、讀回與
   render 只會指向已驗證的 Copy。dry-run／no-op 不會建立 Copy；輸入已是 Virtual

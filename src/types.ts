@@ -90,6 +90,13 @@ import type {
   StylePriorPlanSchema,
   StylePriorRequestSchema,
   StylePriorSchema,
+  StyleHistoryExampleSchema,
+  StyleHistoryGoldenVectorSchema,
+  StyleHistoryMatchSchema,
+  StyleHistoryQuerySchema,
+  StyleHistoryRetrievalSchema,
+  StyleHistorySnapshotSchema,
+  StylePerceptualProfileSchema,
 } from "./schemas.js";
 
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
@@ -148,6 +155,13 @@ export type StylePrior = z.infer<typeof StylePriorSchema>;
 export type StylePriorRequest = z.infer<typeof StylePriorRequestSchema>;
 export type StylePriorPlan = z.infer<typeof StylePriorPlanSchema>;
 export type StylePriorGoldenVector = z.infer<typeof StylePriorGoldenVectorSchema>;
+export type StylePerceptualProfile = z.infer<typeof StylePerceptualProfileSchema>;
+export type StyleHistoryExample = z.infer<typeof StyleHistoryExampleSchema>;
+export type StyleHistorySnapshot = z.infer<typeof StyleHistorySnapshotSchema>;
+export type StyleHistoryQuery = z.infer<typeof StyleHistoryQuerySchema>;
+export type StyleHistoryMatch = z.infer<typeof StyleHistoryMatchSchema>;
+export type StyleHistoryRetrieval = z.infer<typeof StyleHistoryRetrievalSchema>;
+export type StyleHistoryGoldenVector = z.infer<typeof StyleHistoryGoldenVectorSchema>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;

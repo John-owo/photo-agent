@@ -212,6 +212,20 @@ export const MIN_HISTORICAL_PREFERENCE_SAMPLES = 5;
 export const MIN_HISTORICAL_PREFERENCE_CONFIDENCE = 0.65;
 export const LOW_DATA_STYLE_PRIOR_CONFIDENCE_CAP = 0.5;
 
+export const STYLE_HISTORY_REGISTRY_VERSION = "0.1.0" as const;
+export const STYLE_HISTORY_MATCH_FIELDS = [
+  "lighting_type",
+  "subject_type",
+  "camera",
+  "lens",
+  "iso",
+  "delivery",
+] as const;
+export const STYLE_HISTORY_PROTECTED_ATTRIBUTES = ["natural_skin_tones"] as const;
+export const STYLE_HISTORY_MIN_MATCH_SCORE = 0.55;
+export const STYLE_HISTORY_MIN_CONFIDENCE = 0.65;
+export const STYLE_HISTORY_DEFAULT_MAX_RESULTS = 8;
+
 export const SemanticAdjustmentSchema = z.object({
   parameter: z.enum(SEMANTIC_PARAMETERS),
   direction,
@@ -1471,6 +1485,176 @@ export const StylePriorGoldenVectorSchema = z
     control_group: z.string().min(1),
     request: StylePriorRequestSchema,
     expected_plan: StylePriorPlanSchema,
+  })
+  .strict();
+
+export const StylePerceptualProfileSchema = z
+  .object({
+    luminance: z.number().finite().min(-1).max(1),
+    contrast: z.number().finite().min(-1).max(1),
+    colorfulness: z.number().finite().min(-1).max(1),
+    warmth: z.number().finite().min(-1).max(1),
+    natural_skin_tones: z.boolean(),
+  })
+  .strict();
+
+export const StyleHistoryContextSchema = z
+  .object({
+    lighting_type: z.string().min(1).max(100).optional(),
+    subject_type: z.string().min(1).max(100).optional(),
+    camera: z.string().min(1).max(200).optional(),
+    lens: z.string().min(1).max(200).optional(),
+    iso: z.number().int().positive().max(1_000_000).optional(),
+    delivery: z.string().min(1).max(100).optional(),
+  })
+  .strict();
+
+export const StyleHistoryExampleSchema = z
+  .object({
+    example_id: z.string().min(1).max(200),
+    shoot_id: z.string().min(1).max(200),
+    context: StyleHistoryContextSchema,
+    perceptual_profile: StylePerceptualProfileSchema,
+    evidence: z.array(z.string().min(1).max(500)).min(1).max(16),
+    confidence: z.number().min(0).max(1),
+    failures: z.array(z.string().min(1).max(500)).max(8),
+  })
+  .strict();
+
+export const StyleHistorySnapshotSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    history_registry_version: z.literal(STYLE_HISTORY_REGISTRY_VERSION),
+    dataset_id: z.string().min(1).max(200),
+    dataset_revision: z.string().min(1).max(200),
+    dataset_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    examples: z.array(StyleHistoryExampleSchema).max(100_000),
+  })
+  .strict()
+  .superRefine((snapshot, context) => {
+    const seen = new Set<string>();
+    for (const [index, example] of snapshot.examples.entries()) {
+      if (seen.has(example.example_id)) {
+        context.addIssue({
+          code: "custom",
+          path: ["examples", index, "example_id"],
+          message: `Style history example id may only appear once: ${example.example_id}`,
+        });
+      }
+      seen.add(example.example_id);
+    }
+  });
+
+export const StyleHistoryQuerySchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    query_id: z.string().min(1).max(200),
+    context: StyleHistoryContextSchema,
+    protected_attributes: z
+      .array(z.enum(STYLE_HISTORY_PROTECTED_ATTRIBUTES))
+      .max(STYLE_HISTORY_PROTECTED_ATTRIBUTES.length),
+    target_profile: StylePerceptualProfileSchema.optional(),
+    exclude_shoot_ids: z.array(z.string().min(1).max(200)).max(10_000),
+    exclude_example_ids: z.array(z.string().min(1).max(200)).max(10_000),
+    max_results: z.number().int().positive().max(32),
+    min_confidence: z.number().min(0).max(1),
+  })
+  .strict()
+  .superRefine((query, context) => {
+    if (new Set(query.protected_attributes).size !== query.protected_attributes.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["protected_attributes"],
+        message: "Style history protected attributes may not contain duplicates",
+      });
+    }
+    if (query.context.iso === undefined && Object.keys(query.context).length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["context"],
+        message: "Scene-conditioned history query requires at least one context field",
+      });
+    }
+  });
+
+const StyleHistoryMatchComponentsSchema = z
+  .object({
+    lighting_type: z.number().min(0).max(1),
+    subject_type: z.number().min(0).max(1),
+    camera: z.number().min(0).max(1),
+    lens: z.number().min(0).max(1),
+    iso: z.number().min(0).max(1),
+    delivery: z.number().min(0).max(1),
+    perceptual_profile: z.number().min(0).max(1),
+  })
+  .strict();
+
+const StyleReferenceRelationshipSchema = z
+  .object({
+    luminance_delta: z.number().finite().min(-2).max(2),
+    contrast_delta: z.number().finite().min(-2).max(2),
+    colorfulness_delta: z.number().finite().min(-2).max(2),
+    warmth_delta: z.number().finite().min(-2).max(2),
+    natural_skin_tones_preserved: z.literal(true),
+  })
+  .strict();
+
+export const StyleHistoryMatchSchema = z
+  .object({
+    example_id: z.string().min(1).max(200),
+    shoot_id: z.string().min(1).max(200),
+    rank: z.number().int().positive(),
+    score: z.number().min(0).max(1),
+    match_components: StyleHistoryMatchComponentsSchema,
+    reference_profile: StylePerceptualProfileSchema,
+    protected_attributes: z.array(z.enum(STYLE_HISTORY_PROTECTED_ATTRIBUTES)),
+    evidence: z.array(z.string().min(1).max(500)).min(1).max(16),
+    confidence: z.number().min(0).max(1),
+    reference_relationship: StyleReferenceRelationshipSchema.optional(),
+  })
+  .strict();
+
+export const StyleHistoryRetrievalSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    history_registry_version: z.literal(STYLE_HISTORY_REGISTRY_VERSION),
+    dataset_id: z.string().min(1).max(200),
+    dataset_revision: z.string().min(1).max(200),
+    dataset_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    query_id: z.string().min(1).max(200),
+    population: z.number().int().nonnegative(),
+    sample_size: z.number().int().nonnegative(),
+    matches: z.array(StyleHistoryMatchSchema).max(32),
+    evidence_confidence: z.number().min(0).max(1),
+    failures: z.array(z.string().min(1).max(500)).max(16),
+    review_outcomes: z.array(z.string().min(1).max(500)).max(16),
+  })
+  .strict()
+  .superRefine((result, context) => {
+    if (result.sample_size !== result.matches.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["sample_size"],
+        message: "Style history sample_size must equal matches length",
+      });
+    }
+    const ranks = result.matches.map((match) => match.rank);
+    if (ranks.some((rank, index) => rank !== index + 1)) {
+      context.addIssue({
+        code: "custom",
+        path: ["matches"],
+        message: "Style history match ranks must be contiguous starting at one",
+      });
+    }
+  });
+
+export const StyleHistoryGoldenVectorSchema = z
+  .object({
+    id: z.string().min(1),
+    control_group: z.string().min(1),
+    snapshot: StyleHistorySnapshotSchema,
+    query: StyleHistoryQuerySchema,
+    expected_result: StyleHistoryRetrievalSchema,
   })
   .strict();
 

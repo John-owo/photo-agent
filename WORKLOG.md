@@ -2631,3 +2631,47 @@ Cloud-analyzer checkpoint:
   priors`; post-commit status was clean on `codex/roadmap-t09`. The following
   WORKLOG-only commit records this post-commit evidence; no remote operation
   was performed.
+
+## 2026-08-31 - T45 scene-conditioned Style Memory retrieval boundary
+
+- Read-only `gh issue view 40 --repo John-owo/photo-agent --json ...` confirmed
+  T45 requires reproducibly versioned scene-conditioned history, perceptual
+  reference matching with protected attributes such as natural skin tones,
+  and filtering that prevents irrelevant or low-confidence history from
+  dominating a plan. It remains blocked by PhotoAgent #21 and #39; no remote
+  state changed.
+- The following T46 read-only `gh issue view 41 --repo John-owo/photo-agent
+  --json ...` confirmed held-out personalization evaluation must freeze a
+  shoot-level split, exclude construction examples from their own evaluation,
+  and report population, sample size, evidence confidence, failures, and
+  review outcomes. T46 remains blocked by T45.
+- Added a versioned, hash-identified Style Memory snapshot and deterministic
+  scene-conditioned retrieval. Metadata fields are scored with ISO proximity,
+  optional perceptual-profile relationship is reported instead of copied raw
+  settings, protected natural-skin references are filtered, low-confidence or
+  failed history is excluded, and results report population/sample/confidence/
+  failures/review outcomes.
+- The first T45 check/test run exposed a literal-boolean type mismatch in the
+  protected-skin relationship and a test expectation that did not match the
+  fixture's perceptual deltas; both are being corrected before final
+  verification.
+- After the correction, `npx.cmd prettier --write src/style-history.ts
+  tests/style-history.test.ts`, `npm.cmd run check`, and
+  `npm.cmd test -- --run tests/style-history.test.ts` passed; the targeted
+  suite passed 1 file / 4 tests.
+- The T45 documentation updates were confirmed in `README.md`,
+  `README.zh-TW.md`, and `docs/implementation/v0.3.md`. Formatting was then
+  checked with `npx.cmd prettier --write src/style-history.ts src/schemas.ts
+  src/types.ts src/index.ts tests/style-history.test.ts README.md
+  README.zh-TW.md docs/implementation/v0.3.md`.
+- The first T45 full verification passed `npm.cmd run check`, `npm.cmd test`
+  (12 files / 124 tests), and `npm.cmd run build`, but `npm.cmd run lint`
+  exposed a type-only import classification for
+  `STYLE_HISTORY_PROTECTED_ATTRIBUTES`. The import was corrected, then
+  `npx.cmd prettier --write src/style-history.ts` and `npm.cmd run lint`
+  passed.
+- Final T45 verification passed `npm.cmd run check`, `npm.cmd test` (12 files
+  / 124 tests), `npm.cmd run build`, changed-source/test/docs
+  `npx.cmd prettier --check`, and `git diff --check`; the only diff output was
+  the existing normal LF-to-CRLF warning. No remote issue, push, merge, PR,
+  or issue closure was performed.

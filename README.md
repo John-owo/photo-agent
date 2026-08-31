@@ -112,6 +112,11 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   over learned history, records rule evidence/sample counts/confidence, and
   falls back to general guidance with capped confidence when history is too
   small. Conflicting or evidence-free outcomes remain review-required.
+- Style Memory retrieval uses a versioned dataset hash and scene-conditioned
+  metadata matching across lighting, subject, camera, lens, ISO, and delivery.
+  Optional perceptual profiles produce relationships rather than copied raw
+  settings; protected natural-skin references, failed examples, irrelevant
+  matches, and low-confidence history are excluded with explicit outcomes.
 - A single-photo apply reads and verifies the Master first, then lazily creates
   one session-marked Workflow Copy only when apply is approved and the plan has
   an executable adjustment. Checkpoints, Develop mutation, read-back, and render
