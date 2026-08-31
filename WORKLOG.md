@@ -1378,3 +1378,36 @@ Cloud-analyzer checkpoint:
   execution context. No remote change resulted. The same read-only query is
   being rerun with the command-local `safe.directory` override; no global Git
   configuration will be changed.
+
+## 2026-09-01 - README health-report restructuring
+
+- Used the user-supplied README health report as editorial guidance, then
+  verified claims against fetched `origin/main`, `package.json`, CI, CLI source,
+  examples, project rules, and this work log. The active roadmap worktree was
+  dirty and 58 commits ahead of `main`, so the isolated
+  `codex/readme-health-report` branch was created from `origin/main` to avoid
+  including unrelated roadmap work. No remote branch, PR, release, issue,
+  Lightroom state, or photo was changed.
+- Reworked the English and Traditional Chinese READMEs with a short TL;DR,
+  linked contents, feature overview, architecture/data-flow diagram, glossary,
+  mock-first quick start, Node/platform requirements, and a consolidated CLI
+  flag table. The safety contract remains complete but now follows the quick
+  orientation path; detailed Codex, mock, OpenAI, recovery, XMP, and shoot
+  instructions remain intact.
+- The first sandboxed fetch failed on network access; the approved retry with a
+  command-local `safe.directory` override succeeded and did not change global
+  Git configuration. One initial combined README patch failed on exact context
+  and changed no file. The first Prettier check found both edited READMEs needed
+  formatting; targeted Prettier rewrote only those two files and the next check
+  passed.
+- The first `npm exec prettier` attempt failed because the clean worktree had no
+  dependencies and the user-level npm cache was inaccessible. Workspace-cache
+  `npm ci` then reached the registry but failed with sandbox `EACCES`. Approved
+  `npm.cmd ci --cache D:\photo\_agent_workspace\runtime\npm-cache
+  --prefer-offline` completed from the lockfile with zero reported
+  vulnerabilities; no dependency file changed.
+- Verification passed: targeted Prettier check, `npm.cmd run check`,
+  `npm.cmd run lint`, Vitest `3/3` files and `56/56` tests, and
+  `npm.cmd run build`. A read-only Markdown check resolved every relative link
+  and contents anchor in both READMEs. Targeted `git diff --check` passed with
+  only expected LF-to-CRLF warnings.

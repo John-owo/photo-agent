@@ -1,8 +1,61 @@
 # photo-agent（繁體中文）
 
-## 這是什麼？
+把一組 `RAW + 預覽圖` 轉成可追蹤的 `analyze → plan → apply → render` 工作流程，同時把來源檔與 Lightroom Master 留在自動修改路徑之外。
+
+## TL;DR
 
 `photo-agent` 是一個與後端無關的 AI 攝影工作流程代理，將一組明確配對的 RAW／預覽圖轉成可追蹤的 `analyze → plan → apply → render` 工作階段。它負責工作流程以及安全、恢復邊界；`lightroom-mcp-john` 是用來套用調整並讀回／產生 render 狀態的外部 Lightroom MCP backend，不是定義整個 agent 的核心。現行 `0.3` alpha 在可恢復的 v0.1 流程上，加入有界 closed loop 編輯、shoot indexing、選片與光線 review、代表照片編排，以及受保護的 propagation。
+
+目前版本是 `0.3.0-alpha.0`。v0.2／v0.3 自動化 gate 與一次 Lightroom adapter 唯讀實測已通過；主觀批次選片、代表照片實際編修與 propagation、AI evaluator 和人工判斷的一致性仍待驗收。在你的環境完成這些 gate 前，請使用 mock 或非關鍵 Lightroom 照片。
+
+## 目錄
+
+- [功能總覽](#功能總覽)
+- [架構與 repository 邊界](#架構與-repository-邊界)
+- [名詞對照](#名詞對照)
+- [目前狀態](#目前狀態v03-alphapackage-version-為-030-alpha0)
+- [快速開始](#快速開始)
+- [平台與環境需求](#平台與環境需求)
+- [安全保證](#安全保證)
+- [CLI 旗標](#cli-旗標)
+- [編修與整場指令](#編修與整場指令)
+- [Codex 本機流程](#codex-本機流程預設)
+- [恢復中斷的 session](#恢復中斷的-session)
+- [XMP fallback](#xmp-fallback)
+- [參考連結](#參考連結)
+
+## 功能總覽
+
+| 功能               | 作用                                                                    |
+| ------------------ | ----------------------------------------------------------------------- |
+| 可恢復 session     | 保存 plan、operation、checkpoint、讀回結果、render 與 recovery 證據     |
+| Provider 選擇      | 預設建立 Codex 本機交接，也支援 mock 與明確選用的 OpenAI                |
+| Backend 選擇       | 可使用 deterministic mock，或先做 capability handshake 的 Lightroom MCP |
+| Closed-loop 編修   | 小步套用、render、評估，並以最大迭代次數限制流程                        |
+| 整場工作流程       | 建立 RAW／預覽配對索引、記錄選片與光線 review、安排代表照片             |
+| Workflow Copy 安全 | Master Develop 狀態保持不動，只操作一份驗證過的 Virtual Copy            |
+| 中斷恢復           | 讀回 backend 狀態；證據不足時停在 `REVIEW_REQUIRED`，不盲目重試         |
+| XMP fallback       | 對支援的全域設定建立新 sidecar，目的檔已存在就拒絕寫入                  |
+
+## 架構與 repository 邊界
+
+```text
+RAW + 預覽圖
+      │
+      ▼
+┌──────────────────────────────────────────────────────────┐
+│ photo-agent                                              │
+│ session 狀態 · 安全／恢復 · analyze → plan              │
+│                          │                               │
+│                     apply → render → 讀回／評估           │
+└───────────────┬──────────────────────────┬───────────────┘
+                │ provider                 │ backend
+                ▼                          ▼
+      Codex / mock / OpenAI       mock / lightroom-mcp
+                                             │
+                                             ▼
+                                  Lightroom catalog / Develop
+```
 
 ### 與 `lightroom-mcp` 的關係
 
@@ -17,7 +70,19 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
 內的 `raw-photo-lightroom-preset` 是歷史工作流程指引；新的 workflow engine
 功能在本 repository 開發。
 
-## 狀態：v0.3 alpha（package version 為 `0.3.0-alpha.0`）
+## 名詞對照
+
+| 名詞                 | 白話解釋                                                        |
+| -------------------- | --------------------------------------------------------------- |
+| closed-loop editing  | 每次調整後都讀回或 render，再依結果決定下一輪，不假設指令已成功 |
+| Workflow Copy        | 自動流程實際編修的一份 Lightroom Virtual Copy；Master 保持不動  |
+| `REVIEW_REQUIRED`    | 證據不足或互相矛盾時停止自動化，交給人檢查                      |
+| capability handshake | 操作前核對 backend 版本、工具、信任邊界與 operation semantics   |
+| provider             | 負責看預覽並提出調色意圖的元件：Codex、mock 或 OpenAI           |
+| backend              | 實際執行或模擬編修的元件：Lightroom MCP 或 mock                 |
+| checkpoint           | Develop mutation 前保存的版本化恢復證據；它不是 Lightroom undo  |
+
+## 目前狀態：v0.3 alpha（package version 為 `0.3.0-alpha.0`）
 
 > **Alpha／僅供測試。** v0.2 與 v0.3 的自動化 gate 已通過，且一張非關鍵
 > RAW 已完成 Lightroom adapter 的實際讀取、匯出與人工視覺檢查，全程沒有
@@ -25,7 +90,33 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
 > 以及 evaluator 與人工判斷的一致性仍未驗證。請勿在尚未確認環境適配前，
 > 將此版本直接用於正式照片或無法取代的照片庫。
 
-## 平台假設
+## 快速開始
+
+最短且安全的路徑使用 mock provider 與 backend，不會連線 OpenAI 或 Lightroom：
+
+```powershell
+git clone https://github.com/John-owo/photo-agent.git
+Set-Location .\photo-agent
+npm.cmd install
+npm.cmd run build
+node dist\src\cli.js edit-one `
+  --raw 'C:\path\to\photo.NEF' `
+  --preview 'C:\path\to\photo.JPG' `
+  --backend mock `
+  --provider mock
+```
+
+請使用你有權處理、而且已確認配對的 RAW 與 JPEG。這個指令只建立 session artifacts；若要讓 mock backend 走完 apply 路徑，再加上 `--apply`。repository 內建 fixture 指令放在 [`examples/README.md`](examples/README.md)。
+
+## 平台與環境需求
+
+| 項目              | 要求                          | 備註                                                            |
+| ----------------- | ----------------------------- | --------------------------------------------------------------- |
+| Node.js           | 24 以上                       | 與 `package.json`、CI 一致                                      |
+| Package manager   | npm                           | Windows 範例使用 `npm.cmd`                                      |
+| 作業系統          | 已驗證的 alpha 環境是 Windows | CLI／mock 可能可在其他平台執行；其他平台的 Lightroom 整合未驗證 |
+| Lightroom Classic | 選用                          | 只有 `--backend lightroom` 需要；第一次請用非關鍵照片           |
+| OpenAI API key    | 選用                          | 只有明確選取 OpenAI 路徑並允許 cloud preview 才需要             |
 
 以下所有指令範例均以 Windows PowerShell 撰寫；`npm.cmd`、反斜線路徑、PowerShell 環境變數語法，以及以反引號換行都是刻意採用的寫法。Node.js CLI 本身沒有刻意限制為 Windows，但本 alpha 尚未驗證非 Windows 的 Lightroom 整合，因此目前以 Windows + PowerShell 為支援設定。若只在其他平台執行 CLI／Mock，可將 `npm.cmd` 改為 `npm`、改用該平台的環境變數語法與路徑分隔符，並將 `PHOTO_AGENT_LIGHTROOM_MCP_ENTRY` 設為對應平台的 executable；其他平台的 Lightroom 使用仍視為未驗證。
 
@@ -73,7 +164,20 @@ npm.cmd run build
 | `PHOTO_AGENT_LIGHTROOM_MCP_ENTRY` | 本機 `lightroom-mcp-john` MCP server 的 executable entry。                                 | `D:\photo\lightroom-mcp-john\server\dist\index.js` |
 | `PHOTO_AGENT_SESSION_ROOT`        | 產生 session 狀態與 render 的根目錄。                                                      | `.photo-agent\sessions`                            |
 
-## v0.2／v0.3 指令
+## CLI 旗標
+
+| Flag                             | 作用                                        | 備註                                    |
+| -------------------------------- | ------------------------------------------- | --------------------------------------- |
+| `--backend mock\|lightroom`      | 選擇實際執行編修的目標                      | 預設為 `mock`                           |
+| `--provider codex\|mock\|openai` | 選擇提出調色意圖的元件                      | 預設為本機 `codex`；OpenAI 必須明確選用 |
+| `--evaluator none\|mock\|openai` | 選擇 closed-loop evaluator                  | OpenAI 也需要 `--allow-cloud-preview`   |
+| `--allow-cloud-preview`          | 允許選定的雲端路徑接收已清理的 session JPEG | 不傳 RAW 或 EXIF/GPS metadata           |
+| `--apply`                        | 允許 backend 執行通過驗證的 plan            | 不加時只做規劃／dry run                 |
+| `--max-iterations 1-10`          | 限制 closed-loop 最大迭代次數               | 用於 edit／resume 流程                  |
+| `--analysis-file <JSON>`         | 提供通過 schema 驗證的選片與光線決策        | 不能和 `--analyzer openai` 同時使用     |
+| `--analyzer openai`              | 使用選擇性的雲端 shoot analyzer             | 需要 `--allow-cloud-preview`            |
+
+## 編修與整場指令
 
 使用 fixtures 或非關鍵測試配對執行 deterministic closed loop：
 

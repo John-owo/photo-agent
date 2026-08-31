@@ -2,7 +2,9 @@
 
 繁體中文文件：[README.zh-TW.md](README.zh-TW.md)。
 
-## What is this?
+Turn `RAW + preview` into a traceable `analyze → plan → apply → render` workflow while keeping source files and Lightroom Masters outside the mutation path.
+
+## TL;DR
 
 `photo-agent` is a backend-agnostic AI photography workflow agent that turns one
 explicit RAW/preview pair into a traceable `analyze → plan → apply → render`
@@ -12,6 +14,61 @@ and read back/render state, not the definition of the whole agent. The current
 `0.3` alpha adds bounded closed-loop editing, shoot indexing, culling and
 lighting review, representative orchestration, and guarded propagation on top
 of the recoverable v0.1 workflow.
+
+The current release is `0.3.0-alpha.0`. Automated v0.2/v0.3 gates and one
+read-only Lightroom adapter check have passed. Subjective batch culling, real
+representative edits and propagation, and evaluator-to-human agreement still
+need acceptance. Use mock runs or non-critical Lightroom photos until your own
+environment passes those gates.
+
+## Contents
+
+- [Feature overview](#feature-overview)
+- [Architecture and repository boundary](#architecture-and-repository-boundary)
+- [Glossary](#glossary)
+- [Status](#status-v03-alpha-030-alpha0-package-version)
+- [Quick start](#quick-start)
+- [Platform and requirements](#platform-and-requirements)
+- [Safety guarantees](#safety-guarantees)
+- [CLI flags](#cli-flags)
+- [Editing and shoot commands](#editing-and-shoot-commands)
+- [Codex-local run](#codex-local-run-default)
+- [Recover an interrupted session](#recover-an-interrupted-session)
+- [XMP fallback](#xmp-fallback)
+- [References](#references)
+
+## Feature overview
+
+| Area                 | What it does                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------------- |
+| Durable sessions     | Saves plans, operations, checkpoints, read-back, renders, and recovery evidence                   |
+| Provider choice      | Uses a local Codex handoff by default, with mock and explicit OpenAI paths                        |
+| Backend choice       | Runs against a deterministic mock backend or a capability-checked Lightroom MCP backend           |
+| Closed-loop editing  | Applies bounded edits, renders, evaluates, and stops at configured iteration limits               |
+| Shoot workflow       | Indexes RAW/preview pairs, records culling and lighting review, and groups representative photos  |
+| Workflow Copy safety | Keeps Master Develop state unchanged and targets one verified Lightroom Virtual Copy              |
+| Recovery             | Reads backend state after interruption and stops at `REVIEW_REQUIRED` instead of retrying blindly |
+| XMP fallback         | Creates a new sidecar for supported global settings and refuses existing destinations             |
+
+## Architecture and repository boundary
+
+```text
+RAW + preview
+      │
+      ▼
+┌──────────────────────────────────────────────────────────┐
+│ photo-agent                                              │
+│ session state · safety/recovery · analyze → plan         │
+│                         │                                │
+│                    apply → render → read-back/evaluate   │
+└───────────────┬──────────────────────────┬───────────────┘
+                │ provider                 │ backend
+                ▼                          ▼
+      Codex / mock / OpenAI       mock / lightroom-mcp
+                                             │
+                                             ▼
+                                  Lightroom catalog / Develop
+```
 
 ### Relationship to `lightroom-mcp`
 
@@ -26,6 +83,18 @@ Lightroom MCP remains independently usable by any MCP client and does not depend
 on PhotoAgent. The bundled `raw-photo-lightroom-preset` in the older fork is
 historical workflow guidance; new workflow-engine development belongs here.
 
+## Glossary
+
+| Term                 | Meaning                                                                                                |
+| -------------------- | ------------------------------------------------------------------------------------------------------ |
+| Closed-loop editing  | Read back or render each edit and evaluate the result before planning another iteration                |
+| Workflow Copy        | The identity-verified Lightroom Virtual Copy that receives automated edits; the Master stays unchanged |
+| `REVIEW_REQUIRED`    | A fail-closed session state that asks for human review when evidence is missing or contradictory       |
+| Capability handshake | A preflight that checks backend version, tools, trust boundary, and operation semantics                |
+| Provider             | The component that analyzes a preview and proposes edit intent: Codex, mock, or OpenAI                 |
+| Backend              | The component that executes or simulates edits: Lightroom MCP or mock                                  |
+| Checkpoint           | Versioned recovery evidence captured before a Develop mutation; it is not Lightroom undo               |
+
 ## Status: v0.3 alpha (`0.3.0-alpha.0` package version)
 
 > **Alpha/testing only.** v0.2 and v0.3 automated gates pass, and one
@@ -35,7 +104,37 @@ historical workflow guidance; new workflow-engine development belongs here.
 > unverified. Do not point this release at production photos or an
 > irreplaceable photo library before reviewing it for your setup.
 
-## Platform assumptions
+## Quick start
+
+The shortest safe path uses the mock provider and backend. It does not contact
+OpenAI or Lightroom:
+
+```powershell
+git clone https://github.com/John-owo/photo-agent.git
+Set-Location .\photo-agent
+npm.cmd install
+npm.cmd run build
+node dist\src\cli.js edit-one `
+  --raw 'C:\path\to\photo.NEF' `
+  --preview 'C:\path\to\photo.JPG' `
+  --backend mock `
+  --provider mock
+```
+
+Use an explicitly paired RAW and JPEG that you are allowed to process. The
+command creates session artifacts only; add `--apply` when you want the mock
+backend to exercise the apply path. See [`examples/README.md`](examples/README.md)
+for the bundled fixture commands.
+
+## Platform and requirements
+
+| Item              | Requirement                         | Notes                                                                         |
+| ----------------- | ----------------------------------- | ----------------------------------------------------------------------------- |
+| Node.js           | 24+                                 | Matches `package.json` and CI                                                 |
+| Package manager   | npm                                 | Windows examples use `npm.cmd`                                                |
+| Operating system  | Windows is the verified alpha setup | CLI/mock may work elsewhere; Lightroom integration elsewhere is unverified    |
+| Lightroom Classic | Optional                            | Required only for `--backend lightroom`; test with a non-critical photo first |
+| OpenAI API key    | Optional                            | Used only after selecting an OpenAI path and allowing cloud preview transfer  |
 
 All command examples below are written for Windows PowerShell. `npm.cmd`,
 backslash paths, PowerShell environment-variable syntax, and backtick line
@@ -103,7 +202,20 @@ These four variables are the values documented by `.env.example`:
 | `PHOTO_AGENT_LIGHTROOM_MCP_ENTRY` | Executable entry for the local `lightroom-mcp-john` MCP server.                                                    | `D:\photo\lightroom-mcp-john\server\dist\index.js` |
 | `PHOTO_AGENT_SESSION_ROOT`        | Root directory for generated session state and renders.                                                            | `.photo-agent\sessions`                            |
 
-## v0.2/v0.3 commands
+## CLI flags
+
+| Flag                             | Purpose                                                        | Notes                                                |
+| -------------------------------- | -------------------------------------------------------------- | ---------------------------------------------------- |
+| `--backend mock\|lightroom`      | Selects where edits run                                        | Defaults to `mock`                                   |
+| `--provider codex\|mock\|openai` | Selects who proposes edit intent                               | Defaults to local `codex`; OpenAI is explicit opt-in |
+| `--evaluator none\|mock\|openai` | Selects the closed-loop evaluator                              | OpenAI also requires `--allow-cloud-preview`         |
+| `--allow-cloud-preview`          | Allows a sanitized session JPEG to reach a selected cloud path | Never sends RAW or EXIF/GPS metadata                 |
+| `--apply`                        | Allows the selected backend to execute the validated plan      | Omit for planning/dry-run behavior                   |
+| `--max-iterations 1-10`          | Bounds closed-loop iterations                                  | Used by edit/resume flows                            |
+| `--analysis-file <JSON>`         | Supplies schema-validated culling and lighting decisions       | Mutually exclusive with `--analyzer openai`          |
+| `--analyzer openai`              | Uses the opt-in cloud shoot analyzer                           | Requires `--allow-cloud-preview`                     |
+
+## Editing and shoot commands
 
 Run the deterministic closed loop against fixtures or a non-critical test pair:
 
