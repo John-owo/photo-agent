@@ -5,7 +5,13 @@ import { dirname, resolve } from "node:path";
 import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 
-import { SemanticIntentPlanSchema } from "./schemas.js";
+import {
+  PROVIDER_CONTRACT_VERSION,
+  ProviderCapabilityManifestSchema,
+  ProviderResultSchema,
+  SCHEMA_VERSION,
+  SemanticIntentPlanSchema,
+} from "./schemas.js";
 import type { AnalysisProvider, ProviderResult } from "./types.js";
 
 export const PROMPT_VERSION = "semantic-intent-v0.1.0";
@@ -15,11 +21,56 @@ Return only the schema. Use no more than one adjustment per parameter. Choose un
 
 const promptHash = createHash("sha256").update(PROMPT).digest("hex");
 
+export const MOCK_PROVIDER_CAPABILITIES = ProviderCapabilityManifestSchema.parse({
+  schema_version: SCHEMA_VERSION,
+  provider_contract_version: PROVIDER_CONTRACT_VERSION,
+  provider_id: "mock",
+  adapter_version: "0.1.0",
+  capabilities: ["analysis"],
+  requires_cloud_preview: false,
+  data_boundary: {
+    raw: "local_only",
+    exif: "local_only",
+    gps: "local_only",
+    preview: "local_only",
+  },
+});
+
 export const CODEX_PROMPT_VERSION = "codex-local-v0.1.0";
 export const CODEX_PROMPT = `Use the raw-photo-lightroom-preset skill to inspect one explicit RAW/preview pair and return a conservative SemanticIntentPlan JSON object.
 
 Use the sanitized preview only for composition, focus, and expression triage. For color and tonal decisions, prefer a Lightroom or Camera Raw render of the RAW when the local Lightroom workflow is available. Do not mutate Lightroom during analysis. Never invent masks, crops, ratings, presets, delivery actions, or metadata changes. Keep confidence honest; the deterministic translator ignores confidence below 0.65.`;
 export const CODEX_PROMPT_HASH = createHash("sha256").update(CODEX_PROMPT).digest("hex");
+
+export const CODEX_PROVIDER_CAPABILITIES = ProviderCapabilityManifestSchema.parse({
+  schema_version: SCHEMA_VERSION,
+  provider_contract_version: PROVIDER_CONTRACT_VERSION,
+  provider_id: "codex",
+  adapter_version: "0.1.0",
+  capabilities: ["analysis"],
+  requires_cloud_preview: false,
+  data_boundary: {
+    raw: "local_only",
+    exif: "local_only",
+    gps: "local_only",
+    preview: "local_only",
+  },
+});
+
+export const OPENAI_PROVIDER_CAPABILITIES = ProviderCapabilityManifestSchema.parse({
+  schema_version: SCHEMA_VERSION,
+  provider_contract_version: PROVIDER_CONTRACT_VERSION,
+  provider_id: "openai",
+  adapter_version: "0.1.0",
+  capabilities: ["analysis"],
+  requires_cloud_preview: true,
+  data_boundary: {
+    raw: "local_only",
+    exif: "local_only",
+    gps: "local_only",
+    preview: "sanitized_preview_to_cloud",
+  },
+});
 
 export class CodexInputRequiredError extends Error {
   constructor() {
@@ -72,9 +123,10 @@ export async function writeCodexAnalysisRequest(
 
 export class MockProvider implements AnalysisProvider {
   readonly requiresCloudPreview = false;
+  readonly capabilities = MOCK_PROVIDER_CAPABILITIES;
 
   async analyze(): Promise<ProviderResult> {
-    return {
+    return ProviderResultSchema.parse({
       intent: SemanticIntentPlanSchema.parse({
         schema_version: "0.1.0",
         creative_goal: "neutral documentary correction",
@@ -103,12 +155,13 @@ export class MockProvider implements AnalysisProvider {
         promptHash,
         cloudPreview: false,
       },
-    };
+    });
   }
 }
 
 export class CodexProvider implements AnalysisProvider {
   readonly requiresCloudPreview = false;
+  readonly capabilities = CODEX_PROVIDER_CAPABILITIES;
 
   constructor(private readonly intentFile?: string) {}
 
@@ -117,7 +170,7 @@ export class CodexProvider implements AnalysisProvider {
     const intent = SemanticIntentPlanSchema.parse(
       JSON.parse(await readFile(resolve(this.intentFile), "utf8")),
     );
-    return {
+    return ProviderResultSchema.parse({
       intent,
       metadata: {
         provider: "codex",
@@ -126,12 +179,13 @@ export class CodexProvider implements AnalysisProvider {
         promptHash: CODEX_PROMPT_HASH,
         cloudPreview: false,
       },
-    };
+    });
   }
 }
 
 export class OpenAIProvider implements AnalysisProvider {
   readonly requiresCloudPreview = true;
+  readonly capabilities = OPENAI_PROVIDER_CAPABILITIES;
   private readonly client: OpenAI;
 
   constructor(
@@ -170,7 +224,7 @@ export class OpenAIProvider implements AnalysisProvider {
     const parsed = response.output_parsed;
     if (!parsed) throw new Error("OpenAI returned no structured semantic intent");
     const usage = response.usage;
-    return {
+    return ProviderResultSchema.parse({
       intent: SemanticIntentPlanSchema.parse(parsed),
       metadata: {
         provider: "openai",
@@ -189,6 +243,6 @@ export class OpenAIProvider implements AnalysisProvider {
           : {}),
         cloudPreview: true,
       },
-    };
+    });
   }
 }

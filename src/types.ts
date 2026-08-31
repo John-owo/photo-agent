@@ -121,6 +121,11 @@ import type {
   EvaluatorCalibrationStudySchema,
   HumanPairLabelSchema,
   ModelPairEvaluationSchema,
+  ProviderCapabilityAssessmentSchema,
+  ProviderCapabilityManifestSchema,
+  ProviderCapabilityRequirementsSchema,
+  ProviderMetadataSchema,
+  ProviderResultSchema,
 } from "./schemas.js";
 
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
@@ -216,6 +221,12 @@ export type EvaluatorCalibrationReport = z.infer<typeof EvaluatorCalibrationRepo
 export type EvaluatorCalibrationGoldenVector = z.infer<
   typeof EvaluatorCalibrationGoldenVectorSchema
 >;
+export type ProviderCapabilityManifest = z.infer<typeof ProviderCapabilityManifestSchema>;
+export type ProviderCapabilityRequirements = z.infer<typeof ProviderCapabilityRequirementsSchema>;
+export type ProviderCapability = ProviderCapabilityRequirements["required_capabilities"][number];
+export type ProviderCapabilityAssessment = z.infer<typeof ProviderCapabilityAssessmentSchema>;
+export type ProviderMetadata = z.infer<typeof ProviderMetadataSchema>;
+export type ProviderResult = z.infer<typeof ProviderResultSchema>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;
@@ -262,27 +273,9 @@ export type JobState =
   | "FAILED"
   | "CANCELLED";
 
-export type ProviderMetadata = {
-  provider: "mock" | "codex" | "openai";
-  model: string;
-  responseId?: string;
-  promptVersion: string;
-  promptHash: string;
-  usage?: {
-    inputTokens?: number;
-    outputTokens?: number;
-    totalTokens?: number;
-  };
-  cloudPreview: boolean;
-};
-
-export type ProviderResult = {
-  intent: SemanticIntentPlan;
-  metadata: ProviderMetadata;
-};
-
 export type AnalysisProvider = {
   readonly requiresCloudPreview: boolean;
+  readonly capabilities?: ProviderCapabilityManifest;
   analyze(previewPath: string): Promise<ProviderResult>;
 };
 

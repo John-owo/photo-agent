@@ -136,6 +136,11 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   missing-observation metrics are reported without treating model output as
   human ground truth; real human calibration remains a separate acceptance
   gate.
+- Provider adapters now expose a sparse, versioned capability manifest and a
+  generic structured-result contract. Mock, Codex-local, and OpenAI analysis
+  paths disclose their data boundary; unsupported comparison/ranking/planning/
+  evaluation capabilities fail closed before provider execution, while the
+  explicit OpenAI cloud-preview opt-in remains unchanged.
 - A single-photo apply reads and verifies the Master first, then lazily creates
   one session-marked Workflow Copy only when apply is approved and the plan has
   an executable adjustment. Checkpoints, Develop mutation, read-back, and render

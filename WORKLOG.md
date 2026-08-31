@@ -2813,3 +2813,29 @@ Cloud-analyzer checkpoint:
   contract`; `git status --short --branch` and `git show --stat --oneline
   --summary HEAD` confirmed a clean `codex/roadmap-t09` worktree with the
   expected nine-file commit. No remote operation was performed.
+
+## 2026-08-31 - T52 generalized provider capability contract
+
+- Read-only `gh issue view 45 --repo John-owo/photo-agent --json
+  number,title,body,labels,state` confirmed T52 requires stable provider
+  capabilities, generic core results without credentials/provider payloads,
+  OpenAI conformance, and pre-execution refusal for unsupported capabilities.
+  It remains blocked by the remote v0.5 gate; no remote state changed.
+- Added a versioned sparse provider capability manifest for Mock, Codex-local,
+  and OpenAI, including analysis capability, cloud-preview requirement, and
+  raw/EXIF/GPS/preview data boundaries. Added generic structured result
+  validation and generalized durable provider names beyond a fixed provider
+  enum.
+- Added pre-execution capability assessment/refusal helpers. Missing manifests,
+  unsupported comparison/ranking/planning/evaluation capabilities, and invalid
+  manifests return `REVIEW_REQUIRED` or throw before provider execution;
+  existing OpenAI cloud-preview opt-in behavior remains unchanged.
+- The first T52 `npm.cmd run check` exposed a test fixture passing an argument
+  to the zero-argument `MockProvider.analyze`; the fixture was corrected.
+  `npx.cmd prettier --write tests/provider-contract.test.ts`, the targeted
+  provider suite, and lint then passed (1 file / 4 tests).
+- Final T52 verification passed `npm.cmd run check`, `npm.cmd test` (17 files
+  / 144 tests), `npm.cmd run lint`, `npm.cmd run build`, changed-source/
+  test/docs/package `npx.cmd prettier --check`, and `git diff --check`; diff
+  output contained only normal LF-to-CRLF warnings. No OpenAI API request,
+  remote issue, push, merge, PR, or issue closure was performed.

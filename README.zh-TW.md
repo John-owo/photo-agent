@@ -100,6 +100,10 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
   provider/model 與 human-label provenance，回報 agreement、unacceptable-result、review、
   convergence、recovery、缺 label 與缺 observation；不會把 model output 當成 human
   ground truth，真實真人校準仍是另外的 acceptance gate。
+- provider adapter 現在提供 sparse、versioned capability manifest 與 generic structured-result
+  contract。Mock、Codex-local、OpenAI analysis path 都會揭露 data boundary；不支援的
+  comparison／ranking／planning／evaluation capability 會在 provider execution 前 fail
+  closed，既有 OpenAI cloud-preview explicit opt-in 不變。
 - 單張 apply 會先唯讀並驗證 Master；只有明確允許 apply 且計畫含可執行調整時，
   才建立一份帶 session 標記的 Workflow Copy。checkpoint、Develop mutation、讀回與
   render 只會指向已驗證的 Copy。dry-run／no-op 不會建立 Copy；輸入已是 Virtual

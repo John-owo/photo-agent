@@ -242,6 +242,14 @@ export const PHOTO_AGENT_BENCH_CONDITIONS = [
 ] as const;
 export const REGRESSION_GATE_REGISTRY_VERSION = "0.1.0" as const;
 export const EVALUATOR_CALIBRATION_REGISTRY_VERSION = "0.1.0" as const;
+export const PROVIDER_CONTRACT_VERSION = "0.1.0" as const;
+export const PROVIDER_CAPABILITIES = [
+  "analysis",
+  "comparison",
+  "ranking",
+  "planning",
+  "evaluation",
+] as const;
 
 export const SemanticAdjustmentSchema = z.object({
   parameter: z.enum(SEMANTIC_PARAMETERS),
@@ -3072,6 +3080,124 @@ export const BackendCapabilityManifestSchema = z
     }
   });
 
+export const ProviderCapabilityManifestSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    provider_contract_version: z.literal(PROVIDER_CONTRACT_VERSION),
+    provider_id: z.string().min(1).max(200),
+    adapter_version: SemverSchema,
+    capabilities: z.array(z.enum(PROVIDER_CAPABILITIES)).min(1).max(PROVIDER_CAPABILITIES.length),
+    requires_cloud_preview: z.boolean(),
+    data_boundary: z
+      .object({
+        raw: z.literal("local_only"),
+        exif: z.literal("local_only"),
+        gps: z.literal("local_only"),
+        preview: z.enum(["local_only", "sanitized_preview_to_cloud"]),
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((manifest, context) => {
+    if (new Set(manifest.capabilities).size !== manifest.capabilities.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["capabilities"],
+        message: "Provider capabilities may not contain duplicates",
+      });
+    }
+    if (
+      manifest.requires_cloud_preview &&
+      manifest.data_boundary.preview !== "sanitized_preview_to_cloud"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["data_boundary", "preview"],
+        message: "Cloud-preview providers must disclose sanitized preview transfer",
+      });
+    }
+    if (!manifest.requires_cloud_preview && manifest.data_boundary.preview !== "local_only") {
+      context.addIssue({
+        code: "custom",
+        path: ["data_boundary", "preview"],
+        message: "Local-only providers must keep previews local",
+      });
+    }
+  });
+
+export const ProviderCapabilityRequirementsSchema = z
+  .object({
+    required_capabilities: z
+      .array(z.enum(PROVIDER_CAPABILITIES))
+      .min(1)
+      .max(PROVIDER_CAPABILITIES.length),
+  })
+  .strict()
+  .superRefine((requirements, context) => {
+    if (
+      new Set(requirements.required_capabilities).size !== requirements.required_capabilities.length
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["required_capabilities"],
+        message: "Required provider capabilities may not contain duplicates",
+      });
+    }
+  });
+
+export const ProviderCapabilityAssessmentSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    provider_id: z.string().min(1).max(200),
+    required_capabilities: z.array(z.enum(PROVIDER_CAPABILITIES)).min(1),
+    missing_capabilities: z.array(z.enum(PROVIDER_CAPABILITIES)),
+    outcome: z.enum(["READY", "REVIEW_REQUIRED"]),
+    reason: z.string().min(1).max(1000),
+  })
+  .strict()
+  .superRefine((assessment, context) => {
+    if (assessment.outcome === "READY" && assessment.missing_capabilities.length > 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["outcome"],
+        message: "Ready provider assessment may not contain missing capabilities",
+      });
+    }
+    if (assessment.outcome === "REVIEW_REQUIRED" && assessment.missing_capabilities.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["missing_capabilities"],
+        message: "Review-required provider assessment must disclose missing capabilities",
+      });
+    }
+  });
+
+export const ProviderMetadataSchema = z
+  .object({
+    provider: z.string().min(1).max(200),
+    model: z.string().min(1).max(200),
+    responseId: z.string().min(1).max(300).optional(),
+    promptVersion: z.string().min(1).max(200),
+    promptHash: z.string().regex(/^[a-f0-9]{64}$/),
+    usage: z
+      .object({
+        inputTokens: z.number().int().nonnegative().optional(),
+        outputTokens: z.number().int().nonnegative().optional(),
+        totalTokens: z.number().int().nonnegative().optional(),
+      })
+      .strict()
+      .optional(),
+    cloudPreview: z.boolean(),
+  })
+  .strict();
+
+export const ProviderResultSchema = z
+  .object({
+    intent: SemanticIntentPlanSchema,
+    metadata: ProviderMetadataSchema,
+  })
+  .strict();
+
 export const CancellationEvidenceSchema = z
   .object({
     requested_at: z.string().datetime(),
@@ -3101,8 +3227,8 @@ export const SessionManifestSchema = z.object({
   created_at: z.string().datetime(),
   source: SourceAssetPairSchema,
   provider: z.object({
-    name: z.enum(["mock", "codex", "openai"]),
-    model: z.string().min(1),
+    name: z.string().min(1).max(200),
+    model: z.string().min(1).max(200),
     prompt_version: z.string().min(1),
     prompt_hash: z.string().regex(/^[a-f0-9]{64}$/),
     cloud_preview: z.boolean(),
