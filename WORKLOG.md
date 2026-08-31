@@ -2553,3 +2553,7 @@ Cloud-analyzer checkpoint:
   `npm.cmd run build`, changed-source/test/docs `npx.cmd prettier --check`,
   and `git diff --check`; diff output contained only normal LF-to-CRLF
   warnings. No remote issue, push, merge, PR, or issue closure was performed.
+- T40 was committed locally as `cfea6c3 feat: add modern color grading
+  planning`; post-commit status was clean on `codex/roadmap-t09`. The
+  following WORKLOG-only commit records this post-commit evidence; no remote
+  operation was performed.
