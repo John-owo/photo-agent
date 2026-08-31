@@ -240,6 +240,7 @@ export const PHOTO_AGENT_BENCH_CONDITIONS = [
   "architecture",
   "action",
 ] as const;
+export const REGRESSION_GATE_REGISTRY_VERSION = "0.1.0" as const;
 
 export const SemanticAdjustmentSchema = z.object({
   parameter: z.enum(SEMANTIC_PARAMETERS),
@@ -2048,6 +2049,142 @@ export const PhotoAgentBenchGoldenVectorSchema = z
     expected_report: PhotoAgentBenchReportSchema,
   })
   .strict();
+
+export const ControlGroupSuiteDiscoverySchema = z
+  .object({
+    ticket_id: z.string().min(1).max(50),
+    control_group: z.string().min(1).max(100),
+    suite_path: z.string().min(1).max(300),
+    regression_marker: z.string().min(1).max(300),
+    golden_vector_marker: z.string().min(1).max(300),
+    discovered: z.boolean(),
+    regression_discovered: z.boolean(),
+    golden_vectors_discovered: z.boolean(),
+    failures: z.array(z.string().min(1).max(500)).max(8),
+  })
+  .strict()
+  .superRefine((discovery, context) => {
+    if (
+      discovery.discovered &&
+      (!discovery.regression_discovered || !discovery.golden_vectors_discovered)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["failures"],
+        message: "Discovered control-group suite must expose regression and golden-vector markers",
+      });
+    }
+  });
+
+export const BackendCompatibilityCaseSchema = z
+  .object({
+    case_id: z.string().min(1).max(200),
+    adapter_id: z.string().min(1).max(200),
+    requirements: z
+      .object({
+        expected_backend: z.string().min(1).max(200),
+        expected_version: z
+          .string()
+          .regex(
+            /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/,
+            "Expected a semantic version",
+          ),
+        expected_trust_boundary: z
+          .object({
+            transport: z.string().min(1).max(200),
+            authentication: z.string().min(1).max(200),
+            cloud: z.boolean(),
+          })
+          .strict(),
+        required_operations: z.array(z.string().min(1).max(200)).max(128),
+      })
+      .strict(),
+    manifest: z.unknown(),
+    expected_outcome: z.enum(["accepted", "rejected"]),
+  })
+  .strict();
+
+export const BackendCompatibilityResultSchema = z
+  .object({
+    case_id: z.string().min(1).max(200),
+    adapter_id: z.string().min(1).max(200),
+    expected_outcome: z.enum(["accepted", "rejected"]),
+    observed_outcome: z.enum(["accepted", "rejected"]),
+    passed: z.boolean(),
+    reason: z.string().min(1).max(1000),
+  })
+  .strict()
+  .superRefine((result, context) => {
+    if (result.passed !== (result.expected_outcome === result.observed_outcome)) {
+      context.addIssue({
+        code: "custom",
+        path: ["passed"],
+        message: "Backend compatibility result passed must match expected and observed outcomes",
+      });
+    }
+  });
+
+export const WorkflowRegressionEvidenceSchema = z
+  .object({
+    run_id: z.string().min(1).max(200),
+    passed: z.boolean(),
+    evidence: z.array(z.string().min(1).max(500)).min(1).max(16),
+    failures: z.array(z.string().min(1).max(500)).max(16),
+  })
+  .strict()
+  .superRefine((evidence, context) => {
+    if (evidence.passed && evidence.failures.length > 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["failures"],
+        message: "Passing workflow regression evidence may not contain failures",
+      });
+    }
+    if (!evidence.passed && evidence.failures.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["failures"],
+        message: "Failed workflow regression evidence requires failure details",
+      });
+    }
+  });
+
+export const RegressionGateReportSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    regression_gate_registry_version: z.literal(REGRESSION_GATE_REGISTRY_VERSION),
+    passed: z.boolean(),
+    suites: z.array(ControlGroupSuiteDiscoverySchema).min(7).max(7),
+    compatibility_results: z.array(BackendCompatibilityResultSchema).min(1).max(128),
+    workflow_regression: WorkflowRegressionEvidenceSchema,
+    failures: z.array(z.string().min(1).max(1000)).max(64),
+  })
+  .strict()
+  .superRefine((report, context) => {
+    const suiteIds = new Set(report.suites.map((suite) => suite.ticket_id));
+    if (suiteIds.size !== report.suites.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["suites"],
+        message: "Regression gate suite ticket ids may only appear once",
+      });
+    }
+    const compatibilityIds = new Set(report.compatibility_results.map((result) => result.case_id));
+    if (compatibilityIds.size !== report.compatibility_results.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["compatibility_results"],
+        message: "Regression gate compatibility case ids may only appear once",
+      });
+    }
+    if (report.passed !== (report.failures.length === 0)) {
+      context.addIssue({
+        code: "custom",
+        path: ["passed"],
+        message: "Regression gate passed must match the failure list",
+      });
+    }
+  });
 
 const EvaluationResultFieldsSchema = z.object({
   schema_version: z.literal("0.2.0"),

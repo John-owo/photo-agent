@@ -92,6 +92,10 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
   architecture、action 十種條件，並把 failures 與 `REVIEW_REQUIRED` 保留在
   denominator。缺少 case outcome 時一律變成 `REVIEW_REQUIRED`；這層 contract 不宣稱
   已完成真實 visual benchmark。
+- common regression gate 會 discovery T30/T32/T34/T36/T38/T40/T42 各自擁有的 suite，
+  確認每組仍保有自己的 regression 與 golden-vector tests；另外用 compatibility
+  matrix 驗證 capability、trust、operation 與 major version，缺 suite、compatibility
+  failure 或 workflow evidence 失敗時會 fail closed。
 - 單張 apply 會先唯讀並驗證 Master；只有明確允許 apply 且計畫含可執行調整時，
   才建立一份帶 session 標記的 Workflow Copy。checkpoint、Develop mutation、讀回與
   render 只會指向已驗證的 Copy。dry-run／no-op 不會建立 Copy；輸入已是 Virtual

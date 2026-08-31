@@ -109,6 +109,11 @@ import type {
   PhotoAgentBenchGoldenVectorSchema,
   PhotoAgentBenchReportSchema,
   PhotoAgentBenchSplitSchema,
+  BackendCompatibilityCaseSchema,
+  BackendCompatibilityResultSchema,
+  ControlGroupSuiteDiscoverySchema,
+  RegressionGateReportSchema,
+  WorkflowRegressionEvidenceSchema,
 } from "./schemas.js";
 
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
@@ -188,6 +193,11 @@ export type PhotoAgentBenchCaseOutcome = z.infer<typeof PhotoAgentBenchCaseOutco
 export type PhotoAgentBenchCaseResult = z.infer<typeof PhotoAgentBenchCaseResultSchema>;
 export type PhotoAgentBenchReport = z.infer<typeof PhotoAgentBenchReportSchema>;
 export type PhotoAgentBenchGoldenVector = z.infer<typeof PhotoAgentBenchGoldenVectorSchema>;
+export type ControlGroupSuiteDiscovery = z.infer<typeof ControlGroupSuiteDiscoverySchema>;
+export type BackendCompatibilityCase = z.infer<typeof BackendCompatibilityCaseSchema>;
+export type BackendCompatibilityResult = z.infer<typeof BackendCompatibilityResultSchema>;
+export type WorkflowRegressionEvidence = z.infer<typeof WorkflowRegressionEvidenceSchema>;
+export type RegressionGateReport = z.infer<typeof RegressionGateReportSchema>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
 export type BackendCapabilityManifest = z.infer<typeof BackendCapabilityManifestSchema>;
 export type BackendPhotoState = z.infer<typeof BackendPhotoStateSchema>;

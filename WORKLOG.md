@@ -2749,3 +2749,31 @@ Cloud-analyzer checkpoint:
   contract`; `git status --short --branch` and `git show --stat --oneline
   --summary HEAD` confirmed a clean `codex/roadmap-t09` worktree with the
   expected nine-file commit. No remote operation was performed.
+
+## 2026-08-31 - T49 common regression and backend-compatibility gate
+
+- Read-only `gh issue view 43 --repo John-owo/photo-agent --json
+  number,title,body,labels,state` confirmed T49 requires a shared harness for
+  the T30/T32/T34/T36/T38/T40/T42 suites, backend capability/trust/operation/
+  version compatibility coverage, and fail-closed behavior without duplicating
+  control-group tests. It remains blocked by the remote v0.3 control issues and
+  T48's parent gate; no remote state changed.
+- Mapped the seven existing owned suites to their current test paths and
+  markers, then added read-only discovery that verifies each regression and
+  golden-vector marker without copying those tests. Added a
+  `test:regression-gate` script that explicitly runs the discovered group
+  suites plus backend-handshake and workflow regressions.
+- Added a backend compatibility matrix over real capability manifests and
+  handshake requirements. It records only accepted/rejected outcomes and
+  reasons, never persists manifests or credentials; wrong trust, missing
+  operations, and incompatible major versions fail as expected.
+- The first T49 `npm.cmd run check` exposed TypeScript's possible-undefined
+  narrowing after a failed suite read. The source was normalized to an empty
+  string for marker checks; the gate and lint then passed (10 files / 103
+  tests).
+- Final T49 verification passed `npm.cmd run check`,
+  `npm.cmd run test:regression-gate` (10 files / 103 tests), `npm.cmd test` (15
+  files / 136 tests), `npm.cmd run lint`, `npm.cmd run build`, changed-source/
+  test/docs/package `npx.cmd prettier --check`, and `git diff --check`; diff
+  output contained only normal LF-to-CRLF warnings. No remote issue, push,
+  merge, PR, or issue closure was performed.

@@ -126,6 +126,10 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   architecture, and action coverage in the test split, and preserves failures
   and `REVIEW_REQUIRED` cases in the denominator. Missing case outcomes become
   `REVIEW_REQUIRED`; this contract does not claim a live visual benchmark run.
+- The common regression gate discovers the T30/T32/T34/T36/T38/T40/T42 suites,
+  checks that each retains its own regression and golden-vector tests, runs a
+  backend compatibility matrix for capabilities, trust, operations, and major
+  versions, and fails when workflow evidence or any required group is missing.
 - A single-photo apply reads and verifies the Master first, then lazily creates
   one session-marked Workflow Copy only when apply is approved and the plan has
   an executable adjustment. Checkpoints, Develop mutation, read-back, and render

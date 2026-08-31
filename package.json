@@ -15,6 +15,7 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:regression-gate": "vitest run tests/regression-gate.test.ts tests/next-tickets.test.ts tests/tone-curve.test.ts tests/detail.test.ts tests/optics-geometry.test.ts tests/finishing.test.ts tests/color-grading.test.ts tests/mask-adjustment.test.ts tests/backend-handshake.test.ts tests/workflow.test.ts",
     "test:watch": "vitest",
     "example": "node examples/run-example.mjs",
     "format:check": "prettier --check ."
