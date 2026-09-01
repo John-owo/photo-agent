@@ -3552,3 +3552,144 @@ Cloud-analyzer checkpoint:
   It maps all seven handoff requirements to current authoritative evidence and
   keeps the overall goal active solely for the user-owned T62 clean-render
   `render PASS`; no automated or agent visual check is presented as that gate.
+
+## 2026-09-01 PhotoAgent create_mask bridge continuation
+
+- The user supplied the previously pending human `render PASS`; this entry does
+  not repeat or substitute for that human gate.
+- Added a minimum PhotoAgent-to-Lightroom-MCP `create_mask` vertical slice in
+  `src/mask-creation.ts`, with strict request/response validation, an explicit
+  `create_mask` handshake capability, pre-mutation Workflow Copy UUID/Master
+  UUID verification, exact operation-ID checking, and fail-closed
+  `REVIEW_REQUIRED` handling. A timeout or malformed/uncertain response never
+  triggers a second mutation; the returned result records
+  `retry_allowed: false` and directs reconciliation by the same operation ID.
+- Extended `BackendAdapter`, `LightroomMcpAdapter`, and `MockBackend` with the
+  typed mask call. The Lightroom adapter makes one structured MCP tool call;
+  the mock supports deterministic Brush/Subject success, unsupported Sky,
+  backend `REVIEW_REQUIRED`, and injected timeout-like failure without touching
+  photos or Lightroom.
+- Added `tests/mask-creation-bridge.test.ts` covering the successful request and
+  response contract, capability refusal before catalog access, timeout and
+  backend-review no-blind-retry behavior, Master/mismatched-copy refusal, and an
+  in-memory MCP transport assertion that the exact structured request reaches
+  `create_mask` and the preservation response is validated.
+- First targeted test run failed 3/6 because an empty MockBackend options object
+  was treated as a capability manifest; `npm.cmd run check` separately exposed
+  one test-helper semantics type narrowing error. The mock option detection and
+  test helper type were corrected. The second targeted run failed only the same
+  empty-options default case, revealing that an explicitly empty object also
+  needed to select the default manifest. No photo, Lightroom, or external state
+  was changed by either failed automated run.
+- After the fixes, `npm.cmd test -- tests/mask-creation-bridge.test.ts` passed
+  6/6 and `npm.cmd run check` passed. Full lint/test/build and changed-file
+  formatting/diff verification remain pending.
+- This is mock/in-memory transport evidence only. No live Lightroom mutation,
+  mask creation, catalog readback, or new render was performed in this
+  continuation; live PhotoAgent-to-T62 execution remains a separate opt-in E2E
+  gate on a non-critical Workflow Copy.
+- Contract re-review against T62 `HandlerMask.lua` found that a legitimate
+  `REVIEW_REQUIRED` response may preserve optional Workflow Copy, checkpoint,
+  mask readback, geometry, and preservation evidence. The PhotoAgent response
+  validator now accepts and retains those contract-defined optional fields
+  while still rejecting unknown fields; a seventh bridge regression covers
+  this retained-evidence path.
+- Exported the bridge from `src/index.ts` and centralized the shared
+  `CREATE_MASK_OPERATION`/required-operation list in
+  `src/backend-handshake.ts`.
+- Verification after the final contract alignment passed: `npm.cmd run check`,
+  `npm.cmd run lint`, full `npm.cmd test` (24 files / 181 tests), and
+  `npm.cmd run build`. The two new TypeScript files were formatted with
+  Prettier; final changed-file formatting and diff checks are recorded below.
+- Final targeted Prettier check passed for all six changed/new TypeScript files.
+  `git diff --check` also passed, emitting only the repository's existing
+  LF-to-CRLF warnings. Final status contains only the seven intended
+  PhotoAgent bridge source/test/work-log files; no commit, push, PR, issue, or
+  Lightroom operation was performed.
+
+### Main-agent contract review hardening
+
+- Main-agent diff review found that a schema-valid success response could carry
+  a different mask kind, name, local settings, or kind parameters than the
+  request and still be accepted as success. It also found that PhotoAgent's
+  catalog ID parser was broader than the Lightroom MCP digits-only contract.
+- Added three regressions for a valid-but-mismatched payload, a valid cross-kind
+  response, and a non-numeric catalog ID. The required red run
+  `npm.cmd test -- tests/mask-creation-bridge.test.ts` failed exactly those
+  three cases while the prior seven passed.
+- Tightened catalog IDs to digits-only strings or non-negative integers,
+  retained valid mismatch evidence in the terminal `REVIEW_REQUIRED` result,
+  and now require success to match the requested mask kind, name, exact local
+  settings, exact Brush parameters/path, capability/runtime schema identity,
+  Workflow Copy/Master identities, and verified restored/not-needed selection.
+- The first post-fix targeted run exposed that the general MockBackend creates
+  intentionally descriptive non-numeric copy IDs. Six mask tests therefore
+  failed before mask mutation, while the new non-numeric refusal test passed;
+  `npm.cmd run check` passed. Added a mask-test-only numeric
+  `mockCopyCatalogId` option without changing the existing general mock default.
+- The corrected targeted run passed 10/10 and `npm.cmd run check` passed. No
+  Lightroom, photo, catalog, external file, or remote state was touched. Final
+  full regression and independent contract review remain pending below.
+
+### Independent bridge review and create-mask.v2 recovery contract
+
+- Independent read-only review found three P2 gaps and no P1: the adapter did
+  not require an exact MCP mask contract revision/safety semantics, Brush
+  geometry was not bound to the request path, and `REVIEW_REQUIRED` evidence
+  could be overstated or lost when the MCP SDK rejected malformed structured
+  output before PhotoAgent saw it.
+- The Lightroom handshake now requires the exact `create-mask.v2` revision and
+  every declared mutation property: supported/mutating, non-idempotent,
+  checkpoint-only, photo-scoped, active-selection/editor-foreground,
+  exclusive-backend, readback-before-retry, and unsafe-to-resume. Missing or
+  wrong revision and unsafe semantics stop before any catalog or mutation call.
+- Success validation now binds kind, name, exact local settings, runtime/schema,
+  Brush path parameters, point count, and min/max bounds to the request.
+  Contradictory evidence stops at `REVIEW_REQUIRED`. A reason-only or partial
+  but non-contradictory review result is `insufficient`; only consistent Copy,
+  Master, and checkpoint evidence is `validated`.
+- The formal v2 MCP recovery branch carries schema-valid `validation_failure`
+  evidence. PhotoAgent's strict Zod schema accepts its bounded raw excerpt,
+  truncation flag, SHA-256, and validator summary; the executor restores exact
+  untruncated JSON when possible, records it as `raw_response`, marks the result
+  `unparsed`, sets `retry_allowed=false`, and never sends a second mutation.
+- Added a real in-memory MCP `Client`/`Server`/`LightroomMcpAdapter` regression
+  that advertises an output schema and proves the schema-valid recovery result
+  crosses SDK validation, retains raw evidence, and makes exactly one mask call.
+  Targeted coverage expanded from 10 to 17 tests.
+- During v2 test conversion, the recovery-only output schema was first attached
+  to the success fixture, so that success correctly failed client validation;
+  the targeted run reported 2 failures. Moving the schema to the recovery
+  fixture and correcting the expected reason produced 17/17 PASS with check
+  and lint PASS. Prettier formatted the changed PhotoAgent files successfully.
+- The README now distinguishes the executable new-mask bridge from the separate
+  existing-mask planning contract and states that full session orchestration
+  and automatic mask recovery are not yet wired. Final full regression,
+  independent P1/P2 review, and local commit are recorded below when complete.
+- No Lightroom, photo, catalog, original file, remote, or Codex configuration
+  state was changed by this bridge hardening.
+
+### Final v2 verification and review
+
+- Final delegated read-only regression on the exact v2 worktree passed:
+  TypeScript check, ESLint, build, full Vitest 24 files / 191 tests, Prettier
+  check for all changed/new TypeScript plus README, and `git diff --check`.
+  The diff check emitted only the repository's existing LF-to-CRLF warnings.
+  A focused insufficient-evidence plus schema-valid validation-failure
+  transport run passed 2/2 with 15 unrelated tests skipped.
+- Final independent read-only review reported P1=0 and P2=0 across both
+  repositories. It confirmed success/unsupported cannot carry
+  `validation_failure`, normal review and recovery branches are mutually
+  exclusive, bounded raw evidence survives the MCP SDK and PhotoAgent adapter,
+  and the mutation is never blindly retried.
+- Automated PhotoAgent bridge acceptance is complete for this local diff.
+  Live PhotoAgent-to-Lightroom execution of the newly loaded v2 code and a
+  general `reconcile_mask`/session-recovery endpoint remain explicit live/design
+  boundaries; they are not represented as completed by the automated suite.
+- Local commit is recorded below. No push, PR, issue, remote state, Lightroom,
+  photo, catalog, source, sidecar, preview, export, or Codex configuration was
+  changed during final verification.
+- Created one local commit on `codex/roadmap-t09` with message
+  `feat: bridge verified mask creation`, containing only the eight reviewed
+  README/work-log/source/test files. The commit was not pushed and no remote
+  branch, PR, or issue state changed.

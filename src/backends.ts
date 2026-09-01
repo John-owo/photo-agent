@@ -18,6 +18,13 @@ import {
   WORKFLOW_COPY_RECONCILIATION_OPERATION,
   type BackendHandshakeRequirements,
 } from "./backend-handshake.js";
+import {
+  CREATE_MASK_OPERATION,
+  CREATE_MASK_CONTRACT_META_KEY,
+  CREATE_MASK_CONTRACT_REVISION,
+  validateMaskCreationRequest,
+  validateMaskCreationResponse,
+} from "./mask-creation.js";
 import { writeFixtureJpeg } from "./preview.js";
 import type {
   BackendAdapter,
@@ -25,6 +32,9 @@ import type {
   BackendPhotoState,
   CheckpointResult,
   FinalExportSettings,
+  MaskCreationCapability,
+  MaskCreationRequest,
+  MaskCreationResponse,
   RenderResult,
   WorkflowCopyResult,
 } from "./types.js";
@@ -44,6 +54,26 @@ const SUPPORTED_DEVELOP_KEYS = [
   "Dehaze",
   "Vibrance",
   "Saturation",
+];
+
+const MOCK_MASK_LOCAL_SETTINGS = [
+  "exposure",
+  "contrast",
+  "highlights",
+  "shadows",
+  "whites",
+  "blacks",
+  "temperature",
+  "tint",
+  "texture",
+  "clarity",
+  "dehaze",
+  "saturation",
+  "sharpness",
+  "luminance_noise",
+  "moire",
+  "defringe",
+  "hue",
 ];
 
 const PLUGIN_READY_TIMEOUT_MS = 10_000;
@@ -70,6 +100,7 @@ const LIGHTROOM_TOOL_OPERATIONS = {
   export_photos: "render_preview",
   create_virtual_copy: "create_workflow_copy",
   reconcile_virtual_copy: WORKFLOW_COPY_RECONCILIATION_OPERATION,
+  create_mask: CREATE_MASK_OPERATION,
 } as const;
 
 const LIGHTROOM_HANDSHAKE_REQUIREMENTS: BackendHandshakeRequirements = {
@@ -95,6 +126,7 @@ export const LIGHTROOM_CAPABILITIES = BackendCapabilityManifestSchema.parse({
     "apply_global_adjustment",
     "render_preview",
     "create_checkpoint",
+    CREATE_MASK_OPERATION,
   ],
   operations: {
     read_current_edit: {
@@ -169,6 +201,18 @@ export const LIGHTROOM_CAPABILITIES = BackendCapabilityManifestSchema.parse({
       retry_policy: "manual_review_only",
       safe_to_resume: false,
     },
+    [CREATE_MASK_OPERATION]: {
+      supported: true,
+      side_effect: "mutating",
+      idempotent: false,
+      reversible: "checkpoint_only",
+      scope: "photo",
+      requires_active_selection: true,
+      requires_editor_foreground: true,
+      concurrency: "exclusive_backend",
+      retry_policy: "readback_before_retry",
+      safe_to_resume: false,
+    },
   },
 });
 
@@ -184,6 +228,7 @@ export const MOCK_CAPABILITIES = BackendCapabilityManifestSchema.parse({
     "render_preview",
     "export_final",
     "create_checkpoint",
+    CREATE_MASK_OPERATION,
   ],
   operations: {
     ...LIGHTROOM_CAPABILITIES.operations,
@@ -273,6 +318,9 @@ export class MockBackend implements BackendAdapter {
   readonly operationTargets: string[] = [];
   private readonly advertisedManifest: unknown;
   private readonly sourceIdentityMode: "master" | "virtual_copy" | "uncertain";
+  private readonly maskResult: "created" | "reconciled" | "unsupported" | "REVIEW_REQUIRED";
+  private readonly maskError: string | undefined;
+  private readonly mockCopyCatalogId: string | undefined;
   private negotiatedManifest: BackendCapabilityManifest | undefined;
   private connected = false;
   private readonly masterUuid = "mock-master-uuid";
@@ -313,8 +361,24 @@ export class MockBackend implements BackendAdapter {
       requestedIdentity === "virtual_copy" || requestedIdentity === "uncertain"
         ? requestedIdentity
         : "master";
+    const configuredMaskResult = options.maskResult;
+    this.maskResult =
+      configuredMaskResult === "reconciled" ||
+      configuredMaskResult === "unsupported" ||
+      configuredMaskResult === "REVIEW_REQUIRED"
+        ? configuredMaskResult
+        : "created";
+    this.maskError = typeof options.maskError === "string" ? options.maskError : undefined;
+    this.mockCopyCatalogId =
+      typeof options.mockCopyCatalogId === "string" ? options.mockCopyCatalogId : undefined;
     this.advertisedManifest =
-      "manifest" in options || "sourceIdentity" in options
+      manifestOrOptions === undefined ||
+      Object.keys(options).length === 0 ||
+      "manifest" in options ||
+      "sourceIdentity" in options ||
+      "maskResult" in options ||
+      "maskError" in options ||
+      "mockCopyCatalogId" in options
         ? (options.manifest ?? MOCK_CAPABILITIES)
         : (manifestOrOptions ?? MOCK_CAPABILITIES);
   }
@@ -471,7 +535,7 @@ export class MockBackend implements BackendAdapter {
       throw new Error("Mock Workflow Copy source identity mismatch");
     }
     const existingId = this.copyByOperation.get(operationId);
-    const copyId = existingId ?? `mock-copy-${operationId}`;
+    const copyId = existingId ?? this.mockCopyCatalogId ?? `mock-copy-${operationId}`;
     if (!existingId) {
       this.copies.set(copyId, {
         operationId,
@@ -512,6 +576,142 @@ export class MockBackend implements BackendAdapter {
     if (copy) copy.settings = { ...copy.settings, ...settings };
     else this.masterSettings = { ...this.masterSettings, ...settings };
     return { applied: settings };
+  }
+
+  async createMask(input: MaskCreationRequest): Promise<MaskCreationResponse> {
+    this.requireOperation(CREATE_MASK_OPERATION);
+    this.calls.push(CREATE_MASK_OPERATION);
+    const request = validateMaskCreationRequest(input);
+    this.operationTargets.push(request.photo_id);
+    if (this.maskError) throw new Error(this.maskError);
+    const copy = this.copies.get(request.photo_id);
+    const masterId = this.masterPhotoId;
+    if (
+      !copy ||
+      !masterId ||
+      copy.uuid !== request.expected_photo_uuid ||
+      this.masterUuid !== request.expected_master_uuid
+    ) {
+      throw new Error("Mock mask target identity mismatch");
+    }
+    const capability = this.mockMaskCapability();
+    const envelope = {
+      operation_id: request.operation_id,
+      capability,
+      selection_restoration: { status: "restored" as const, verified: true },
+    };
+    if (this.maskResult === "unsupported" || request.mask_kind === "sky") {
+      return validateMaskCreationResponse({
+        ...envelope,
+        result: "unsupported",
+        reason: "Mock runtime does not support this mask kind",
+      });
+    }
+    if (this.maskResult === "REVIEW_REQUIRED") {
+      return validateMaskCreationResponse({
+        ...envelope,
+        result: "REVIEW_REQUIRED",
+        reason: "Mock mask reconciliation is uncertain",
+      });
+    }
+    const common = {
+      ...envelope,
+      result: this.maskResult,
+      photo: {
+        catalog_id: request.photo_id,
+        uuid: copy.uuid,
+        is_virtual_copy: true as const,
+      },
+      master: {
+        catalog_id: masterId,
+        uuid: this.masterUuid,
+        is_virtual_copy: false as const,
+      },
+      mask_id: `mock-mask-${request.operation_id}`,
+      correction_id: `mock-correction-${request.operation_id}`,
+      name: request.name,
+      initial_local_settings: request.local_settings,
+      lightroom_version: "mock-lightroom",
+      process_version: "mock-process",
+      mask_schema: "mock-mask-v1",
+      checkpoint: {
+        name: `PhotoAgent mask ${request.operation_id}`,
+        uuid: `mock-checkpoint-${request.operation_id}`,
+        scope: "plugin" as const,
+        recovery_evidence: true as const,
+        true_undo: false as const,
+      },
+      preservation: {
+        exactly_one_mask_added: true as const,
+        existing_mask_tree_unchanged: true as const,
+        global_develop_unchanged: true as const,
+        source_untouched: true as const,
+        sidecar_untouched: true as const,
+      },
+    };
+    return validateMaskCreationResponse(
+      request.mask_kind === "brush"
+        ? {
+            ...common,
+            mask_kind: "brush",
+            kind_parameters: request.kind_parameters,
+            geometry: {
+              coordinate_system: "normalized_image",
+              coordinate_units: "unit_interval",
+              point_count: request.kind_parameters.path.length,
+              bounds: {
+                x_min: Math.min(...request.kind_parameters.path.map((point) => point.x)),
+                x_max: Math.max(...request.kind_parameters.path.map((point) => point.x)),
+                y_min: Math.min(...request.kind_parameters.path.map((point) => point.y)),
+                y_max: Math.max(...request.kind_parameters.path.map((point) => point.y)),
+              },
+            },
+          }
+        : {
+            ...common,
+            mask_kind: "subject",
+            kind_parameters: {},
+            geometry: {
+              coordinate_system: "lightroom_ai",
+              coordinate_units: "opaque",
+              ai_payload_present: true,
+              ai_payload_field_count: 1,
+              ai_mask_type: "Mask/Image",
+              ai_mask_subtype: 1,
+              ai_error_state: "absent",
+            },
+          },
+    );
+  }
+
+  private mockMaskCapability(): MaskCreationCapability {
+    const guarantees = [
+      "exactly_one_mask_added",
+      "existing_mask_tree_unchanged",
+      "global_develop_unchanged",
+      "source_untouched",
+      "sidecar_untouched",
+    ];
+    const accepted = [...MOCK_MASK_LOCAL_SETTINGS];
+    return {
+      lightroom_version: "mock-lightroom",
+      process_version: "mock-process",
+      mask_schema: "mock-mask-v1",
+      kinds: {
+        brush: { supported: true, accepted_parameters: accepted, readback_guarantees: guarantees },
+        subject: {
+          supported: true,
+          accepted_parameters: accepted,
+          readback_guarantees: guarantees,
+        },
+        sky: {
+          supported: false,
+          accepted_parameters: [],
+          readback_guarantees: [],
+          reason: "Mock sky masks are unsupported",
+        },
+      },
+    };
   }
 
   async renderPreview(photoId: string, destination: string): Promise<RenderResult> {
@@ -627,6 +827,28 @@ export class LightroomMcpAdapter implements BackendAdapter {
         throw new Error(
           `Lightroom MCP handshake rejected malformed operation semantics for ${toolName}: ${semantics.error.message}`,
         );
+      }
+      if (toolName === "create_mask") {
+        if (metadata[CREATE_MASK_CONTRACT_META_KEY] !== CREATE_MASK_CONTRACT_REVISION) {
+          throw new Error(
+            `Lightroom MCP handshake rejected incompatible create_mask contract revision: expected ${CREATE_MASK_CONTRACT_REVISION}`,
+          );
+        }
+        const maskSemantics = semantics.data;
+        if (
+          maskSemantics.supported !== true ||
+          maskSemantics.side_effect !== "mutating" ||
+          maskSemantics.idempotent !== false ||
+          maskSemantics.reversible !== "checkpoint_only" ||
+          maskSemantics.scope !== "photo" ||
+          maskSemantics.requires_active_selection !== true ||
+          maskSemantics.requires_editor_foreground !== true ||
+          maskSemantics.concurrency !== "exclusive_backend" ||
+          maskSemantics.retry_policy !== "readback_before_retry" ||
+          maskSemantics.safe_to_resume !== false
+        ) {
+          throw new Error("Lightroom MCP handshake rejected unsafe create_mask semantics");
+        }
       }
       operations[operationName] = semantics.data;
       capabilities.push(operationName);
@@ -864,6 +1086,14 @@ export class LightroomMcpAdapter implements BackendAdapter {
   ): Promise<unknown> {
     this.requireOperation("apply_global_adjustment");
     return this.call("set_develop_settings", { photo_id: photoId, settings });
+  }
+
+  async createMask(input: MaskCreationRequest): Promise<MaskCreationResponse> {
+    this.requireOperation(CREATE_MASK_OPERATION);
+    await this.ensurePluginReady();
+    const request = validateMaskCreationRequest(input);
+    const raw = await this.call<unknown>("create_mask", request);
+    return validateMaskCreationResponse(raw);
   }
 
   async renderPreview(photoId: string, destination: string): Promise<RenderResult> {

@@ -305,6 +305,129 @@ export type RenderResult = {
   raw: unknown;
 };
 
+export type MaskCreationKind = "brush" | "subject" | "sky";
+
+export type BrushMaskKindParameters = {
+  coordinate_system: "normalized_image";
+  coordinate_units: "unit_interval";
+  path: Array<{ x: number; y: number }>;
+  size: number;
+  feather: number;
+  flow: number;
+  density: number;
+};
+
+export type MaskCreationLocalSettings = Partial<
+  Record<
+    | "exposure"
+    | "contrast"
+    | "highlights"
+    | "shadows"
+    | "whites"
+    | "blacks"
+    | "temperature"
+    | "tint"
+    | "texture"
+    | "clarity"
+    | "dehaze"
+    | "saturation"
+    | "sharpness"
+    | "luminance_noise"
+    | "moire"
+    | "defringe"
+    | "hue",
+    number
+  >
+>;
+
+type MaskCreationRequestBase = {
+  photo_id: string;
+  expected_photo_uuid: string;
+  expected_master_uuid: string;
+  operation_id: string;
+  name: string;
+  local_settings: MaskCreationLocalSettings;
+};
+
+export type MaskCreationRequest =
+  | (MaskCreationRequestBase & {
+      mask_kind: "brush";
+      kind_parameters: BrushMaskKindParameters;
+    })
+  | (MaskCreationRequestBase & {
+      mask_kind: "subject" | "sky";
+      kind_parameters: Record<string, never>;
+    });
+
+export type MaskCreationCapability = {
+  lightroom_version: string;
+  process_version: string;
+  mask_schema: string;
+  kinds: Record<
+    MaskCreationKind,
+    {
+      supported: boolean;
+      accepted_parameters: string[];
+      readback_guarantees: string[];
+      reason?: string;
+    }
+  >;
+};
+
+export type MaskCreationResponse = {
+  operation_id: string;
+  result: "created" | "reconciled" | "unsupported" | "REVIEW_REQUIRED";
+  capability: MaskCreationCapability;
+  selection_restoration: {
+    status: "restored" | "not_needed" | "not_attempted" | "failed";
+    verified?: boolean;
+    reason?: string;
+  };
+  photo?: { catalog_id: string; uuid: string; is_virtual_copy: true };
+  master?: { catalog_id: string; uuid: string; is_virtual_copy: false };
+  mask_id?: string;
+  correction_id?: string;
+  name?: string;
+  mask_kind?: "brush" | "subject";
+  kind_parameters?: BrushMaskKindParameters | Record<string, never>;
+  initial_local_settings?: MaskCreationLocalSettings;
+  lightroom_version?: string;
+  process_version?: string;
+  mask_schema?: string;
+  geometry?: Record<string, unknown>;
+  checkpoint?: {
+    name: string;
+    uuid: string;
+    scope: "plugin";
+    recovery_evidence: true;
+    true_undo: false;
+  };
+  preservation?: {
+    exactly_one_mask_added: true;
+    existing_mask_tree_unchanged: true;
+    global_develop_unchanged: true;
+    source_untouched: true;
+    sidecar_untouched: true;
+  };
+  validation_failure?: {
+    raw_response_json: string;
+    raw_response_truncated: boolean;
+    raw_response_sha256: string;
+    validator_summary: string;
+  };
+  reason?: string;
+};
+
+export type MaskCreationExecutionResult = {
+  operation_id: string;
+  outcome: "CREATED" | "RECONCILED" | "UNSUPPORTED" | "REVIEW_REQUIRED";
+  retry_allowed: false;
+  response?: MaskCreationResponse;
+  raw_response?: unknown;
+  evidence_status?: "validated" | "insufficient" | "contradictory" | "unparsed";
+  reason?: string;
+};
+
 export type BackendAdapter = {
   readonly name: string;
   readonly handshakeRequirements: BackendHandshakeRequirements;
@@ -328,6 +451,7 @@ export type BackendAdapter = {
     photoId: string,
     settings: Record<string, number | string | boolean>,
   ): Promise<unknown>;
+  createMask(request: MaskCreationRequest): Promise<MaskCreationResponse>;
   renderPreview(photoId: string, destination: string): Promise<RenderResult>;
   exportFinal?(
     photoId: string,

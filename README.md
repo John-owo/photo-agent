@@ -106,8 +106,17 @@ platform-appropriate executable; treat Lightroom use there as unvalidated.
   Workflow Copy adjustment. Selectors may use a stable mask id or a unique
   name, local parameters are allowlisted and bounded, and readback verifies
   geometry, opaque fields, other masks, and global settings are preserved.
-  Unsupported or uncertain mask state returns a manual handoff; the current
-  adapter has no structured mask mutation method.
+  Unsupported or uncertain existing-mask state still returns a manual handoff;
+  that planning contract is separate from the executable new-mask bridge.
+- New-mask creation exposes a narrow `executeMaskCreation` bridge for one
+  identity-verified Workflow Copy. The Lightroom adapter requires the exact
+  `create-mask.v2` contract revision and mutation safety semantics before any
+  catalog access, sends at most one `create_mask` call, and validates the
+  returned identity, requested kind/settings/Brush geometry, checkpoint, and
+  preservation evidence. Timeout and malformed post-operation results stop at
+  `REVIEW_REQUIRED` without blind retry; bounded transport evidence and the
+  operation ID are retained for reconciliation. This bridge is not yet wired
+  into the full session orchestrator or automatic recovery flow.
 - Style Prior planning gives protected explicit preference rules precedence
   over learned history, records rule evidence/sample counts/confidence, and
   falls back to general guidance with capped confidence when history is too
