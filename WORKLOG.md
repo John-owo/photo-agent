@@ -3963,3 +3963,54 @@ Evidence: D:/photo/_agent_workspace/lightroom/verification/t59-subset-preparatio
 ### 2026-09-06 T59 human functional render PASS recorded
 
 User replied exact text `` `render PASS` `` after the functional XMP/render scope explanation. Bound to test item1012905 / UUID4D5B432B-C45F-48E8-A700-412413C805BA. Render SHA-256 reverified unchanged: 878b2d8a19d7ca21d7c5fc26f21b2b3f385fa237eef822e88f177a8ad44b537a. Saved create-only human-acceptance-20260906.json in t59-subset-preparation-20260906-v2/live-20260906-v2; updated its README and latest handoff. Earlier success.json PENDING remains a historical snapshot. This completes this case's human functional gate, not aesthetic approval, restart persistence, roadmap dependencies or release. No Lightroom operations or image changes this turn. Next validation stage T17-T27; large-batch shoot-folder path remains unspecified; existing-mask adjustment deferred.
+## 2026-09-01 - README health-report restructuring
+
+- Used the user-supplied README health report as editorial guidance, then
+  verified claims against fetched `origin/main`, `package.json`, CI, CLI source,
+  examples, project rules, and this work log. The active roadmap worktree was
+  dirty and 58 commits ahead of `main`, so the isolated
+  `codex/readme-health-report` branch was created from `origin/main` to avoid
+  including unrelated roadmap work. No remote branch, PR, release, issue,
+  Lightroom state, or photo was changed.
+- Reworked the English and Traditional Chinese READMEs with a short TL;DR,
+  linked contents, feature overview, architecture/data-flow diagram, glossary,
+  mock-first quick start, Node/platform requirements, and a consolidated CLI
+  flag table. The safety contract remains complete but now follows the quick
+  orientation path; detailed Codex, mock, OpenAI, recovery, XMP, and shoot
+  instructions remain intact.
+- The first sandboxed fetch failed on network access; the approved retry with a
+  command-local `safe.directory` override succeeded and did not change global
+  Git configuration. One initial combined README patch failed on exact context
+  and changed no file. The first Prettier check found both edited READMEs needed
+  formatting; targeted Prettier rewrote only those two files and the next check
+  passed.
+- The first `npm exec prettier` attempt failed because the clean worktree had no
+  dependencies and the user-level npm cache was inaccessible. Workspace-cache
+  `npm ci` then reached the registry but failed with sandbox `EACCES`. Approved
+  `npm.cmd ci --cache D:\photo\_agent_workspace\runtime\npm-cache
+  --prefer-offline` completed from the lockfile with zero reported
+  vulnerabilities; no dependency file changed.
+- Verification passed: targeted Prettier check, `npm.cmd run check`,
+  `npm.cmd run lint`, Vitest `3/3` files and `56/56` tests, and
+  `npm.cmd run build`. A read-only Markdown check resolved every relative link
+  and contents anchor in both READMEs. Targeted `git diff --check` passed with
+  only expected LF-to-CRLF warnings.
+
+## 2026-09-01 - README publication to main
+
+- After reviewing the local result, the user explicitly authorized the push and
+  requested the approved README work be merged into `main`.
+- A fresh `git fetch --prune origin` succeeded. Preflight showed a clean review
+  worktree, `origin/main...HEAD = 0 1`, `origin/main` was an ancestor of HEAD,
+  and the complete diff remained limited to `README.md`, `README.zh-TW.md`, and
+  `WORKLOG.md`.
+- Normal non-force `git push origin HEAD:main` fast-forwarded
+  `John-owo/photo-agent` from `4b74878` to `15be73a`. No PR, issue, release,
+  tag, force push, or unrelated remote state was changed.
+- The first combined remote/local SHA readback obtained remote SHA `15be73a`
+  but the local `git rev-parse` omitted the command-local `safe.directory` and
+  failed with the existing dubious-ownership guard. It changed no local or
+  remote state. The corrected exact-worktree command used no global Git setting
+  and confirmed full remote SHA
+  `15be73ad69d010142008aa09756f17f28c2c16c1`, matching the local reviewed
+  commit.
