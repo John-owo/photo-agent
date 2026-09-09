@@ -652,10 +652,48 @@ async function executePlan(
         await finishReport(iteration - 1, reason);
         return resultFor(session, normalizedPlan, { iterations: iteration - 1 });
       }
+      if (iteration > 1) {
+        const observed = await options.backend.readCurrentEdit(activePhotoId);
+        throwIfCancellationRequested(options.signal, "mutation", true);
+        const identityVerified =
+          observed.photo_id === activePhotoId &&
+          samePhotoIdentity(observed.identity, copyIdentity) &&
+          samePath(observed.path, master.path);
+        const stateVerified = sameDevelopSettings(
+          observed.develop_settings,
+          current.develop_settings,
+        );
+        await session.writeJson(`workflow-copy-iteration-${iteration}-preflight.json`, {
+          operation_id: operationId,
+          expected: copyIdentity,
+          observed,
+          identity_verified: identityVerified,
+          develop_state_verified: stateVerified,
+        });
+        if (!identityVerified || !stateVerified) {
+          const reason = identityVerified
+            ? "workflow_copy_state_changed"
+            : "workflow_copy_identity_changed";
+          await session.transition("REVIEW_REQUIRED", {
+            reason,
+            iteration,
+            operation_id: operationId,
+          });
+          await finishReport(iteration - 1, reason);
+          return resultFor(session, normalizedPlan, { iterations: iteration - 1 });
+        }
+        current = observed;
+      }
       const settings =
         iteration === 1
           ? initialSettings
           : resolveLightroomSettings(current.develop_settings, activePlan);
+      if (!hasEffectiveSettings(current.develop_settings, settings)) {
+        const reason = "no_effective_adjustments";
+        await session.transition("REVIEW_REQUIRED", { reason, iteration });
+        await finishReport(iteration - 1, reason);
+        return resultFor(session, normalizedPlan, { iterations: iteration - 1 });
+      }
       const checkpointName = `PhotoAgent_${session.currentManifest.session_id}_iteration_${iteration}_before`;
       const iterationOperationId = `photoagent-iteration-${session.currentManifest.session_id}-${iteration}`;
       const planRelativePath = `plans/iteration-${iteration}.json`;
@@ -709,6 +747,27 @@ async function executePlan(
       throwIfCancellationRequested(options.signal, "mutation", true);
       const readBack = await options.backend.readCurrentEdit(activePhotoId);
       throwIfCancellationRequested(options.signal, "mutation", true);
+      const readbackIdentityVerified =
+        readBack.photo_id === activePhotoId &&
+        samePhotoIdentity(readBack.identity, copyIdentity) &&
+        samePath(readBack.path, master.path);
+      await session.writeJson(`workflow-copy-iteration-${iteration}-readback.json`, {
+        operation_id: iterationOperationId,
+        expected: copyIdentity,
+        observed: readBack,
+        identity_verified: readbackIdentityVerified,
+      });
+      if (!readbackIdentityVerified) {
+        const reason = "workflow_copy_identity_changed";
+        await session.transition("REVIEW_REQUIRED", {
+          reason,
+          iteration,
+          rollback_checkpoint: checkpointName,
+        });
+        completeIteration("REVIEW_REQUIRED", { error: reason });
+        await finishReport(iteration, reason);
+        return resultFor(session, normalizedPlan, { iterations: iteration });
+      }
       const readbackEvidence = DevelopReadbackEvidenceSchema.parse({
         iteration,
         operation_id: iterationOperationId,

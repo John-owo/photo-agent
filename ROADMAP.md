@@ -1,3 +1,7 @@
+> Status note (2026-09-05): This is planning/historical milestone sequence, not current completion status.
+> Read the current-state source named in AGENTS.md first; verify this checkout/commit and the separate
+> implementation, automated, live, human and merge gates. Earlier "current" statements below are historical.
+
 # Backend-Agnostic AI Photography Workflow Agent
 ## Future Direction & Open-Source Roadmap (v2.1)
 

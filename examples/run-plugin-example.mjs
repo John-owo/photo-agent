@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import process from "node:process";
 import { URL, fileURLToPath, pathToFileURL } from "node:url";
@@ -10,6 +10,7 @@ const { SemanticIntentPlanSchema } = await import("../dist/src/schemas.js");
 const { translateIntent } = await import("../dist/src/translator.js");
 const scratchRoot =
   process.env.PHOTO_AGENT_EXAMPLE_ROOT || join(projectRoot, "..", ".photo-agent-example-runs");
+await mkdir(scratchRoot, { recursive: true });
 const exampleRoot = await mkdtemp(join(scratchRoot, "photo-agent-plugin-example-"));
 
 try {
@@ -26,7 +27,9 @@ try {
   const backend = await loaded.create();
   const rawPath = join(exampleRoot, "example.NEF");
   const outputPath = join(exampleRoot, "example.xmp");
-  await writeFile(rawPath, Buffer.from("synthetic RAW fixture for the plugin example\n"));
+  await writeFile(rawPath, Buffer.from("synthetic RAW fixture for the plugin example\n"), {
+    flag: "wx",
+  });
   const rawBefore = await readFile(rawPath);
   const plan = translateIntent(
     SemanticIntentPlanSchema.parse({
@@ -68,11 +71,12 @@ try {
         render_verified: result.render_verified,
         visual_acceptance: result.visual_acceptance,
         module_url: pathToFileURL(pluginPath).href,
+        evidence_directory: exampleRoot,
       },
       null,
       2,
     )}\n`,
   );
 } finally {
-  await rm(exampleRoot, { recursive: true, force: true });
+  process.stderr.write(`Plugin example artifacts retained at ${exampleRoot}\n`);
 }

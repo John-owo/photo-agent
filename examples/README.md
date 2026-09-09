@@ -23,6 +23,12 @@ npm.cmd run build
 npm.cmd run example:plugin
 ```
 
+The plugin example creates its scratch parent on first use and retains each
+unique run directory, including failures. Its JSON result reports
+`evidence_directory`; it never deletes the generated source or sidecar. Set
+`PHOTO_AGENT_EXAMPLE_ROOT` to choose the parent. In the `D:\photo` workspace,
+use a directory under `D:\photo\_agent_workspace\lightroom\verification`.
+
 These JSON fixtures exercise the deterministic intent-to-parameter and XMP
 fallback paths without shipping a RAW or preview photo in the repository.
 
