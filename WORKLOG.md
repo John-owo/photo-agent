@@ -4014,3 +4014,11 @@ User replied exact text `` `render PASS` `` after the functional XMP/render scop
   and confirmed full remote SHA
   `15be73ad69d010142008aa09756f17f28c2c16c1`, matching the local reviewed
   commit.
+
+## 2026-09-10 - Stable T09 delivery preparation
+
+- User requested latest GitHub delivery with stable changes in main and pending work on a separate branch. Isolated this candidate from origin/codex/roadmap-t09 at 41f2aa7; merged origin/main a04108c. Resolved only WORKLOG append conflict by retaining both histories; retained current main README improvements.
+- Existing T09 live and explicit human render PASS remain scoped to 2026-08-30. No Lightroom operations were performed for this delivery.
+- Updated the smoke example to retain its synthetic assets and evidence, with both README languages, example docs and acceptance procedure aligned. Historical cleanup reports remain historical.
+- Fresh npm.cmd ci --cache D:/photo/_agent_workspace/runtime/npm-cache --prefer-offline passed; npm reported 7 dependency advisories (4 moderate, 3 high), no dependency changes applied. npm.cmd run check, npm.cmd run lint, npm.cmd test (56/56), npm.cmd run build, and npm.cmd run example all passed. Example ACCEPTED, recovery REVIEW_REQUIRED, source preserved, retained under _agent_workspace/lightroom/verification/delivery-20260910.
+- Independent scoped review found documentation mismatch after retention edit; corrected all four current documentation locations. Pending implementation is isolated separately; package alpha label is not promoted to stable v1.0.

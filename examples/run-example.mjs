@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import process from "node:process";
 import { fileURLToPath, URL } from "node:url";
@@ -131,5 +131,5 @@ try {
     )}\n`,
   );
 } finally {
-  await rm(exampleRoot, { recursive: true, force: true });
+  process.stderr.write(`Example artifacts retained at ${exampleRoot}\n`);
 }
