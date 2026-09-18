@@ -6,7 +6,9 @@
 
 `photo-agent` 是一個與後端無關的 AI 攝影工作流程代理，將一組明確配對的 RAW／預覽圖轉成可追蹤的 `analyze → plan → apply → render` 工作階段。它負責工作流程以及安全、恢復邊界；`lightroom-mcp-john` 是用來套用調整並讀回／產生 render 狀態的外部 Lightroom MCP backend，不是定義整個 agent 的核心。現行 `0.3` alpha 在可恢復的 v0.1 流程上，加入有界 closed loop 編輯、shoot indexing、選片與光線 review、代表照片編排，以及受保護的 propagation。
 
-目前版本是 `0.3.0-alpha.0`。v0.2／v0.3 自動化 gate 與一次 Lightroom adapter 唯讀實測已通過；主觀批次選片、代表照片實際編修與 propagation、AI evaluator 和人工判斷的一致性仍待驗收。在你的環境完成這些 gate 前，請使用 mock 或非關鍵 Lightroom 照片。
+目前版本是 `0.3.0-alpha.0`。[T09 驗收紀錄](docs/acceptance/t09-clean-clone-and-live-evidence.md)記載 2026-08-30 的單張 Lightroom 實際編修、讀回與輸出、受控中斷恢復，以及使用者的 `render PASS`。這些證據僅適用於該次環境與案例；主觀批次選片、代表照片編修與批次套用、AI 評估與人工判斷的一致性仍待驗收。
+
+**第一次使用？先看[合成範例與常見問題（英文）](docs/first-run.md)**，不需要 Lightroom、API key 或自己的照片，就能觀察工作流程及中斷恢復。
 
 ## 目錄
 
@@ -84,11 +86,10 @@ backend；Lightroom MCP 可由任何 MCP client 獨立使用，不依賴 PhotoAg
 
 ## 目前狀態：v0.3 alpha（package version 為 `0.3.0-alpha.0`）
 
-> **Alpha／僅供測試。** v0.2 與 v0.3 的自動化 gate 已通過，且一張非關鍵
-> RAW 已完成 Lightroom adapter 的實際讀取、匯出與人工視覺檢查，全程沒有
-> 修改 Develop 設定。主觀批次 culling、實際代表照片編輯／propagation，
-> 以及 evaluator 與人工判斷的一致性仍未驗證。請勿在尚未確認環境適配前，
-> 將此版本直接用於正式照片或無法取代的照片庫。
+> **Alpha／僅供測試。** T09 的單張案例已有實際 Lightroom 編修與人工驗收紀錄，
+> 但不代表所有 v0.3 流程或其他環境都已通過驗證。批次選片、代表照片的批次套用，
+> 以及 AI 評估與人工判斷的一致性仍待驗收。先跑合成範例，確認自己的環境後，
+> 再使用非關鍵照片測試。
 
 ## 快速開始
 

@@ -15,11 +15,14 @@ and read back/render state, not the definition of the whole agent. The current
 lighting review, representative orchestration, and guarded propagation on top
 of the recoverable v0.1 workflow.
 
-The current release is `0.3.0-alpha.0`. Automated v0.2/v0.3 gates and one
-read-only Lightroom adapter check have passed. Subjective batch culling, real
-representative edits and propagation, and evaluator-to-human agreement still
-need acceptance. Use mock runs or non-critical Lightroom photos until your own
-environment passes those gates.
+The current release is `0.3.0-alpha.0`. The [T09 evidence pack](docs/acceptance/t09-clean-clone-and-live-evidence.md)
+records one live Lightroom single-photo edit, read-back/render, controlled
+interruption recovery, and human `render PASS` on 2026-08-30. This evidence is
+scoped to that recorded case. Subjective batch culling, representative edits and
+propagation, and evaluator-to-human agreement still need acceptance.
+
+**New here? [Try the synthetic example](docs/first-run.md)** without Lightroom,
+an API key, or your own photos, then share a reproducible issue or workflow question.
 
 ## Contents
 
@@ -97,12 +100,11 @@ historical workflow guidance; new workflow-engine development belongs here.
 
 ## Status: v0.3 alpha (`0.3.0-alpha.0` package version)
 
-> **Alpha/testing only.** v0.2 and v0.3 automated gates pass, and one
-> non-critical RAW completed a live Lightroom adapter read/render plus human
-> visual check without a develop mutation. Subjective batch culling, live
-> representative edits/propagation, and evaluator-to-human agreement remain
-> unverified. Do not point this release at production photos or an
-> irreplaceable photo library before reviewing it for your setup.
+> **Alpha/testing only.** The recorded T09 single-photo case includes live
+> Lightroom editing and human acceptance; it does not validate all v0.3 workflows
+> or a new installation. Batch culling, live representative propagation, and
+> evaluator-to-human agreement remain unverified. Start with the synthetic mock
+> example, then a non-critical test photo after checking your own environment.
 
 ## Quick start
 
