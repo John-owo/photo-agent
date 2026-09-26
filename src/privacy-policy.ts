@@ -1,6 +1,3 @@
-import { readdir, unlink } from "node:fs/promises";
-import { extname, join } from "node:path";
-
 import {
   PRIVACY_POLICY_VERSION,
   PrivacyPolicySchema,
@@ -20,6 +17,16 @@ export const DEFAULT_PRIVACY_POLICY = PrivacyPolicySchema.parse({
   preview_retention: "session",
 });
 
+const EPHEMERAL_RETENTION_ERROR =
+  "Ephemeral preview retention is unsupported: PhotoAgent preserves image artifacts. " +
+  'Start a new workflow with preview_retention: "session" explicitly; memory-only previews are not implemented.';
+
+function assertSupportedPreviewRetention(policy: PrivacyPolicy): void {
+  if (policy.preview_retention === "ephemeral") {
+    throw new Error(EPHEMERAL_RETENTION_ERROR);
+  }
+}
+
 /** Preserve the existing flag while allowing new callers to provide all boundaries explicitly. */
 export function resolvePrivacyPolicy(
   policy: PrivacyPolicy | undefined,
@@ -34,6 +41,7 @@ export function resolvePrivacyPolicy(
     });
   }
   const parsed = PrivacyPolicySchema.parse(policy);
+  assertSupportedPreviewRetention(parsed);
   if (
     legacyAllowCloudPreview !== undefined &&
     parsed.allow_cloud_preview !== legacyAllowCloudPreview
@@ -48,9 +56,11 @@ export function applyLegacyCloudPreviewConsent(
   policy: PrivacyPolicy,
   allowCloudPreview: boolean | undefined,
 ): PrivacyPolicy {
-  if (!allowCloudPreview) return PrivacyPolicySchema.parse(policy);
+  const parsed = PrivacyPolicySchema.parse(policy);
+  assertSupportedPreviewRetention(parsed);
+  if (!allowCloudPreview) return parsed;
   return PrivacyPolicySchema.parse({
-    ...policy,
+    ...parsed,
     local_only: false,
     allow_cloud_preview: true,
   });
@@ -96,6 +106,7 @@ export function assertPrivacyPolicyAllowsCloudPreview(
   required: boolean,
   subject: "provider" | "evaluator" | "shoot analyzer",
 ): void {
+  assertSupportedPreviewRetention(policy);
   if (!required || policy.allow_cloud_preview) return;
   if (subject === "provider") {
     throw new Error("This provider requires --allow-cloud-preview; no image was sent");
@@ -143,34 +154,8 @@ export function assertPrivacyPolicyAllowsProvider(
   }
 }
 
-async function removePreviewFiles(root: string): Promise<void> {
-  let entries;
-  try {
-    entries = await readdir(root, { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw error;
-  }
-  for (const entry of entries) {
-    const path = join(root, entry.name);
-    if (entry.isDirectory() && !entry.isSymbolicLink()) {
-      await removePreviewFiles(path);
-      continue;
-    }
-    if (
-      entry.isFile() &&
-      [".jpg", ".jpeg", ".png", ".webp"].includes(extname(entry.name).toLowerCase())
-    ) {
-      await unlink(path);
-    }
-  }
-}
-
-/** Remove generated session previews for ephemeral retention; source paths are never traversed. */
+/** @deprecated Preview deletion is unsupported; retained for an actionable legacy API error. */
 export async function removeEphemeralPreviews(sessionDir: string): Promise<void> {
-  await Promise.all(
-    ["inputs", "renders", "evaluations"].map((directory) =>
-      removePreviewFiles(join(sessionDir, directory)),
-    ),
-  );
+  void sessionDir;
+  throw new Error(EPHEMERAL_RETENTION_ERROR);
 }

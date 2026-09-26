@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import sharp from "sharp";
@@ -50,11 +50,13 @@ export async function createSanitizedPreview(
   destinationPath: string,
 ): Promise<void> {
   await mkdir(dirname(destinationPath), { recursive: true });
-  await sharp(sourcePath)
+  const preview = await sharp(sourcePath)
     .rotate()
     .resize({ width: 2048, height: 2048, fit: "inside", withoutEnlargement: true })
     .jpeg({ quality: 85, mozjpeg: true })
-    .toFile(destinationPath);
+    .toBuffer();
+  // Exclusive creation also protects an existing destination when writers race.
+  await writeFile(destinationPath, preview, { flag: "wx" });
 }
 
 /**
@@ -106,7 +108,7 @@ export async function materializePreviewArtifact(
 
 export async function writeFixtureJpeg(destinationPath: string): Promise<void> {
   await mkdir(dirname(destinationPath), { recursive: true });
-  await sharp({
+  const fixture = await sharp({
     create: {
       width: 1,
       height: 1,
@@ -115,5 +117,6 @@ export async function writeFixtureJpeg(destinationPath: string): Promise<void> {
     },
   })
     .jpeg({ quality: 85 })
-    .toFile(destinationPath);
+    .toBuffer();
+  await writeFile(destinationPath, fixture, { flag: "wx" });
 }

@@ -17,7 +17,6 @@ import {
   assertPrivacyPolicyAllowsCloudPreview,
   assertPrivacyPolicyAllowsProvider,
   recordPreviewCloudTransfer,
-  removeEphemeralPreviews,
   resolvePrivacyPolicy,
   sessionPrivacyPolicy,
 } from "./privacy-policy.js";
@@ -1086,9 +1085,6 @@ export async function runSinglePhoto(options: WorkflowOptions): Promise<Workflow
         throw new WorkflowCancellationError("read_only", false, options.signal.reason);
       }
       if (!(error instanceof CodexInputRequiredError)) throw error;
-      if (privacyPolicy.preview_retention === "ephemeral") {
-        throw new Error("Ephemeral preview retention cannot create a Codex handoff");
-      }
       const intentFilePath = join(session.dir, "codex-intent.json");
       const handoffPath = join(session.dir, "codex-analysis-request.md");
       await session.updateManifest({
@@ -1150,10 +1146,6 @@ export async function runSinglePhoto(options: WorkflowOptions): Promise<Workflow
       await session.transition("FAILED", { error: message });
     }
     return resultFor(session, normalizedPlan);
-  } finally {
-    if (privacyPolicy.preview_retention === "ephemeral") {
-      await removeEphemeralPreviews(session.dir);
-    }
   }
 }
 
@@ -1227,10 +1219,6 @@ export async function resumeCodexSession(options: ResumeCodexOptions): Promise<W
       await session.transition("FAILED", { error: message });
     }
     return resultFor(session, normalizedPlan);
-  } finally {
-    if (privacyPolicy.preview_retention === "ephemeral") {
-      await removeEphemeralPreviews(session.dir);
-    }
   }
 }
 

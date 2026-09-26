@@ -147,30 +147,34 @@ describe("T55 privacy policy runtime", () => {
     expect(result.manifest).not.toHaveProperty("credentials");
   });
 
-  it("removes generated previews after an ephemeral local-only run", async () => {
+  it("refuses ephemeral retention before ingest, session creation, or provider/backend calls", async () => {
     const root = await mkdtemp(join(tmpdir(), "photo-agent-t55-ephemeral-"));
-    const raw = join(root, "sample.NEF");
-    const preview = join(root, "sample.JPG");
-    await writeFile(raw, "synthetic raw fixture", "utf8");
-    await writeFixtureJpeg(preview);
-    const result = await runSinglePhoto({
-      rawPath: raw,
-      previewPath: preview,
-      provider: new MockProvider(),
-      backend: new MockBackend(raw),
-      sessionRoot: join(root, "sessions"),
-      apply: false,
-      privacyPolicy: PrivacyPolicySchema.parse({
-        ...DEFAULT_PRIVACY_POLICY,
-        preview_retention: "ephemeral",
+    const raw = join(root, "not-read.NEF");
+    const backend = new MockBackend(raw);
+    let providerCalls = 0;
+    await expect(
+      runSinglePhoto({
+        rawPath: raw,
+        previewPath: join(root, "not-read.JPG"),
+        provider: {
+          requiresCloudPreview: false,
+          analyze: async () => {
+            providerCalls += 1;
+            throw new Error("provider must not run");
+          },
+        },
+        backend,
+        sessionRoot: join(root, "sessions"),
+        apply: true,
+        privacyPolicy: PrivacyPolicySchema.parse({
+          ...DEFAULT_PRIVACY_POLICY,
+          preview_retention: "ephemeral",
+        }),
       }),
-    });
-    expect(result.manifest.privacy).toMatchObject({
-      preview_sanitized: true,
-      preview_cloud_transfer: false,
-      policy: { preview_retention: "ephemeral", local_only: true },
-    });
-    await expect(access(join(result.sessionDir, "inputs", "analysis.jpg"))).rejects.toMatchObject({
+    ).rejects.toThrow('Start a new workflow with preview_retention: "session" explicitly');
+    expect(providerCalls).toBe(0);
+    expect(backend.calls).toEqual([]);
+    await expect(access(join(root, "sessions"))).rejects.toMatchObject({
       code: "ENOENT",
     });
   });

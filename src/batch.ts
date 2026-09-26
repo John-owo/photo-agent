@@ -16,8 +16,6 @@ import { PARAMETER_REGISTRY_VERSION, selectPropagatableOperations } from "./para
 import {
   applyLegacyCloudPreviewConsent,
   assertPrivacyPolicyAllowsCloudPreview,
-  DEFAULT_PRIVACY_POLICY,
-  removeEphemeralPreviews,
   resolvePrivacyPolicy,
 } from "./privacy-policy.js";
 import { readShootMetadata } from "./shoot-metadata.js";
@@ -496,6 +494,7 @@ export async function createShootSession(options: {
   highValueAssetIds?: string[];
   privacyPolicy?: PrivacyPolicy;
 }): Promise<{ sessionDir: string; plan: ShootPlan }> {
+  const privacyPolicy = resolvePrivacyPolicy(options.privacyPolicy, undefined);
   const assets = applyHighValueConfiguration(
     await indexShoot(options.shootRoot),
     options.highValueAssetIds ?? [],
@@ -510,7 +509,7 @@ export async function createShootSession(options: {
     created_at: new Date().toISOString(),
     mode: "dry_run",
     assets,
-    privacy_policy: options.privacyPolicy ?? DEFAULT_PRIVACY_POLICY,
+    privacy_policy: privacyPolicy,
   });
   await writeJsonAtomic(join(sessionDir, "shoot-plan.json"), plan);
   return { sessionDir, plan };
@@ -562,7 +561,8 @@ export async function resumeShootDryRun(options: {
         const analyzer = asset.preview_path && !previewHasErrors ? options.analyzer : conservative;
         let analysisAsset = asset;
         if (asset.preview_path && analyzer.requiresCloudPreview) {
-          const sanitizedPath = join(sessionDir, "inputs", `${asset.id}.jpg`);
+          // A cancelled attempt may already own a preview; retain it on resume.
+          const sanitizedPath = join(sessionDir, "inputs", `${asset.id}-${randomUUID()}.jpg`);
           await createSanitizedPreview(asset.preview_path, sanitizedPath);
           throwIfCancellationRequested(options.signal, "read_only");
           analysisAsset = { ...asset, preview_path: sanitizedPath };
@@ -633,10 +633,6 @@ export async function resumeShootDryRun(options: {
       cancellation.message,
     );
     return { sessionDir, manifest };
-  } finally {
-    if (privacyPolicy.preview_retention === "ephemeral") {
-      await removeEphemeralPreviews(sessionDir);
-    }
   }
 }
 
