@@ -561,7 +561,8 @@ export async function resumeShootDryRun(options: {
         const analyzer = asset.preview_path && !previewHasErrors ? options.analyzer : conservative;
         let analysisAsset = asset;
         if (asset.preview_path && analyzer.requiresCloudPreview) {
-          const sanitizedPath = join(sessionDir, "inputs", `${asset.id}.jpg`);
+          // A cancelled attempt may already own a preview; retain it on resume.
+          const sanitizedPath = join(sessionDir, "inputs", `${asset.id}-${randomUUID()}.jpg`);
           await createSanitizedPreview(asset.preview_path, sanitizedPath);
           throwIfCancellationRequested(options.signal, "read_only");
           analysisAsset = { ...asset, preview_path: sanitizedPath };

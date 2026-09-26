@@ -210,7 +210,9 @@ describe("v0.3 shoot workflow", () => {
       allowCloudPreview: true,
     });
     expect(result.manifest.summary.analyzed_jobs).toBe(1);
-    expect(receivedPath).toMatch(/inputs[\\/][a-f0-9]{64}\.jpg$/);
+    expect(receivedPath).toMatch(
+      /inputs[\\/][a-f0-9]{64}-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.jpg$/,
+    );
     expect((await readFile(receivedPath)).length).toBeGreaterThan(0);
   });
 
