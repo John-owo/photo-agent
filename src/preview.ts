@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import sharp from "sharp";
@@ -79,15 +79,28 @@ export async function materializePreviewArtifact(
   if (!isInside(renderRoot, sourcePath)) {
     throw new Error("Backend preview must remain inside the session renders directory");
   }
+  const realSessionDir = await realpath(sessionDir);
+  const realRenderRoot = await realpath(renderRoot);
+  const realSourcePath = await realpath(sourcePath);
+  if (!isInside(realSessionDir, realRenderRoot) || !isInside(realRenderRoot, realSourcePath)) {
+    throw new Error("Resolved backend preview must remain inside the session renders directory");
+  }
   const destinationPath = join(renderRoot, `iteration-${iteration}`, "preview.jpg");
+  const outputDirectory = join(realRenderRoot, `iteration-${iteration}`);
+  await mkdir(outputDirectory, { recursive: true });
+  const realOutputDirectory = await realpath(outputDirectory);
+  if (!isInside(realRenderRoot, realOutputDirectory)) {
+    throw new Error("Resolved preview output must remain inside the session renders directory");
+  }
+  const outputPath = join(realOutputDirectory, "preview.jpg");
   try {
-    await access(destinationPath);
+    await access(outputPath);
     throw new Error(`Deterministic preview already exists: ${destinationPath}`);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  await createSanitizedPreview(sourcePath, destinationPath);
-  const metadata = await sharp(destinationPath).metadata();
+  await createSanitizedPreview(realSourcePath, outputPath);
+  const metadata = await sharp(outputPath).metadata();
   if (!metadata.width || !metadata.height) {
     throw new Error(`Sanitized preview has no dimensions: ${destinationPath}`);
   }
@@ -97,7 +110,7 @@ export async function materializePreviewArtifact(
     iteration,
     path: sessionRelativePath(sessionDir, destinationPath),
     source_path: sessionRelativePath(sessionDir, sourcePath),
-    sha256: await sha256File(destinationPath),
+    sha256: await sha256File(outputPath),
     mime_type: "image/jpeg",
     width: metadata.width,
     height: metadata.height,
