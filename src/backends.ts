@@ -1,5 +1,5 @@
 import { mkdir, readdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -18,12 +18,15 @@ import {
   WORKFLOW_COPY_RECONCILIATION_OPERATION,
   type BackendHandshakeRequirements,
 } from "./backend-handshake.js";
+import { MASK_READ_OPERATION, MASK_WRITE_OPERATION } from "./masks.js";
 import { writeFixtureJpeg } from "./preview.js";
 import type {
   BackendAdapter,
   BackendCapabilityManifest,
   BackendPhotoState,
   CheckpointResult,
+  LightroomMaskCorrection,
+  MaskReadback,
   RenderResult,
   WorkflowCopyResult,
 } from "./types.js";
@@ -51,6 +54,14 @@ export const LIGHTROOM_MCP_SERVER_NAME = "lightroom-mcp-server";
 export const OPERATION_SEMANTICS_META_KEY =
   "io.github.john-owo.lightroom-mcp/operation-semantics";
 
+export const RESOLVE_PHOTO_ID_OPERATION = "resolve_photo_id" as const;
+export const MASK_READBACK_META_KEY ="io.github.john-owo.lightroom-mcp/mask-readback";
+
+function toolAcceptsMaskCorrections(inputSchema: unknown): boolean {
+  const settings = asRecord(asRecord(asRecord(inputSchema).properties).settings);
+  return "MaskGroupBasedCorrections" in asRecord(settings.properties);
+}
+
 export const LIGHTROOM_TRUST_BOUNDARY = {
   transport: "localhost stdio -> Lightroom MCP local TCP bridge",
   authentication: "local MCP/plugin token managed by backend",
@@ -70,6 +81,7 @@ const LIGHTROOM_TOOL_OPERATIONS = {
   export_photos: "render_preview",
   create_virtual_copy: "create_workflow_copy",
   reconcile_virtual_copy: WORKFLOW_COPY_RECONCILIATION_OPERATION,
+  search_photos: RESOLVE_PHOTO_ID_OPERATION,
 } as const;
 
 const LIGHTROOM_HANDSHAKE_REQUIREMENTS: BackendHandshakeRequirements = {
@@ -187,6 +199,22 @@ export const MOCK_CAPABILITIES = BackendCapabilityManifestSchema.parse({
   operations: LIGHTROOM_CAPABILITIES.operations,
 });
 
+function mockManifestWithMasks(support: "read_write" | "write_only"): BackendCapabilityManifest {
+  const extra =
+    support === "read_write" ? [MASK_WRITE_OPERATION, MASK_READ_OPERATION] : [MASK_WRITE_OPERATION];
+  return BackendCapabilityManifestSchema.parse({
+    ...MOCK_CAPABILITIES,
+    capabilities: [...MOCK_CAPABILITIES.capabilities, ...extra],
+    operations: {
+      ...MOCK_CAPABILITIES.operations,
+      [MASK_WRITE_OPERATION]: MOCK_CAPABILITIES.operations.apply_global_adjustment,
+      ...(support === "read_write"
+        ? { [MASK_READ_OPERATION]: MOCK_CAPABILITIES.operations.read_current_edit }
+        : {}),
+    },
+  });
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
@@ -288,6 +316,12 @@ export class MockBackend implements BackendAdapter {
     Saturation: 0,
   };
 
+  /** Mask sets per photo id; the Master key is "master". */
+  private readonly masks = new Map<string, LightroomMaskCorrection[]>();
+  readonly maskWrites: { photoId: string; corrections: LightroomMaskCorrection[] }[] = [];
+  private readonly failMaskWrite: boolean;
+  private readonly readbackAbsentWhenEmpty: boolean;
+
   constructor(private readonly photoPath: string, manifestOrOptions?: unknown) {
     const options = asRecord(manifestOrOptions);
     const requestedIdentity = options.sourceIdentity;
@@ -295,10 +329,55 @@ export class MockBackend implements BackendAdapter {
       requestedIdentity === "virtual_copy" || requestedIdentity === "uncertain"
         ? requestedIdentity
         : "master";
-    this.advertisedManifest =
-      "manifest" in options || "sourceIdentity" in options
-        ? (options.manifest ?? MOCK_CAPABILITIES)
-        : (manifestOrOptions ?? MOCK_CAPABILITIES);
+    const optionMode =
+      "manifest" in options ||
+      "sourceIdentity" in options ||
+      "maskSupport" in options ||
+      "existingMasks" in options;
+    const maskSupport = options.maskSupport;
+    this.advertisedManifest = optionMode
+      ? (options.manifest ??
+        (maskSupport === "read_write" || maskSupport === "write_only"
+          ? mockManifestWithMasks(maskSupport)
+          : MOCK_CAPABILITIES))
+      : (manifestOrOptions ?? MOCK_CAPABILITIES);
+    this.failMaskWrite = options.failMaskWrite === true;
+    this.readbackAbsentWhenEmpty = options.maskReadbackAbsentWhenEmpty === true;
+    if (Array.isArray(options.existingMasks)) {
+      this.masks.set("master", structuredClone(options.existingMasks) as LightroomMaskCorrection[]);
+    }
+  }
+
+  private maskKey(photoId: string): string {
+    return this.copies.has(photoId) ? photoId : "master";
+  }
+
+  /** Test helper: the mask set Lightroom would hold for this photo. */
+  masksFor(photoId: string): LightroomMaskCorrection[] {
+    return structuredClone(this.masks.get(this.maskKey(photoId)) ?? []);
+  }
+
+  async applyMaskCorrections(
+    photoId: string,
+    corrections: LightroomMaskCorrection[],
+  ): Promise<unknown> {
+    this.requireOperation(MASK_WRITE_OPERATION);
+    this.calls.push(MASK_WRITE_OPERATION);
+    this.operationTargets.push(photoId);
+    if (this.failMaskWrite) throw new Error("Mock mask write response lost");
+    this.masks.set(this.maskKey(photoId), structuredClone(corrections));
+    this.maskWrites.push({ photoId, corrections: structuredClone(corrections) });
+    return { applied: corrections.length };
+  }
+
+  async readMaskCorrections(photoId: string): Promise<MaskReadback> {
+    this.requireOperation(MASK_READ_OPERATION);
+    this.calls.push(MASK_READ_OPERATION);
+    const corrections = this.masksFor(photoId);
+    return {
+      status: corrections.length === 0 && this.readbackAbsentWhenEmpty ? "absent" : "ok",
+      corrections,
+    };
   }
 
   get capabilities(): BackendCapabilityManifest {
@@ -458,6 +537,8 @@ export class MockBackend implements BackendAdapter {
         settings: { ...this.masterSettings },
       });
       this.copyByOperation.set(operationId, copyId);
+      // A Virtual Copy inherits the Master's masks, exactly like Lightroom.
+      this.masks.set(copyId, structuredClone(this.masks.get("master") ?? []));
     }
     return this.buildWorkflowCopyResult(
       operationId,
@@ -582,6 +663,22 @@ export class LightroomMcpAdapter implements BackendAdapter {
       }
       operations[operationName] = semantics.data;
       capabilities.push(operationName);
+    }
+    // Geometric masks ride on set_develop_settings: the tool advertises them by
+    // accepting MaskGroupBasedCorrections in its input schema (lightroom-mcp
+    // feat/set-develop-masks). Readback is advertised separately via _meta.
+    const developTool = tools.get("set_develop_settings");
+    const developSemantics = operations.apply_global_adjustment;
+    if (developTool && developSemantics && toolAcceptsMaskCorrections(developTool.inputSchema)) {
+      operations[MASK_WRITE_OPERATION] = developSemantics;
+      capabilities.push(MASK_WRITE_OPERATION);
+      const metadataTool = tools.get("get_photo_metadata");
+      const readSemantics = operations.read_current_edit;
+      const readback = asRecord(asRecord(metadataTool?._meta)[MASK_READBACK_META_KEY]);
+      if (metadataTool && readSemantics && readback.version === 1) {
+        operations[MASK_READ_OPERATION] = readSemantics;
+        capabilities.push(MASK_READ_OPERATION);
+      }
     }
     const selectedTool = tools.get("get_selected_photos");
     if (selectedTool) {
@@ -824,6 +921,77 @@ export class LightroomMcpAdapter implements BackendAdapter {
   ): Promise<unknown> {
     this.requireOperation("apply_global_adjustment");
     return this.call("set_develop_settings", { photo_id: photoId, settings });
+  }
+
+  /**
+   * Resolve a RAW path to its single Lightroom Master catalog id. Lightroom
+   * MCP mutations accept catalog ids only, so unattended runs need this.
+   * Returns undefined when the backend cannot search; throws when the match
+   * is missing or ambiguous.
+   */
+  async resolvePhotoId(rawPath: string): Promise<string | undefined> {
+    const manifest = this.requireHandshake();
+    if (!manifest.capabilities.includes(RESOLVE_PHOTO_ID_OPERATION)) return undefined;
+    await this.ensurePluginReady();
+    const name = basename(rawPath);
+    const raw = asRecord(
+      await this.call<unknown>("search_photos", { filename: name, limit: 200, offset: 0 }),
+    );
+    const photos = Array.isArray(raw.photos) ? raw.photos : [];
+    const target = resolve(rawPath).toLowerCase();
+    const matches = photos
+      .map((photo) => asRecord(photo))
+      .filter(
+        (photo) =>
+          typeof photo.path === "string" &&
+          resolve(photo.path).toLowerCase() === target &&
+          photo.is_virtual_copy !== true,
+      );
+    if (matches.length !== 1) {
+      throw new Error(
+        `Lightroom catalog has ${matches.length} Master photos at ${rawPath}; refusing to guess`,
+      );
+    }
+    const id = matches[0]!.id ?? matches[0]!.catalog_id;
+    if (typeof id !== "string" && typeof id !== "number") {
+      throw new Error(`Lightroom search result for ${rawPath} has no catalog id`);
+    }
+    return String(id);
+  }
+
+  async applyMaskCorrections(
+    photoId: string,
+    corrections: LightroomMaskCorrection[],
+  ): Promise<unknown> {
+    this.requireOperation(MASK_WRITE_OPERATION);
+    await this.ensurePluginReady();
+    return this.call("set_develop_settings", {
+      photo_id: photoId,
+      settings: { MaskGroupBasedCorrections: corrections },
+    });
+  }
+
+  async readMaskCorrections(photoId: string): Promise<MaskReadback> {
+    this.requireOperation(MASK_READ_OPERATION);
+    await this.ensurePluginReady();
+    const raw = asRecord(await this.call<unknown>("get_photo_metadata", { photo_id: photoId }));
+    const nested = asRecord(raw.developSettings ?? raw.develop_settings);
+    const status = nested.maskReadback;
+    if (status === "absent") return { status: "absent", corrections: [] };
+    if (status !== undefined && status !== "ok") {
+      throw new Error(`Lightroom MCP could not serialize this photo's masks (${String(status)})`);
+    }
+    const value = nested.MaskGroupBasedCorrections;
+    if (!Array.isArray(value)) {
+      throw new Error("Lightroom MCP did not return MaskGroupBasedCorrections; mask readback unavailable");
+    }
+    const corrections = value.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        throw new Error("Lightroom MCP returned a malformed mask correction");
+      }
+      return item as LightroomMaskCorrection;
+    });
+    return { status: "ok", corrections };
   }
 
   async renderPreview(photoId: string, destination: string): Promise<RenderResult> {

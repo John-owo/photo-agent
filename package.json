@@ -20,6 +20,7 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "~1.7.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "openai": "^6.30.0",
     "sharp": "^0.35.4",

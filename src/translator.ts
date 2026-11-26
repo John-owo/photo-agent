@@ -1,3 +1,4 @@
+import { translateMasks } from "./masks.js";
 import { NormalizedEditPlanSchema } from "./schemas.js";
 import type { NormalizedEditPlan, SemanticIntentPlan } from "./types.js";
 
@@ -58,10 +59,17 @@ export function translateIntent(intent: SemanticIntentPlan): NormalizedEditPlan 
     })
     .filter((operation): operation is NonNullable<typeof operation> => operation !== null);
 
-  if (operations.length === 0) {
+  const maskTranslation = translateMasks(intent.masks);
+  warnings.push(...maskTranslation.warnings);
+  if (operations.length === 0 && maskTranslation.masks.length === 0) {
     warnings.push("No executable adjustment met the confidence threshold; manual review required");
   }
-  return NormalizedEditPlanSchema.parse({ schema_version: "0.1.0", operations, warnings });
+  return NormalizedEditPlanSchema.parse({
+    schema_version: "0.1.0",
+    operations,
+    warnings,
+    ...(maskTranslation.masks.length > 0 ? { masks: maskTranslation.masks } : {}),
+  });
 }
 
 const LIGHTROOM_PARAMETER: Record<string, string> = {

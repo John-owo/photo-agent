@@ -45,12 +45,156 @@ export const SemanticAdjustmentSchema = z.object({
   confidence: z.number().min(0).max(1),
 });
 
-export const SemanticIntentPlanSchema = z.object({
+/**
+ * Local (masked) adjustments. Lightroom has no local Vibrance, so it is not
+ * offered. Values stay semantic (direction + strength); the deterministic
+ * translator owns every Lightroom number.
+ */
+export const MASK_PARAMETERS = [
+  "exposure",
+  "temperature",
+  "tint",
+  "contrast",
+  "highlights",
+  "shadows",
+  "whites",
+  "blacks",
+  "texture",
+  "clarity",
+  "dehaze",
+  "saturation",
+] as const;
+
+export const MAX_MASKS_PER_PHOTO = 3;
+export const MAX_ADJUSTMENTS_PER_MASK = 4;
+export const MASK_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+const unitCoordinate = z.number().min(0).max(1);
+const extendedCoordinate = z.number().min(-0.5).max(1.5);
+
+/**
+ * Radial (Lightroom `Mask/CircularGradient`) region. Coordinates are fractions
+ * of the full preview frame: x grows to the right, y grows downward. `invert`
+ * false means the adjustment applies inside the ellipse.
+ */
+export const RadialMaskRegionSchema = z
+  .object({
+    type: z.literal("radial"),
+    center_x: unitCoordinate,
+    center_y: unitCoordinate,
+    width: z.number().min(0.05).max(1.5),
+    height: z.number().min(0.05).max(1.5),
+    angle_deg: z.number().min(-90).max(90),
+    feather: z.number().min(0).max(100),
+    invert: z.boolean(),
+  })
+  .strict();
+
+/**
+ * Linear (Lightroom `Mask/Gradient`) region. The effect is 100% at `full_*`
+ * and fades to 0% at `zero_*`; points may sit slightly outside the frame.
+ */
+export const LinearMaskRegionSchema = z
+  .object({
+    type: z.literal("linear"),
+    full_x: extendedCoordinate,
+    full_y: extendedCoordinate,
+    zero_x: extendedCoordinate,
+    zero_y: extendedCoordinate,
+  })
+  .strict();
+
+export const MaskRegionSchema = z.discriminatedUnion("type", [
+  RadialMaskRegionSchema,
+  LinearMaskRegionSchema,
+]);
+
+export const SemanticMaskAdjustmentSchema = z
+  .object({
+    parameter: z.enum(MASK_PARAMETERS),
+    direction: z.enum(["increase", "decrease"]),
+    strength,
+  })
+  .strict();
+
+export const SemanticMaskIntentSchema = z
+  .object({
+    id: z.string().regex(MASK_ID_PATTERN),
+    target: z.string().min(1).max(200),
+    region: MaskRegionSchema,
+    adjustments: z.array(SemanticMaskAdjustmentSchema).min(1).max(MAX_ADJUSTMENTS_PER_MASK),
+    placement_certainty: z.enum(["clear", "subjective"]),
+    rationale: z.string().min(1).max(500),
+    confidence: z.number().min(0).max(1),
+  })
+  .strict()
+  .superRefine((mask, context) => {
+    const seen = new Set<string>();
+    for (const adjustment of mask.adjustments) {
+      if (seen.has(adjustment.parameter)) {
+        context.addIssue({
+          code: "custom",
+          path: ["adjustments"],
+          message: `Duplicate mask parameter: ${adjustment.parameter}`,
+        });
+      }
+      seen.add(adjustment.parameter);
+    }
+    if (mask.region.type === "linear") {
+      const distance = Math.hypot(
+        mask.region.full_x - mask.region.zero_x,
+        mask.region.full_y - mask.region.zero_y,
+      );
+      if (distance < 0.02) {
+        context.addIssue({
+          code: "custom",
+          path: ["region"],
+          message: "Linear mask full and zero points must be at least 0.02 apart",
+        });
+      }
+    }
+  });
+
+function refineUniqueMaskIds(
+  masks: readonly { id: string }[] | undefined,
+  context: z.RefinementCtx,
+): void {
+  const seen = new Set<string>();
+  for (const mask of masks ?? []) {
+    if (seen.has(mask.id)) {
+      context.addIssue({ code: "custom", path: ["masks"], message: `Duplicate mask id: ${mask.id}` });
+    }
+    seen.add(mask.id);
+  }
+}
+
+const semanticIntentShape = {
   schema_version: z.literal(SCHEMA_VERSION),
   creative_goal: z.string().min(1).max(500),
   adjustments: z.array(SemanticAdjustmentSchema).max(32),
   overall_confidence: z.number().min(0).max(1),
-});
+};
+
+/**
+ * `masks` is optional so intent files written before mask support stay valid.
+ */
+export const SemanticIntentPlanSchema = z
+  .object({
+    ...semanticIntentShape,
+    masks: z.array(SemanticMaskIntentSchema).max(MAX_MASKS_PER_PHOTO).optional(),
+  })
+  .superRefine((plan, context) => refineUniqueMaskIds(plan.masks, context));
+
+/**
+ * Structured-output variant for visual-model providers: every field is
+ * required (an empty `masks` array means "no local adjustment").
+ */
+export const ProviderSemanticIntentPlanSchema = z
+  .object({
+    ...semanticIntentShape,
+    masks: z.array(SemanticMaskIntentSchema).max(MAX_MASKS_PER_PHOTO),
+  })
+  .superRefine((plan, context) => refineUniqueMaskIds(plan.masks, context));
 
 export const NormalizedOperationSchema = z.object({
   parameter: z.enum(NORMALIZED_PARAMETERS),
@@ -60,11 +204,57 @@ export const NormalizedOperationSchema = z.object({
   rationale: z.string().min(1).max(500),
 });
 
+export const LOCAL_LIGHTROOM_KEYS = [
+  "LocalExposure2012",
+  "LocalTemperature",
+  "LocalTint",
+  "LocalContrast2012",
+  "LocalHighlights2012",
+  "LocalShadows2012",
+  "LocalWhites2012",
+  "LocalBlacks2012",
+  "LocalTexture",
+  "LocalClarity2012",
+  "LocalDehaze",
+  "LocalSaturation",
+] as const;
+
+export const NormalizedMaskAdjustmentSchema = z
+  .object({
+    parameter: z.enum(MASK_PARAMETERS),
+    lightroom_key: z.enum(LOCAL_LIGHTROOM_KEYS),
+    /** Lightroom local value (-1..1). For exposure this is EV / 4. */
+    value: z.number().min(-1).max(1),
+  })
+  .strict();
+
+export const NormalizedMaskSchema = z
+  .object({
+    id: z.string().regex(MASK_ID_PATTERN),
+    target: z.string().min(1).max(200),
+    region: MaskRegionSchema,
+    adjustments: z.array(NormalizedMaskAdjustmentSchema).min(1).max(MAX_ADJUSTMENTS_PER_MASK),
+    placement_certainty: z.enum(["clear", "subjective"]),
+    confidence: z.number().min(0).max(1),
+    rationale: z.string().min(1).max(500),
+  })
+  .strict();
+
 export const NormalizedEditPlanSchema = z.object({
   schema_version: z.literal(SCHEMA_VERSION),
   operations: z.array(NormalizedOperationSchema).max(NORMALIZED_PARAMETERS.length),
   warnings: z.array(z.string().min(1).max(500)),
+  masks: z.array(NormalizedMaskSchema).max(MAX_MASKS_PER_PHOTO).optional(),
 });
+
+/** Evaluator verdict on one applied mask. */
+export const MaskFeedbackSchema = z
+  .object({
+    mask_id: z.string().regex(MASK_ID_PATTERN),
+    assessment: z.enum(["ok", "too_strong", "misplaced", "unnecessary"]),
+    note: z.string().min(1).max(500),
+  })
+  .strict();
 
 export const EvaluationResultSchema = z
   .object({
@@ -74,6 +264,7 @@ export const EvaluationResultSchema = z
     rationale: z.string().min(1).max(2000),
     issues: z.array(z.string().min(1).max(500)),
     refinement_plan: NormalizedEditPlanSchema.optional(),
+    mask_feedback: z.array(MaskFeedbackSchema).max(MAX_MASKS_PER_PHOTO).optional(),
     usage: z
       .object({
         evaluator_calls: z.number().int().nonnegative().default(1),
@@ -92,7 +283,39 @@ export const EvaluationResultSchema = z
         message: "refine verdict requires a refinement_plan",
       });
     }
+    if (value.refinement_plan?.masks && value.refinement_plan.masks.length > 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["refinement_plan", "masks"],
+        message: "Evaluators adjust masks only through mask_feedback, never new mask geometry",
+      });
+    }
+    if (
+      value.verdict === "accept" &&
+      value.mask_feedback?.some((feedback) => feedback.assessment !== "ok")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["mask_feedback"],
+        message: "accept verdict requires every mask_feedback assessment to be ok",
+      });
+    }
   });
+
+/** Raw Lightroom `MaskGroupBasedCorrections` entry (kept opaque on purpose). */
+export const LightroomMaskCorrectionSchema = z.record(z.string(), z.unknown());
+
+export const MaskDecisionSchema = z
+  .object({
+    requested_mask_ids: z.array(z.string()),
+    applied_mask_ids: z.array(z.string()),
+    pending_review_mask_ids: z.array(z.string()),
+    mode: z.enum(["none", "merge_readback", "replace_unverified", "degraded_to_global"]),
+    backend_support: z.enum(["read_write", "write_only", "unsupported"]),
+    reason: z.string().min(1).optional(),
+    preserved_foreign_corrections: z.number().int().nonnegative(),
+  })
+  .strict();
 
 export const SourceAssetPairSchema = z.object({
   raw_path: z.string().min(1),
@@ -118,6 +341,48 @@ export const BackendPhotoStateSchema = z.object({
   develop_settings: z.record(z.string(), z.union([z.number(), z.string(), z.boolean()])),
   identity: BackendPhotoIdentitySchema.optional(),
 });
+
+/** Durable record written before every mask write; enables recover and restore-masks. */
+export const MaskWriteIntentSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    operation_id: z.string().min(1),
+    kind: z.literal("mask_write"),
+    phase: z.literal("started"),
+    iteration: z.number().int().positive(),
+    target: BackendPhotoIdentitySchema,
+    mode: z.enum(["merge_readback", "replace_unverified"]),
+    owner_prefix: z.string().min(1),
+    /** Full mask set on the target before this write, when known. */
+    before: z.array(LightroomMaskCorrectionSchema).nullable(),
+    before_status: z.enum(["read_back", "written_by_this_session", "unverified_assumed_empty"]),
+    requested: z.array(LightroomMaskCorrectionSchema),
+    applied_mask_ids: z.array(z.string().regex(MASK_ID_PATTERN)),
+  })
+  .strict();
+
+export const MaskWriteResultSchema = z
+  .object({
+    operation_id: z.string().min(1),
+    iteration: z.number().int().positive(),
+    readback_status: z.enum(["verified", "mismatch", "unavailable"]),
+    read_back: z.array(LightroomMaskCorrectionSchema).nullable(),
+  })
+  .strict();
+
+export const MaskRestoreEvidenceSchema = z
+  .object({
+    schema_version: z.literal(SCHEMA_VERSION),
+    restored_at: z.string().datetime(),
+    source_operation_id: z.string().min(1),
+    iteration: z.number().int().positive(),
+    target: BackendPhotoIdentitySchema,
+    written: z.array(LightroomMaskCorrectionSchema),
+    before_status: z.enum(["read_back", "written_by_this_session", "unverified_assumed_empty"]),
+    readback_status: z.enum(["verified", "mismatch", "unavailable"]),
+    note: z.string().min(1),
+  })
+  .strict();
 
 export const WorkflowCopyCandidateSchema = z
   .object({
@@ -238,6 +503,10 @@ export const RecoveryEvidenceSchema = z
       "contradictory",
     ]),
     invalid_artifacts: z.array(z.string().min(1)),
+    mask_artifacts: z.array(z.string().min(1)).optional(),
+    mask_evidence_status: z
+      .enum(["none", "consistent", "insufficient", "contradictory"])
+      .optional(),
     read_back: BackendPhotoStateSchema.nullable(),
     copy_creation_reconciled: z.boolean(),
     copy_creation_retried: z.literal(false),
@@ -314,7 +583,7 @@ export const SessionManifestSchema = z.object({
   created_at: z.string().datetime(),
   source: SourceAssetPairSchema,
   provider: z.object({
-    name: z.enum(["mock", "codex", "openai"]),
+    name: z.enum(["mock", "codex", "openai", "claude"]),
     model: z.string().min(1),
     prompt_version: z.string().min(1),
     prompt_hash: z.string().regex(/^[a-f0-9]{64}$/),
