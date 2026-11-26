@@ -51,11 +51,10 @@ const SUPPORTED_DEVELOP_KEYS = [
 const PLUGIN_READY_TIMEOUT_MS = 10_000;
 const PLUGIN_READY_RETRY_MS = 250;
 export const LIGHTROOM_MCP_SERVER_NAME = "lightroom-mcp-server";
-export const OPERATION_SEMANTICS_META_KEY =
-  "io.github.john-owo.lightroom-mcp/operation-semantics";
+export const OPERATION_SEMANTICS_META_KEY = "io.github.john-owo.lightroom-mcp/operation-semantics";
 
 export const RESOLVE_PHOTO_ID_OPERATION = "resolve_photo_id" as const;
-export const MASK_READBACK_META_KEY ="io.github.john-owo.lightroom-mcp/mask-readback";
+export const MASK_READBACK_META_KEY = "io.github.john-owo.lightroom-mcp/mask-readback";
 
 function toolAcceptsMaskCorrections(inputSchema: unknown): boolean {
   const settings = asRecord(asRecord(asRecord(inputSchema).properties).settings);
@@ -322,7 +321,10 @@ export class MockBackend implements BackendAdapter {
   private readonly failMaskWrite: boolean;
   private readonly readbackAbsentWhenEmpty: boolean;
 
-  constructor(private readonly photoPath: string, manifestOrOptions?: unknown) {
+  constructor(
+    private readonly photoPath: string,
+    manifestOrOptions?: unknown,
+  ) {
     const options = asRecord(manifestOrOptions);
     const requestedIdentity = options.sourceIdentity;
     this.sourceIdentityMode =
@@ -396,7 +398,10 @@ export class MockBackend implements BackendAdapter {
   async handshake(): Promise<BackendCapabilityManifest> {
     if (!this.connected) throw new Error("Mock backend must connect before handshake");
     this.calls.push("handshake");
-    const manifest = validateBackendCapabilityManifest(this.advertisedManifest, MOCK_HANDSHAKE_REQUIREMENTS);
+    const manifest = validateBackendCapabilityManifest(
+      this.advertisedManifest,
+      MOCK_HANDSHAKE_REQUIREMENTS,
+    );
     this.negotiatedManifest = manifest;
     return manifest;
   }
@@ -622,7 +627,8 @@ export class LightroomMcpAdapter implements BackendAdapter {
         args: [this.entryPath],
         stderr: "pipe",
       });
-    this.client = this.injectedClient ?? new Client({ name: "photo-agent", version: "0.3.0-alpha.0" });
+    this.client =
+      this.injectedClient ?? new Client({ name: "photo-agent", version: "0.3.0-alpha.0" });
     await this.client.connect(this.transport);
     this.negotiatedManifest = undefined;
     this.availableToolNames = new Set<string>();
@@ -703,10 +709,7 @@ export class LightroomMcpAdapter implements BackendAdapter {
       capabilities,
       operations,
     });
-    const validated = validateBackendCapabilityManifest(
-      manifest,
-      LIGHTROOM_HANDSHAKE_REQUIREMENTS,
-    );
+    const validated = validateBackendCapabilityManifest(manifest, LIGHTROOM_HANDSHAKE_REQUIREMENTS);
     this.availableToolNames = new Set(tools.keys());
     this.negotiatedManifest = validated;
     this.pluginReady = false;
@@ -816,10 +819,8 @@ export class LightroomMcpAdapter implements BackendAdapter {
         ? {
             catalog_id: source.catalog_id,
             uuid: source.uuid,
-            master_id:
-              typeof source.master_id === "string" ? source.master_id : masterId,
-            master_uuid:
-              typeof source.master_uuid === "string" ? source.master_uuid : masterUuid,
+            master_id: typeof source.master_id === "string" ? source.master_id : masterId,
+            master_uuid: typeof source.master_uuid === "string" ? source.master_uuid : masterUuid,
             is_virtual_copy: source.is_virtual_copy,
           }
         : undefined;
@@ -831,15 +832,12 @@ export class LightroomMcpAdapter implements BackendAdapter {
             catalog_id: masterId,
             uuid: masterUuid,
             master_id: typeof master.master_id === "string" ? master.master_id : masterId,
-            master_uuid:
-              typeof master.master_uuid === "string" ? master.master_uuid : masterUuid,
+            master_uuid: typeof master.master_uuid === "string" ? master.master_uuid : masterUuid,
             is_virtual_copy: master.is_virtual_copy,
           }
         : undefined;
-    const copyMasterId =
-      typeof copy.master_id === "string" ? copy.master_id : masterId;
-    const copyMasterUuid =
-      typeof copy.master_uuid === "string" ? copy.master_uuid : masterUuid;
+    const copyMasterId = typeof copy.master_id === "string" ? copy.master_id : masterId;
+    const copyMasterUuid = typeof copy.master_uuid === "string" ? copy.master_uuid : masterUuid;
     const copyIdentity =
       typeof copy.catalog_id === "string" &&
       typeof copy.uuid === "string" &&
@@ -978,12 +976,12 @@ export class LightroomMcpAdapter implements BackendAdapter {
     const nested = asRecord(raw.developSettings ?? raw.develop_settings);
     const status = nested.maskReadback;
     if (status === "absent") return { status: "absent", corrections: [] };
-    if (status !== undefined && status !== "ok") {
-      throw new Error(`Lightroom MCP could not serialize this photo's masks (${String(status)})`);
-    }
+    if (status !== undefined && status !== "ok") return { status: "unreadable", corrections: [] };
     const value = nested.MaskGroupBasedCorrections;
     if (!Array.isArray(value)) {
-      throw new Error("Lightroom MCP did not return MaskGroupBasedCorrections; mask readback unavailable");
+      throw new Error(
+        "Lightroom MCP did not return MaskGroupBasedCorrections; mask readback unavailable",
+      );
     }
     const corrections = value.map((item) => {
       if (!item || typeof item !== "object" || Array.isArray(item)) {

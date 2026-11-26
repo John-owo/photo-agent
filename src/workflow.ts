@@ -532,6 +532,9 @@ async function executePlan(
         );
         loopState.maskMode = fallback.mode;
         loopState.maskReason = `mask_readback_absent${fallback.reason ? `:${fallback.reason}` : ""}`;
+      } else if (inherited.status === "unreadable") {
+        loopState.maskMode = "degraded_to_global";
+        loopState.maskReason = "existing_masks_unreadable";
       } else {
         const unpreservable = findUnpreservableCorrection(
           inherited.corrections.filter((correction) => !isOwnedCorrection(correction, ownerPrefix)),

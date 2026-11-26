@@ -1924,3 +1924,48 @@ Cloud-analyzer checkpoint:
 - Updated vulnerable locked dependencies to sharp 0.35.4, fast-uri 3.1.8, Hono 4.13.9, js-yaml 4.3.2, and qs 6.16.0. Raised sharp's minimum patch and moved Vitest to the first patched 4.1.11 release because its advisory also affects the 3.x line. Fresh `npm.cmd audit --json` reports zero vulnerabilities, down from seven (three high and four moderate); no force update or global tool setting was used.
 - Verification: `npm.cmd run check`, `npm.cmd run lint`, `npm.cmd test` (4 files / 63 tests before adding the final workflow regression), `npm.cmd run build`, and `git diff --check` passed. The final preview suite passed 8/8, followed by repeated typecheck, scoped ESLint, build, and the real Node CLI `npm.cmd run example` smoke path. The smoke result is mock `ACCEPTED`, recovery `REVIEW_REQUIRED`, source preservation true, and no external backend.
 - These are local automated/CLI checks. Live Lightroom readback, application restart persistence, aesthetic assessment, and human `render PASS` were not performed or implied. The package remains alpha.
+
+## 2026-11-27 - Geometric masks, agent-driven evaluation and overnight batch (Claude Code)
+
+- Started on branch `feat/geometric-masks` from `main` at `7b97fb7` (clean,
+  equal to `origin/main`). Requested by another Claude Code session, then
+  widened by the user: unattended overnight editing where Claude Code or Codex
+  itself judges previews and renders, plus any needed lightroom-mcp fixes.
+- Backend reference: lightroom-mcp `feat/set-develop-masks` (PR #15, write
+  only). Its `get_photo_metadata` could not return masks, so the user
+  authorized taking over lightroom-mcp mask work; that was done in a separate
+  worktree `D:\work\lightroom-mcp-masks` on `feat/mask-readback` (Codex's
+  accepted-but-unreleased checkout `D:\work\lightroom-mcp` was not touched).
+- Added: mask intent schema and deterministic translator (`src/masks.ts`,
+  `Flipped=true` inside, `LocalExposure2012 = EV/4`, caps, max 3 masks);
+  read-merge-write that preserves foreign corrections and degrades to global
+  adjustments for unsupported/unreadable/`absent`/non-geometric cases; mask
+  write intent/result evidence, `recover` mask checks and `restore-masks`;
+  evaluator `mask_feedback`; `HandoffEvaluator`, `EVALUATION_INPUT_REQUIRED`
+  and `continue`; `batch` (`src/unattended.ts`) with worklist, resume,
+  circuit breaker and a Traditional Chinese morning report; RAW path to
+  catalog id resolution via `search_photos`; optional Claude API
+  provider/evaluator (`@anthropic-ai/sdk` ~1.7.0, default `claude-opus-5-5`,
+  server-side fallback, optional web search); prompts moved to
+  `src/prompts.ts` and rewritten to allow capped masks.
+- Docs: `docs/masks-and-overnight.zh-TW.md`, `docs/masks-and-overnight.md`,
+  README sections in both languages, CHANGELOG, rewritten
+  `skills/codex/SKILL.md` (overnight agent loop, bridge-lock and keep-awake
+  preflight).
+- Verification: `npm.cmd run check`, `npm.cmd run lint`, `npm.cmd run build`
+  passed; Vitest 5 files / 89 tests passed (25 new in `tests/masks.test.ts`,
+  all on the mock backend). CLI smoke `batch --backend mock --provider mock
+  --evaluator mock` on two synthetic pairs ended ACCEPTED with a report; it
+  exposed a stale-reason bug in the report (fixed, rerun clean).
+- Formatting: new files and files that were Prettier-clean on `main` were
+  formatted; `src/backends.ts`, `src/schemas.ts` and `src/workflow.ts` were
+  already outside the Prettier baseline and only lightly touched.
+- `npm audit` reports 22 advisories (14 moderate, 7 high, 1 critical); the same
+  count exists on `main`'s lockfile, so they are newer advisories, not caused
+  by this change. Not fixed here.
+- Not verified: no live Lightroom run. Lightroom Classic was closed and the
+  bridge lock was held by another Claude Code session's MCP server (PID 21948);
+  it was not stopped. Real `getDevelopSettings()` mask structure, live mask
+  write/readback through photo-agent, and visual quality of agent-drawn masks
+  remain unverified. The Claude API provider was only tested with a fake
+  client.

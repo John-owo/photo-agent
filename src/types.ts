@@ -41,7 +41,11 @@ export type MaskDecision = z.infer<typeof MaskDecisionSchema>;
 export type MaskWriteIntent = z.infer<typeof MaskWriteIntentSchema>;
 export type MaskWriteResult = z.infer<typeof MaskWriteResultSchema>;
 export type LightroomMaskCorrection = Record<string, unknown>;
-export type MaskReadback = { status: "ok" | "absent"; corrections: LightroomMaskCorrection[] };
+export type MaskReadback = {
+  /** unreadable: the backend could not serialize the photo's masks. */
+  status: "ok" | "absent" | "unreadable";
+  corrections: LightroomMaskCorrection[];
+};
 export type SemanticIntentPlan = z.infer<typeof SemanticIntentPlanSchema>;
 export type NormalizedEditPlan = z.infer<typeof NormalizedEditPlanSchema>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;

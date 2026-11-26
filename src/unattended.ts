@@ -131,12 +131,11 @@ function itemPath(batchDir: string, assetId: string): string {
 
 async function lastSessionReason(sessionDir: string): Promise<string | undefined> {
   try {
+    // Only the latest event describes the current state; older reasons are stale.
     const lines = (await readFile(join(sessionDir, "session.log"), "utf8")).trim().split("\n");
-    for (const line of lines.reverse()) {
-      const event = JSON.parse(line) as { reason?: unknown; error?: unknown };
-      if (typeof event.reason === "string") return event.reason;
-      if (typeof event.error === "string") return event.error;
-    }
+    const event = JSON.parse(lines.at(-1) ?? "{}") as { reason?: unknown; error?: unknown };
+    if (typeof event.reason === "string") return event.reason;
+    if (typeof event.error === "string") return event.error;
   } catch {
     return undefined;
   }

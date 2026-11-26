@@ -22,6 +22,7 @@
 - [CLI 旗標](#cli-旗標)
 - [編修與整場指令](#編修與整場指令)
 - [Codex 本機流程](#codex-本機流程預設)
+- [局部遮罩與過夜批次](#局部遮罩與過夜批次)
 - [恢復中斷的 session](#恢復中斷的-session)
 - [XMP fallback](#xmp-fallback)
 - [參考連結](#參考連結)
@@ -172,19 +173,25 @@ runner 目錄作為 CI 專用等價路徑。
 | `PHOTO_AGENT_OPENAI_MODEL`        | OpenAI 分析與評估路徑使用的模型名稱。                                                      | `gpt-5.6-terra`                                    |
 | `PHOTO_AGENT_LIGHTROOM_MCP_ENTRY` | 本機 `lightroom-mcp-john` MCP server 的 executable entry。                                 | `D:\photo\lightroom-mcp-john\server\dist\index.js` |
 | `PHOTO_AGENT_SESSION_ROOT`        | 產生 session 狀態與 render 的根目錄。                                                      | `.photo-agent\sessions`                            |
+| `PHOTO_AGENT_BATCH_ROOT`          | `batch` 的根目錄（worklist、晨間報告、每張照片的 session）。                               | `.photo-agent\batches`                             |
+| `PHOTO_AGENT_CLAUDE_MODEL`        | 選用的 Claude API provider／evaluator 使用的模型（認證走 Anthropic SDK 預設來源）。        | `claude-opus-5-5`                                  |
 
 ## CLI 旗標
 
-| Flag                             | 作用                                        | 備註                                    |
-| -------------------------------- | ------------------------------------------- | --------------------------------------- |
-| `--backend mock\|lightroom`      | 選擇實際執行編修的目標                      | 預設為 `mock`                           |
-| `--provider codex\|mock\|openai` | 選擇提出調色意圖的元件                      | 預設為本機 `codex`；OpenAI 必須明確選用 |
-| `--evaluator none\|mock\|openai` | 選擇 closed-loop evaluator                  | OpenAI 也需要 `--allow-cloud-preview`   |
-| `--allow-cloud-preview`          | 允許選定的雲端路徑接收已清理的 session JPEG | 不傳 RAW 或 EXIF/GPS metadata           |
-| `--apply`                        | 允許 backend 執行通過驗證的 plan            | 不加時只做規劃／dry run                 |
-| `--max-iterations 1-10`          | 限制 closed-loop 最大迭代次數               | 用於 edit／resume 流程                  |
-| `--analysis-file <JSON>`         | 提供通過 schema 驗證的選片與光線決策        | 不能和 `--analyzer openai` 同時使用     |
-| `--analyzer openai`              | 使用選擇性的雲端 shoot analyzer             | 需要 `--allow-cloud-preview`            |
+| Flag                             | 作用                                         | 備註                                    |
+| -------------------------------- | -------------------------------------------- | --------------------------------------- |
+| `--backend mock\|lightroom`      | 選擇實際執行編修的目標                       | 預設為 `mock`                           |
+| `--provider codex\|mock\|openai` | 選擇提出調色意圖的元件                       | 預設為本機 `codex`；OpenAI 必須明確選用 |
+| `--evaluator none\|mock\|openai` | 選擇 closed-loop evaluator                   | OpenAI 也需要 `--allow-cloud-preview`   |
+| `--allow-cloud-preview`          | 允許選定的雲端路徑接收已清理的 session JPEG  | 不傳 RAW 或 EXIF/GPS metadata           |
+| `--apply`                        | 允許 backend 執行通過驗證的 plan             | 不加時只做規劃／dry run                 |
+| `--max-iterations 1-10`          | 限制 closed-loop 最大迭代次數                | 用於 edit／resume 流程                  |
+| `--analysis-file <JSON>`         | 提供通過 schema 驗證的選片與光線決策         | 不能和 `--analyzer openai` 同時使用     |
+| `--analyzer openai`              | 使用選擇性的雲端 shoot analyzer              | 需要 `--allow-cloud-preview`            |
+| `--evaluator handoff`            | 每次渲染後暫停，等 agent 寫評估 JSON         | 用 `continue` 或 `batch --resume` 接續  |
+| `--mode interactive\|unattended` | 遮罩策略：擱置主觀遮罩，或照樣套用（有上限） | `batch` 預設 `unattended`               |
+| `--approve-masks <ids\|all>`     | 核准擱置中的主觀遮罩                         | 只用於互動模式                          |
+| `--allow-mask-replace`           | 無法讀回既有遮罩時仍允許寫入                 | 只寫 Workflow Copy；`unattended` 隱含   |
 
 ## 編修與整場指令
 
@@ -241,6 +248,19 @@ node dist/src/cli.js resume `
 ```
 
 只有在確認本機 MCP 連線、且使用非關鍵測試照片時，才使用 `--backend lightroom`。交接流程不會上傳 RAW 或 EXIF/GPS 資料。
+
+## 局部遮罩與過夜批次
+
+photo-agent 每張照片最多可以加三個放射狀或線性漸層的局部遮罩。模型只描述意圖，
+由確定性 translator 寫成 Lightroom 的 `MaskGroupBasedCorrections`：寫入前先和
+Workflow Copy 上既有的遮罩合併、限制強度；後端畫不了或讀不回遮罩時，降級為全域
+調整並記錄原因。`restore-masks` 可以把遮罩還原。
+
+`batch --root <DIR>` 可以過夜修整個資料夾。預設由 Claude Code 或 Codex 擔任視覺
+判斷：讀 `worklist.md`、看每張預覽或渲染、寫出要求的 JSON，再執行
+`batch --resume`，直到沒有待辦；`report.md` 就是晨間報告。需要 lightroom-mcp
+PR #15 與疊在其上的遮罩讀回 PR。完整說明見
+[docs/masks-and-overnight.zh-TW.md](docs/masks-and-overnight.zh-TW.md)。
 
 ## Mock 流程
 
