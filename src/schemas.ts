@@ -638,6 +638,8 @@ export const ShootAssetSchema = z.object({
     .regex(/^[a-f0-9]{64}$/)
     .optional(),
   source_confidence: z.enum(["high", "ambiguous", "missing_preview"]),
+  /** Where the preview was found: beside the RAW or in a nearby folder. */
+  preview_match: z.enum(["same_folder", "nearby_folder"]).optional(),
 });
 
 export const ShootDecisionSchema = z.object({

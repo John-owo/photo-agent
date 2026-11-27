@@ -232,6 +232,97 @@ describe("v0.3 shoot workflow", () => {
     ).toBe("ambiguous");
   });
 
+  it("pairs a RAW with the same-named JPEG in a nearby folder, whatever it is called", async () => {
+    // Live shoot 2026-11-27 keeps raw\DSC_8446.NEF and jpg\DSC_8446.JPG; other
+    // computers use RAW\ + JPEG\ or one pair of folders per day.
+    const { mkdir } = await import("node:fs/promises");
+    const root = await mkdtemp(join(tmpdir(), "photo-agent-pair-"));
+    const file = async (relativePath: string, raw: boolean) => {
+      const path = join(root, relativePath);
+      await mkdir(join(path, ".."), { recursive: true });
+      if (raw) await writeFile(path, `raw ${relativePath}`, "utf8");
+      else await writeFixtureJpeg(path);
+    };
+    await file("raw/DSC_8446.NEF", true);
+    await file("jpg/DSC_8446.JPG", false);
+    await file("day1/RAW/DSC_0001.NEF", true);
+    await file("day1/JPEG/DSC_0001.JPG", false);
+    // Same file name on another day: each day keeps its own JPEG.
+    await file("day2/RAW/DSC_0001.NEF", true);
+    await file("day2/JPEG/DSC_0001.JPG", false);
+    // Two candidates at the nearest level: never guessed.
+    await file("day3/raw/DSC_0500.NEF", true);
+    await file("day3/jpg/DSC_0500.JPG", false);
+    await file("day3/export/DSC_0500.JPG", false);
+    // A JPEG beside its own RAW is not borrowed by another folder's RAW.
+    await file("day4/a/DSC_0700.NEF", true);
+    await file("day4/a/DSC_0700.JPG", false);
+    await file("day4/b/DSC_0700.NEF", true);
+
+    const assets = await indexShoot(root);
+    const byRaw = (path: string) => assets.find((asset) => asset.relative_raw_path === join(path));
+    expect(byRaw("raw/DSC_8446.NEF")).toMatchObject({
+      source_confidence: "high",
+      preview_match: "nearby_folder",
+      relative_preview_path: join("jpg/DSC_8446.JPG"),
+    });
+    expect(byRaw("day1/RAW/DSC_0001.NEF")?.relative_preview_path).toBe(
+      join("day1/JPEG/DSC_0001.JPG"),
+    );
+    expect(byRaw("day2/RAW/DSC_0001.NEF")?.relative_preview_path).toBe(
+      join("day2/JPEG/DSC_0001.JPG"),
+    );
+    expect(byRaw("day3/raw/DSC_0500.NEF")).toMatchObject({ source_confidence: "ambiguous" });
+    expect(byRaw("day3/raw/DSC_0500.NEF")?.preview_path).toBeUndefined();
+    expect(byRaw("day4/a/DSC_0700.NEF")).toMatchObject({
+      source_confidence: "high",
+      preview_match: "same_folder",
+    });
+    expect(byRaw("day4/b/DSC_0700.NEF")?.source_confidence).toBe("missing_preview");
+  });
+
+  it("ignores same-named JPEGs that an editor exported", async () => {
+    // Live folder 11.11 弘前城: raw\, jpg\ and 修好的\ (Lightroom exports, same names).
+    const { mkdir } = await import("node:fs/promises");
+    const sharp = (await import("sharp")).default;
+    const root = await mkdtemp(join(tmpdir(), "photo-agent-pair-"));
+    for (const folder of ["raw", "jpg", "修好的", "only-edit-raw", "only-edit"]) {
+      await mkdir(join(root, folder), { recursive: true });
+    }
+    await writeFile(join(root, "raw", "DSC_8320.NEF"), "raw", "utf8");
+    await writeFixtureJpeg(join(root, "jpg", "DSC_8320.JPG"));
+    const exported = (path: string) =>
+      sharp({ create: { width: 8, height: 8, channels: 3, background: "#888" } })
+        .jpeg()
+        .withExif({ IFD0: { Software: "Adobe Photoshop Lightroom Classic 16.0 (Windows)" } })
+        .toFile(path);
+    await exported(join(root, "修好的", "DSC_8320.jpg"));
+    // When the only same-named JPEG is an export, there is no camera preview.
+    await writeFile(join(root, "only-edit-raw", "DSC_9000.NEF"), "raw", "utf8");
+    await exported(join(root, "only-edit", "DSC_9000.jpg"));
+
+    const assets = await indexShoot(root);
+    const byRaw = (path: string) => assets.find((asset) => asset.relative_raw_path === join(path));
+    expect(byRaw("raw/DSC_8320.NEF")).toMatchObject({
+      source_confidence: "high",
+      relative_preview_path: join("jpg/DSC_8320.JPG"),
+    });
+    expect(byRaw("only-edit-raw/DSC_9000.NEF")?.source_confidence).toBe("missing_preview");
+  });
+
+  it("refuses one JPEG for two RAWs found from different folders", async () => {
+    const { mkdir } = await import("node:fs/promises");
+    const root = await mkdtemp(join(tmpdir(), "photo-agent-pair-"));
+    await mkdir(join(root, "a"), { recursive: true });
+    await mkdir(join(root, "b"), { recursive: true });
+    await mkdir(join(root, "jpg"), { recursive: true });
+    await writeFile(join(root, "a", "DSC_1.NEF"), "raw a", "utf8");
+    await writeFile(join(root, "b", "DSC_1.NEF"), "raw b", "utf8");
+    await writeFixtureJpeg(join(root, "jpg", "DSC_1.JPG"));
+    const assets = await indexShoot(root);
+    expect(assets.map((asset) => asset.source_confidence)).toEqual(["ambiguous", "ambiguous"]);
+  });
+
   it("processes 120 pairs with isolated jobs and a resumable report layout", async () => {
     const root = await mkdtemp(join(tmpdir(), "photo-agent-v03-"));
     for (let index = 0; index < 120; index += 1) {

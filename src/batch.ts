@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, extname, join, parse, relative, resolve } from "node:path";
+import { dirname, extname, join, parse, relative, resolve, sep } from "node:path";
+
+import sharp from "sharp";
 
 import {
   PropagationPlanSchema,
@@ -54,42 +56,161 @@ function assetId(relativeRawPath: string): string {
   return createHash("sha256").update(relativeRawPath.toLowerCase()).digest("hex").slice(0, 16);
 }
 
+type IndexedFile = { path: string; dir: string; stem: string };
+
+function isWithin(dir: string, ancestor: string): boolean {
+  return ancestor === "" || dir === ancestor || dir.startsWith(`${ancestor}${sep}`);
+}
+
+/** Folders from the RAW's parent up to the shoot root ("" is the root). */
+function ancestorsOf(dir: string): string[] {
+  const result: string[] = [];
+  let current = dir === "." ? "" : dir;
+  while (current !== "") {
+    const parent = dirname(current);
+    current = parent === "." ? "" : parent;
+    result.push(current);
+  }
+  return result;
+}
+
+/** Software that writes itself into a JPEG it exported (not camera firmware). */
+// Case-sensitive full product names: camera maker notes are binary and can
+// contain short letter runs such as "dxo" (seen live on Z5II JPEGs).
+const EDITOR_SIGNATURES =
+  /Adobe Photoshop|Lightroom|Camera Raw|Capture One|darktable|RawTherapee|Luminar|DxO PhotoLab|DxO PureRAW|Affinity Photo|GIMP \d|Snapseed|NX Studio/;
+
+/**
+ * True when the JPEG was exported by an editor, e.g. a "修好的" folder of
+ * Lightroom exports with the camera's file names. Such a file is a finished
+ * edit, not the camera's look, so it is never used as the "before" preview.
+ */
+async function isEditedExport(path: string, cache: Map<string, boolean>): Promise<boolean> {
+  const cached = cache.get(path);
+  if (cached !== undefined) return cached;
+  let edited = false;
+  try {
+    const metadata = await sharp(path).metadata();
+    const text = Buffer.concat([
+      metadata.exif ?? Buffer.alloc(0),
+      metadata.xmp ?? Buffer.alloc(0),
+    ]).toString("latin1");
+    edited = EDITOR_SIGNATURES.test(text);
+  } catch {
+    edited = false;
+  }
+  cache.set(path, edited);
+  return edited;
+}
+
+type PreviewChoice = {
+  previewPath?: string;
+  confidence: ShootAsset["source_confidence"];
+  match?: "same_folder" | "nearby_folder";
+};
+
+/**
+ * Pair every RAW with its camera JPEG. Same folder first (DSC_1.NEF beside
+ * DSC_1.JPG). Otherwise search outward from the RAW's folder, nearest level
+ * first, for an unclaimed preview with the same file name, whatever the
+ * folders are called (raw\ + jpg\, RAW\ + JPEG\, per-day subfolders...). More
+ * than one candidate at the nearest level, or one JPEG claimed by two RAWs, is
+ * ambiguous and never guessed.
+ */
 export async function indexShoot(rootInput: string): Promise<ShootAsset[]> {
   const root = resolve(rootInput);
-  const groups = new Map<string, { raws: string[]; previews: string[] }>();
+  const raws: IndexedFile[] = [];
+  const previews: IndexedFile[] = [];
   for (const path of await walkFiles(root)) {
     const extension = extname(path).toLowerCase();
     if (!RAW_EXTENSIONS.has(extension) && !PREVIEW_EXTENSIONS.has(extension)) continue;
     const relativePath = relative(root, path);
-    const key = join(dirname(relativePath), parse(relativePath).name).toLowerCase();
-    const group = groups.get(key) ?? { raws: [], previews: [] };
-    if (RAW_EXTENSIONS.has(extension)) group.raws.push(path);
-    else group.previews.push(path);
-    groups.set(key, group);
+    const dir = dirname(relativePath).toLowerCase();
+    const file = {
+      path,
+      dir: dir === "." ? "" : dir,
+      stem: parse(relativePath).name.toLowerCase(),
+    };
+    (RAW_EXTENSIONS.has(extension) ? raws : previews).push(file);
+  }
+  const key = (file: IndexedFile) => `${file.dir}${sep}${file.stem}`;
+  const rawsByKey = new Map<string, IndexedFile[]>();
+  for (const raw of raws) rawsByKey.set(key(raw), [...(rawsByKey.get(key(raw)) ?? []), raw]);
+  const previewsByKey = new Map<string, IndexedFile[]>();
+  for (const preview of previews) {
+    previewsByKey.set(key(preview), [...(previewsByKey.get(key(preview)) ?? []), preview]);
+  }
+  // A preview beside a RAW of the same name belongs to that folder's RAW.
+  const unclaimedByStem = new Map<string, IndexedFile[]>();
+  for (const preview of previews) {
+    if (rawsByKey.has(key(preview))) continue;
+    unclaimedByStem.set(preview.stem, [...(unclaimedByStem.get(preview.stem) ?? []), preview]);
+  }
+
+  const editedCache = new Map<string, boolean>();
+  const choices = new Map<IndexedFile, PreviewChoice>();
+  for (const raw of raws) {
+    const sameFolderRaws = rawsByKey.get(key(raw)) ?? [];
+    const sameFolder = previewsByKey.get(key(raw)) ?? [];
+    if (sameFolder.length > 0) {
+      const unambiguous = sameFolderRaws.length === 1 && sameFolder.length === 1;
+      choices.set(raw, {
+        ...(unambiguous ? { previewPath: sameFolder[0]!.path } : {}),
+        confidence: unambiguous ? "high" : "ambiguous",
+        match: "same_folder",
+      });
+      continue;
+    }
+    const candidates: IndexedFile[] = [];
+    for (const preview of unclaimedByStem.get(raw.stem) ?? []) {
+      if (!(await isEditedExport(preview.path, editedCache))) candidates.push(preview);
+    }
+    let choice: PreviewChoice = { confidence: "missing_preview" };
+    for (const ancestor of ancestorsOf(raw.dir)) {
+      const inScope = candidates.filter((preview) => isWithin(preview.dir, ancestor));
+      if (inScope.length === 0) continue;
+      choice =
+        inScope.length === 1 && sameFolderRaws.length === 1
+          ? { previewPath: inScope[0]!.path, confidence: "high", match: "nearby_folder" }
+          : { confidence: "ambiguous", match: "nearby_folder" };
+      break;
+    }
+    choices.set(raw, choice);
+  }
+  // One JPEG must never stand for two RAWs.
+  const claims = new Map<string, IndexedFile[]>();
+  for (const [raw, choice] of choices) {
+    if (choice.previewPath) {
+      claims.set(choice.previewPath, [...(claims.get(choice.previewPath) ?? []), raw]);
+    }
+  }
+  for (const claimants of claims.values()) {
+    if (claimants.length < 2) continue;
+    for (const raw of claimants)
+      choices.set(raw, { confidence: "ambiguous", match: "nearby_folder" });
   }
 
   const assets: ShootAsset[] = [];
-  for (const group of groups.values()) {
-    for (const rawPath of group.raws.sort()) {
-      const relativeRawPath = relative(root, rawPath);
-      const unambiguous = group.raws.length === 1 && group.previews.length === 1;
-      const previewPath = unambiguous ? group.previews[0] : undefined;
-      assets.push({
-        id: assetId(relativeRawPath),
-        relative_raw_path: relativeRawPath,
-        raw_path: rawPath,
-        ...(previewPath
-          ? {
-              relative_preview_path: relative(root, previewPath),
-              preview_path: previewPath,
-              preview_sha256: await sha256File(previewPath),
-            }
-          : {}),
-        raw_sha256: await sha256File(rawPath),
-        source_confidence:
-          group.previews.length === 0 ? "missing_preview" : unambiguous ? "high" : "ambiguous",
-      });
-    }
+  for (const raw of raws) {
+    const choice = choices.get(raw)!;
+    const relativeRawPath = relative(root, raw.path);
+    assets.push({
+      id: assetId(relativeRawPath),
+      relative_raw_path: relativeRawPath,
+      raw_path: raw.path,
+      ...(choice.previewPath
+        ? {
+            relative_preview_path: relative(root, choice.previewPath),
+            preview_path: choice.previewPath,
+            preview_sha256: await sha256File(choice.previewPath),
+          }
+        : {}),
+      raw_sha256: await sha256File(raw.path),
+      source_confidence: choice.confidence,
+      ...(choice.match && choice.confidence !== "missing_preview"
+        ? { preview_match: choice.match }
+        : {}),
+    });
   }
   return assets.sort((a, b) => a.relative_raw_path.localeCompare(b.relative_raw_path));
 }
