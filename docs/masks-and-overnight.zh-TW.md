@@ -151,6 +151,46 @@ node dist\src\cli.js batch --root '<DIR>' --provider claude --evaluator claude -
 
 Claude provider 預設模型是 `claude-opus-5-5`（可用 `PHOTO_AGENT_CLAUDE_MODEL` 改），帶伺服器端 web search，並開啟 refusal fallback；認證走 Anthropic SDK 的預設來源，例如 `ANTHROPIC_API_KEY`。OpenAI provider 仍可用（`--provider openai --evaluator openai`）。
 
+## RAW 和相機 JPG 怎麼配對
+
+資料夾怎麼分都可以，不用改成固定結構：
+
+1. 先找同一個資料夾裡的同名 JPG（`DSC_1.NEF` 旁邊的 `DSC_1.JPG`）。
+2. 找不到，就從 RAW 所在的資料夾往外一層一層找同名 JPG，最近的那一層優先。`raw\` + `jpg\`、`RAW\` + `JPEG\`、每天一組子資料夾都能配到；同名檔案在別天的資料夾裡也不會搞混。
+3. 由 Lightroom、Photoshop、DxO PhotoLab、Capture One、NX Studio 等軟體匯出的 JPG（例如 `修好的\`），檔案裡會寫著匯出軟體，會被排除，不拿來當「修圖前」的參考。
+4. 同一層還是有兩張以上，或一張 JPG 被兩個 RAW 搶，就不猜，標成「需要你看」。
+5. 沒有相機 JPG 的 RAW，改用 Lightroom 渲染一張當預覽。
+
+## 挑片、副本命名與尼康配方
+
+### 只修挑過的照片
+
+`batch` 預設會修資料夾裡每一張 RAW。在 Lightroom 先挑片，再加篩選：
+
+```powershell
+node dist\src\cli.js batch --root '<DIR>' --backend lightroom --only-picked      # 只修標為「留用」的
+node dist\src\cli.js batch --root '<DIR>' --backend lightroom --min-rating 3     # 只修 3 星以上
+```
+
+有加篩選時，標為「排除」的照片一律跳過。排除了幾張、哪些不在目錄裡，晨間報告開頭會寫。
+
+### 副本叫 v1、v2、v3
+
+副本建立並驗證身分後，photo-agent 會把它改名成同一張原圖底下下一個沒用過的 `vN`。改名是「比對後才寫」：副本名字必須還是建立時的標記，否則不改。photo-agent 之後用目錄 ID 和 UUID 辨認副本，不靠名字。需要 lightroom-mcp 的 `rename_virtual_copy`（`feat/virtual-copy-rename`）；舊版會保留原本的標記名稱。`--no-version-names` 可關閉。
+
+### 從尼康配方的色調開始修
+
+Lightroom 不會套用 NEF 裡的尼康配方，所以預設渲染和相機 JPG 差很多（實測 DSC_8447 平均差 19.2，套用配方描述檔後 2.8，0–255 刻度）。
+
+1. 建批次時，photo-agent 用 exiftool 讀每張 NEF 的相機型號和 Picture Control（配方）名稱。
+2. 到 `%APPDATA%\Adobe\CameraRaw\Settings` 找相符的 Look 描述檔（由 `nikon-recipe-acr-profile` skill 產生，名稱含配方名、相機限制相符）。
+3. lightroom-mcp 不能直接設描述檔，所以 photo-agent 寫一個只設定這個描述檔的預設 `photo-agent recipe <描述檔>`（放在 `Settings\photo-agent\`）。**新預設要重開 Lightroom 才會載入。**
+4. 每張副本改名後、第一次調整前，先套用這個預設。
+
+批次輸出的 `recipes` 會列出 `missing_profiles`（沒有描述檔的配方與張數）。人還在的話，agent 會問要不要先用 `nikon-recipe-acr-profile` 做描述檔（需要至少 12 組用該配方拍的 RAW+JPG，約 15–25 分鐘）；過夜時就照常修，那些照片從 Adobe 預設色彩開始，晨間報告會寫。`--no-recipe` 可關閉。
+
+限制：Lightroom 的檢查點存不了描述檔，`restore-masks` 和檢查點還原都不會拿掉描述檔；刪掉副本即可。
+
 ## 不在範圍內：筆刷與 AI 遮罩（調查筆記）
 
 - **AI 遮罩**（選取主體、天空、人物）：Lightroom 存的是 AI 運算結果的參照，`applyDevelopSettings` 不會重新計算，寫進去不會生效。不實作。
@@ -161,4 +201,4 @@ Claude provider 預設模型是 `claude-opus-5-5`（可用 `PHOTO_AGENT_CLAUDE_M
 
 - 自動化（mock 後端，無 Lightroom）：遮罩轉換、合併、降級、讀回不一致、recover、restore-masks、評估交接、批次推進與晨間報告都有測試。
 - lightroom-mcp 讀回的 Lua 部分：用 fengari（Lua 5.3 的 JS 實作）跑了相關 spec，通過；Lightroom 本身用的是 Lua 5.1，正式 CI 還沒跑。
-- **實機 Lightroom 端到端：還沒驗證**。真實 Lightroom 的 `getDevelopSettings()` 回傳的遮罩結構還沒看過，以 PR 描述與 WORKLOG 為準。
+- 實機 Lightroom（2026-11-27，DSC_8446–8448）：遮罩寫入與讀回、副本改名成 v1/v2、配方預設套用、評估交接都跑通，3 張都通過；細節見 WORKLOG。

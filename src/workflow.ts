@@ -4,6 +4,12 @@ import { dirname, join, resolve } from "node:path";
 
 import { z } from "zod";
 
+import {
+  APPLY_PRESET_OPERATION,
+  nextCopyVersionName,
+  RENAME_COPY_OPERATION,
+  workflowCopyMarker,
+} from "./backends.js";
 import { describeEvaluationInput } from "./claude.js";
 import {
   EvaluationInputRequiredError,
@@ -35,9 +41,10 @@ import {
 } from "./masks.js";
 import { createSanitizedPreview } from "./preview.js";
 import {
+  dropUnreadableOperations,
   resolveLightroomSettings,
   translateIntent,
-  LIGHTROOM_CHECKPOINT_KEYS,
+  checkpointKeysFor,
 } from "./translator.js";
 import {
   CodexInputRequiredError,
@@ -97,13 +104,21 @@ function samePath(left: string, right: string): boolean {
   return resolve(left).toLowerCase() === resolve(right).toLowerCase();
 }
 
-function sameDevelopSettings(
+export function sameDevelopSettings(
   left: Record<string, number | string | boolean>,
   right: Record<string, number | string | boolean>,
 ): boolean {
-  const leftEntries = Object.entries(left).sort(([a], [b]) => a.localeCompare(b));
-  const rightEntries = Object.entries(right).sort(([a], [b]) => a.localeCompare(b));
-  return JSON.stringify(leftEntries) === JSON.stringify(rightEntries);
+  // Under "As Shot", Lightroom fills Temperature/Tint lazily (after a render),
+  // so the key can appear between two reads with no edit. A real white-balance
+  // edit switches WhiteBalance away from "As Shot" and still counts as a change.
+  const asShot = left.WhiteBalance === "As Shot" && right.WhiteBalance === "As Shot";
+  const lazyKey = (key: string, other: Record<string, unknown>) =>
+    asShot && (key === "Temperature" || key === "Tint") && other[key] === undefined;
+  const entries = (side: Record<string, number | string | boolean>, other: typeof side) =>
+    Object.entries(side)
+      .filter(([key]) => !lazyKey(key, other))
+      .sort(([a], [b]) => a.localeCompare(b));
+  return JSON.stringify(entries(left, right)) === JSON.stringify(entries(right, left));
 }
 
 function samePhotoIdentity(
@@ -165,21 +180,19 @@ function workflowCopyResultIsComplete(result: WorkflowCopyResult): boolean {
   );
 }
 
-function supportsReadOnlyWorkflowCopyReconciliation(
-  manifest: BackendCapabilityManifest,
-): boolean {
+function supportsReadOnlyWorkflowCopyReconciliation(manifest: BackendCapabilityManifest): boolean {
   const semantics = manifest.operations[WORKFLOW_COPY_RECONCILIATION_OPERATION];
   return Boolean(
     manifest.capabilities.includes(WORKFLOW_COPY_RECONCILIATION_OPERATION) &&
-      semantics?.supported === true &&
-      semantics.side_effect === "read_only" &&
-      semantics.idempotent &&
-      semantics.scope === "catalog" &&
-      !semantics.requires_active_selection &&
-      !semantics.requires_editor_foreground &&
-      semantics.concurrency === "exclusive_backend" &&
-      semantics.retry_policy === "automatic" &&
-      semantics.safe_to_resume,
+    semantics?.supported === true &&
+    semantics.side_effect === "read_only" &&
+    semantics.idempotent &&
+    semantics.scope === "catalog" &&
+    !semantics.requires_active_selection &&
+    !semantics.requires_editor_foreground &&
+    semantics.concurrency === "exclusive_backend" &&
+    semantics.retry_policy === "automatic" &&
+    semantics.safe_to_resume,
   );
 }
 
@@ -219,9 +232,7 @@ function resultFor(
     ...(extra.renderPath ? { renderPath: extra.renderPath } : {}),
     ...(extra.handoffPath ? { handoffPath: extra.handoffPath } : {}),
     ...(extra.iterations !== undefined ? { iterations: extra.iterations } : {}),
-    ...(extra.evaluationRequestPath
-      ? { evaluationRequestPath: extra.evaluationRequestPath }
-      : {}),
+    ...(extra.evaluationRequestPath ? { evaluationRequestPath: extra.evaluationRequestPath } : {}),
   };
 }
 
@@ -264,7 +275,85 @@ type PlanExecutionOptions = {
   evaluator?: EditEvaluator;
   maxIterations?: number;
   maskPolicy?: MaskPolicy;
+  copySetup?: CopySetup;
 };
+
+/** What to do to a freshly verified Workflow Copy before the first edit. */
+export type CopySetup = {
+  /** Rename the Copy to "v1", "v2", ... (default true when the backend can). */
+  versionNames?: boolean;
+  /** Apply this develop preset first; it carries the photo's recipe profile. */
+  recipePreset?: { presetName: string; profileName: string };
+};
+
+export type CopySetupRecord = {
+  name: { result: string; copy_name?: string; reason?: string };
+  recipe?: { result: "applied" | "failed"; preset: string; profile: string; error?: string };
+};
+
+/**
+ * Name the Copy and apply the recipe preset. Neither may stop the edit: a
+ * failure is recorded and shown in the report, and the photo continues with
+ * the marker name or without the recipe look.
+ */
+async function prepareWorkflowCopy(
+  session: SessionStore,
+  backend: BackendAdapter,
+  masterPhotoId: string,
+  copy: { catalog_id: string; uuid: string },
+  operationId: string,
+  setup: CopySetup,
+): Promise<CopySetupRecord> {
+  const record: CopySetupRecord = { name: { result: "skipped" } };
+  const canRename =
+    backend.capabilities.capabilities.includes(RENAME_COPY_OPERATION) &&
+    backend.renameWorkflowCopy !== undefined &&
+    backend.listCopyNames !== undefined;
+  if (setup.versionNames === false) {
+    record.name = { result: "disabled" };
+  } else if (!canRename) {
+    record.name = { result: "unsupported", reason: "backend_cannot_rename_copies" };
+  } else {
+    try {
+      const marker = workflowCopyMarker(operationId);
+      const names = (await backend.listCopyNames!(masterPhotoId)).filter((name) => name !== marker);
+      const wanted = nextCopyVersionName(names);
+      const renamed = await backend.renameWorkflowCopy!(copy.catalog_id, copy.uuid, marker, wanted);
+      record.name = {
+        result: renamed.result,
+        ...(renamed.copy_name ? { copy_name: renamed.copy_name } : {}),
+        ...(renamed.reason ? { reason: renamed.reason } : {}),
+      };
+    } catch (error) {
+      record.name = {
+        result: "failed",
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+  if (setup.recipePreset) {
+    const { presetName, profileName } = setup.recipePreset;
+    try {
+      if (
+        !backend.capabilities.capabilities.includes(APPLY_PRESET_OPERATION) ||
+        !backend.applyDevelopPreset
+      ) {
+        throw new Error("backend cannot apply develop presets");
+      }
+      await backend.applyDevelopPreset(copy.catalog_id, presetName);
+      record.recipe = { result: "applied", preset: presetName, profile: profileName };
+    } catch (error) {
+      record.recipe = {
+        result: "failed",
+        preset: presetName,
+        profile: profileName,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+  await session.writeJson("workflow-copy-setup.json", record);
+  return record;
+}
 
 type MaskMode = MaskDecision["mode"];
 
@@ -375,6 +464,18 @@ async function executePlan(
         `Lightroom photo path mismatch; refusing mutation: ${current.path} <> ${source.raw_path}`,
       );
     }
+    let readable = dropUnreadableOperations(master.develop_settings, normalizedPlan);
+    normalizedPlan = readable.plan;
+    if (readable.skipped.length > 0) {
+      await session.appendEvent(session.currentState, { skipped_operations: readable.skipped });
+    }
+    if (normalizedPlan.operations.length === 0 && maskPartition.apply.length === 0) {
+      await session.transition("REVIEW_REQUIRED", {
+        reason: "no_executable_operations",
+        skipped_operations: readable.skipped,
+      });
+      return resultFor(session, normalizedPlan);
+    }
     let initialSettings: Record<string, number | string | boolean>;
     try {
       initialSettings = resolveLightroomSettings(master.develop_settings, normalizedPlan);
@@ -483,6 +584,38 @@ async function executePlan(
       return resultFor(session, normalizedPlan);
     }
     current = copyState;
+    const setupRecord = await prepareWorkflowCopy(
+      session,
+      options.backend,
+      master.identity.catalog_id,
+      workflowCopy.copy,
+      operationId,
+      options.copySetup ?? {},
+    );
+    if (setupRecord.recipe?.result === "applied") {
+      // The recipe preset sets only the profile; re-read so every later
+      // comparison starts from the Copy as it now is.
+      current = await options.backend.readCurrentEdit(workflowCopy.copy.catalog_id);
+    }
+    // Lightroom reports Temperature/Tint under "As Shot" only after a render, so
+    // the Copy can lack a value the Master had. Decide on the Copy that is edited.
+    const onCopy = dropUnreadableOperations(current.develop_settings, normalizedPlan);
+    if (onCopy.skipped.length > 0) {
+      normalizedPlan = onCopy.plan;
+      readable = { plan: onCopy.plan, skipped: [...readable.skipped, ...onCopy.skipped] };
+      await session.appendEvent(session.currentState, { skipped_operations: readable.skipped });
+      initialSettings = resolveLightroomSettings(current.develop_settings, normalizedPlan);
+      if (
+        !hasEffectiveSettings(current.develop_settings, initialSettings) &&
+        activeMasks.length === 0
+      ) {
+        await session.transition("REVIEW_REQUIRED", {
+          reason: "no_executable_operations",
+          skipped_operations: readable.skipped,
+        });
+        return resultFor(session, normalizedPlan);
+      }
+    }
     const activePhotoId = workflowCopy.copy.catalog_id;
     const ownerPrefix = maskOwnerPrefix(session.currentManifest.session_id);
     const loopState: LoopState = {
@@ -490,7 +623,7 @@ async function executePlan(
       maxIterations,
       activePhotoId,
       copyIdentity: copyIdentity!,
-      current: copyState,
+      current,
       initialSettings,
       activePlan: normalizedPlan,
       activeMasks,
@@ -505,6 +638,7 @@ async function executePlan(
       writtenMaskFingerprint: masksFingerprint([]),
       preservedForeign: 0,
       maskNotes: [],
+      skippedOperations: readable.skipped,
       evaluatorCalls: 0,
       totalTokens: 0,
       estimatedCostUsd: 0,
@@ -534,7 +668,9 @@ async function executePlan(
         loopState.maskReason = `mask_readback_absent${fallback.reason ? `:${fallback.reason}` : ""}`;
       } else if (inherited.status === "unreadable") {
         loopState.maskMode = "degraded_to_global";
-        loopState.maskReason = "existing_masks_unreadable";
+        loopState.maskReason = inherited.detail
+          ? `existing_masks_unreadable: ${inherited.detail}`
+          : "existing_masks_unreadable";
       } else {
         const unpreservable = findUnpreservableCorrection(
           inherited.corrections.filter((correction) => !isOwnedCorrection(correction, ownerPrefix)),
@@ -624,6 +760,8 @@ const LoopStateSchema = z
     writtenMaskFingerprint: z.string(),
     preservedForeign: z.number().int().nonnegative(),
     maskNotes: z.array(z.string()),
+    // Optional so loop states saved before this field existed still resume.
+    skippedOperations: z.array(z.string()).optional(),
     previousRenderHash: z.string().optional(),
     previousPlanHash: z.string().optional(),
     evaluatorCalls: z.number().nonnegative(),
@@ -733,6 +871,7 @@ async function finishLoopReport(
       preserved_foreign_corrections: state.preservedForeign,
       notes: state.maskNotes,
     },
+    skipped_operations: state.skippedOperations ?? [],
   });
 }
 
@@ -805,6 +944,16 @@ async function runClosedLoop(
       await session.transition("EVALUATING", { iteration, render: renderPath, resumed: true });
     } else {
       iteration = state.iteration;
+      if (iteration > 1) {
+        const readable = dropUnreadableOperations(state.current.develop_settings, state.activePlan);
+        if (readable.skipped.length > 0) {
+          state.activePlan = readable.plan;
+          state.skippedOperations = [
+            ...(state.skippedOperations ?? []),
+            ...readable.skipped.map((note) => `iteration ${iteration}: ${note}`),
+          ];
+        }
+      }
       const settings =
         iteration === 1
           ? state.initialSettings
@@ -826,7 +975,7 @@ async function runClosedLoop(
       const checkpoint = await backend.createCheckpoint(
         state.activePhotoId,
         checkpointName,
-        LIGHTROOM_CHECKPOINT_KEYS,
+        checkpointKeysFor(state.current.develop_settings, settings),
       );
       const checkpointEvidence = CheckpointEvidenceSchema.parse({
         iteration,
@@ -1061,8 +1210,13 @@ export async function continueSession(options: ContinueSessionOptions): Promise<
       samePath(current.path, session.currentManifest.source.raw_path) &&
       sameDevelopSettings(current.develop_settings, paused.readBack.develop_settings);
     let reason: string | undefined = unchanged ? undefined : "workflow_copy_changed_while_waiting";
-    const masksActive = state.maskMode === "merge_readback" || state.maskMode === "replace_unverified";
-    if (!reason && masksActive && maskBackendSupport(manifest, options.backend) !== state.maskSupport) {
+    const masksActive =
+      state.maskMode === "merge_readback" || state.maskMode === "replace_unverified";
+    if (
+      !reason &&
+      masksActive &&
+      maskBackendSupport(manifest, options.backend) !== state.maskSupport
+    ) {
       reason = "backend_mask_support_changed_while_waiting";
     }
     if (!reason && masksActive && state.maskSupport === "read_write") {
@@ -1178,6 +1332,7 @@ export async function runSinglePhoto(options: WorkflowOptions): Promise<Workflow
       ...(options.evaluator ? { evaluator: options.evaluator } : {}),
       ...(options.maxIterations !== undefined ? { maxIterations: options.maxIterations } : {}),
       ...(options.maskPolicy ? { maskPolicy: options.maskPolicy } : {}),
+      ...(options.copySetup ? { copySetup: options.copySetup } : {}),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1201,6 +1356,7 @@ export type ResumeCodexOptions = {
   evaluator?: EditEvaluator;
   maxIterations?: number;
   maskPolicy?: MaskPolicy;
+  copySetup?: CopySetup;
 };
 
 export async function resumeCodexSession(options: ResumeCodexOptions): Promise<WorkflowResult> {
@@ -1231,6 +1387,7 @@ export async function resumeCodexSession(options: ResumeCodexOptions): Promise<W
       ...(options.evaluator ? { evaluator: options.evaluator } : {}),
       ...(options.maxIterations !== undefined ? { maxIterations: options.maxIterations } : {}),
       ...(options.maskPolicy ? { maskPolicy: options.maskPolicy } : {}),
+      ...(options.copySetup ? { copySetup: options.copySetup } : {}),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1271,9 +1428,7 @@ async function readWorkflowCopyEvidence(session: SessionStore): Promise<{
     if (!isMissingArtifact(error)) invalidArtifacts.push("workflow-copy-intent.json");
   }
   try {
-    result = WorkflowCopyResultSchema.parse(
-      await session.readJson<unknown>("workflow-copy.json"),
-    );
+    result = WorkflowCopyResultSchema.parse(await session.readJson<unknown>("workflow-copy.json"));
   } catch (error) {
     if (!isMissingArtifact(error)) invalidArtifacts.push("workflow-copy.json");
   }
@@ -1326,32 +1481,23 @@ async function readIterationEvidence(session: SessionStore): Promise<IterationEv
   for (const operationPath of operationArtifacts) {
     let intent: DevelopIterationIntent;
     try {
-      intent = DevelopIterationIntentSchema.parse(
-        await session.readJson<unknown>(operationPath),
-      );
+      intent = DevelopIterationIntentSchema.parse(await session.readJson<unknown>(operationPath));
     } catch {
       invalidArtifacts.push(operationPath);
       status = "contradictory";
       continue;
     }
-    const checkpointPath = join(
-      "checkpoints",
-      `iteration-${intent.iteration}-before.json`,
-    );
+    const checkpointPath = join("checkpoints", `iteration-${intent.iteration}-before.json`);
     const readbackPath = `backend-readback-iteration-${intent.iteration}.json`;
     let checkpoint: CheckpointEvidence | undefined;
     let readback: DevelopReadbackEvidence | undefined;
     try {
-      checkpoint = CheckpointEvidenceSchema.parse(
-        await session.readJson<unknown>(checkpointPath),
-      );
+      checkpoint = CheckpointEvidenceSchema.parse(await session.readJson<unknown>(checkpointPath));
     } catch (error) {
       if (!isMissingArtifact(error)) invalidArtifacts.push(checkpointPath);
     }
     try {
-      readback = DevelopReadbackEvidenceSchema.parse(
-        await session.readJson<unknown>(readbackPath),
-      );
+      readback = DevelopReadbackEvidenceSchema.parse(await session.readJson<unknown>(readbackPath));
     } catch (error) {
       if (!isMissingArtifact(error)) invalidArtifacts.push(readbackPath);
     }
@@ -1422,7 +1568,10 @@ async function readMaskEvidence(session: SessionStore): Promise<MaskEvidenceSumm
     } catch (error) {
       if (!isMissingArtifact(error)) return { artifacts, status: "contradictory" };
     }
-    if (result && (result.operation_id !== intent.operation_id || result.iteration !== intent.iteration)) {
+    if (
+      result &&
+      (result.operation_id !== intent.operation_id || result.iteration !== intent.iteration)
+    ) {
       return { artifacts, status: "contradictory" };
     }
     if (!result || result.readback_status === "mismatch") status = "insufficient";
@@ -1577,7 +1726,10 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
     );
   }
 
-  let targetPhotoId = recordedCopy?.catalog_id ?? intent?.source.catalog_id ?? options.photoId ??
+  let targetPhotoId =
+    recordedCopy?.catalog_id ??
+    intent?.source.catalog_id ??
+    options.photoId ??
     session.currentManifest.source.raw_path;
   const expectedOverride = recordedCopy?.catalog_id ?? intent?.source.catalog_id;
   if (options.photoId && expectedOverride && options.photoId !== expectedOverride) {
@@ -1645,8 +1797,7 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
           !workflowCopyResultIsComplete(effectiveResult)
         ) {
           evidenceStatus = "insufficient";
-          reason =
-            effectiveResult.reason ?? "workflow_copy_reconciliation_evidence_insufficient";
+          reason = effectiveResult.reason ?? "workflow_copy_reconciliation_evidence_insufficient";
         } else {
           copyCreationReconciled = true;
           effectiveCopy = effectiveResult.copy;
@@ -1670,10 +1821,7 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
             ),
           });
           if (!copyEvidence.verification) {
-            await session.writeJson(
-              "workflow-copy-verification.json",
-              effectiveVerification,
-            );
+            await session.writeJson("workflow-copy-verification.json", effectiveVerification);
           }
           evidenceStatus = verified ? "consistent" : "contradictory";
           reason = verified
@@ -1710,19 +1858,13 @@ export async function recoverSession(options: RecoverSessionOptions): Promise<Wo
     if (evidenceStatus !== "contradictory" && iterationEvidence.status === "contradictory") {
       evidenceStatus = "contradictory";
       reason = "develop_iteration_evidence_contradictory";
-    } else if (
-      evidenceStatus === "consistent" &&
-      iterationEvidence.status === "insufficient"
-    ) {
+    } else if (evidenceStatus === "consistent" && iterationEvidence.status === "insufficient") {
       evidenceStatus = "insufficient";
       reason = "develop_iteration_outcome_uncertain";
     } else if (
       evidenceStatus === "consistent" &&
       iterationEvidence.lastReadback &&
-      !sameDevelopSettings(
-        current.develop_settings,
-        iterationEvidence.lastReadback.read_back,
-      )
+      !sameDevelopSettings(current.develop_settings, iterationEvidence.lastReadback.read_back)
     ) {
       evidenceStatus = "contradictory";
       reason = "develop_iteration_readback_contradicts_backend";
@@ -1875,7 +2017,12 @@ export async function restoreMasks(options: RestoreMasksOptions): Promise<Restor
       masks_restored_from: intent.operation_id,
       readback_status: readbackStatus,
     });
-    return { evidencePath: join(session.dir, evidencePath), written: before.length, readbackStatus, note };
+    return {
+      evidencePath: join(session.dir, evidencePath),
+      written: before.length,
+      readbackStatus,
+      note,
+    };
   } finally {
     if (connected) await options.backend.close();
     if (unlock) await unlock();

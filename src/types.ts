@@ -45,6 +45,8 @@ export type MaskReadback = {
   /** unreadable: the backend could not serialize the photo's masks. */
   status: "ok" | "absent" | "unreadable";
   corrections: LightroomMaskCorrection[];
+  /** Why the masks could not be read, when status is "unreadable". */
+  detail?: string;
 };
 export type SemanticIntentPlan = z.infer<typeof SemanticIntentPlanSchema>;
 export type NormalizedEditPlan = z.infer<typeof NormalizedEditPlanSchema>;
@@ -152,7 +154,28 @@ export type BackendAdapter = {
    * from "not exposed by this Lightroom version" and is never trusted as empty.
    */
   readMaskCorrections?(photoId: string): Promise<MaskReadback>;
+  /** Copy Names of a Master's Virtual Copies (to pick the next "vN"). */
+  listCopyNames?(masterPhotoId: string): Promise<string[]>;
+  /** Compare-and-set rename of a Workflow Copy (lightroom-mcp rename_virtual_copy). */
+  renameWorkflowCopy?(
+    copyPhotoId: string,
+    expectedUuid: string,
+    expectedCopyName: string,
+    copyName: string,
+  ): Promise<CopyRenameResult>;
+  /** Apply a Lightroom develop preset by name (used for recipe profiles). */
+  applyDevelopPreset?(photoId: string, presetName: string): Promise<unknown>;
+  /** Star rating (0-5) and pick flag (1 picked, 0 none, -1 rejected) of a photo. */
+  readOrganization?(photoId: string): Promise<PhotoOrganization>;
 };
+
+export type CopyRenameResult = {
+  result: "renamed" | "unchanged" | "REVIEW_REQUIRED";
+  copy_name?: string;
+  reason?: string;
+};
+
+export type PhotoOrganization = { rating: number; pick: -1 | 0 | 1 };
 
 export type EvaluationInput = {
   renderPath: string;
@@ -202,6 +225,11 @@ export type WorkflowOptions = {
   evaluator?: EditEvaluator;
   maxIterations?: number;
   maskPolicy?: MaskPolicy;
+  /** Copy naming and recipe preset; see CopySetup in workflow.ts. */
+  copySetup?: {
+    versionNames?: boolean;
+    recipePreset?: { presetName: string; profileName: string };
+  };
 };
 
 export type WorkflowResult = {

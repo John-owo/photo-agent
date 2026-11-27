@@ -148,7 +148,12 @@ describe("v0.1-alpha contracts", () => {
 
   it.each([
     ["a clamped adjustment", { Exposure2012: 5, Contrast2012: 100 }],
-    ["an unresolvable adjustment", { Exposure2012: "unavailable" }],
+    // One unreadable value is skipped and the rest applies (see masks.test.ts);
+    // only a plan with nothing readable left must stop before the copy.
+    [
+      "only unresolvable adjustments",
+      { Exposure2012: "unavailable", Contrast2012: "unavailable" },
+    ],
   ])("does not create a Workflow Copy for %s", async (_label, developOverride) => {
     const { root, raw, preview } = await fixturePair();
     const backend = new MockBackend(raw);

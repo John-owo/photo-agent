@@ -36,7 +36,7 @@ function usage(): string {
   return [
     "photo-agent edit-one --raw <RAW> --preview <JPEG> --backend <mock|lightroom> --provider <codex|mock|openai|claude> [--evaluator <none|mock|openai|claude>] [--intent-file <JSON>] [--apply] [--allow-cloud-preview] [--mode <interactive|unattended>] [--approve-masks <ids|all>] [--allow-mask-replace] [--web-references]",
     "photo-agent resume --session <SESSION_DIR> --intent-file <JSON> --backend <mock|lightroom> [--apply] [--evaluator <none|mock|openai|claude>] [--allow-cloud-preview] [--max-iterations <1-10>] [--mode <interactive|unattended>] [--approve-masks <ids|all>] [--allow-mask-replace]",
-    "photo-agent batch --root <SHOOT_DIR> [--backend lightroom] [--provider codex|claude|openai|mock] [--evaluator handoff|claude|openai|mock|none] [--allow-cloud-preview] [--mode unattended|interactive] [--max-iterations <1-10>] [--limit <N>] [--web-references] [--batch-root <DIR>]",
+    "photo-agent batch --root <SHOOT_DIR> [--backend lightroom] [--provider codex|claude|openai|mock] [--evaluator handoff|claude|openai|mock|none] [--allow-cloud-preview] [--mode unattended|interactive] [--max-iterations <1-10>] [--limit <N>] [--min-rating <0-5>] [--only-picked] [--no-recipe] [--no-version-names] [--web-references] [--batch-root <DIR>]",
     "photo-agent continue --session <SESSION_DIR> --evaluation-file <JSON> --backend <mock|lightroom> [--evaluator handoff|claude|openai|mock|none]",
     "photo-agent batch --resume <BATCH_DIR> [same provider/evaluator/backend flags]",
     "photo-agent recover --session <SESSION_DIR> --backend <mock|lightroom> [--photo-id <ID>]",
@@ -357,6 +357,10 @@ async function batch(argv: string[]): Promise<number> {
       "max-consecutive-failures": { type: "string", default: "5" },
       limit: { type: "string" },
       "web-references": { type: "boolean", default: false },
+      "min-rating": { type: "string" },
+      "only-picked": { type: "boolean", default: false },
+      "no-recipe": { type: "boolean", default: false },
+      "no-version-names": { type: "boolean", default: false },
       ...MASK_OPTIONS,
       mode: { type: "string", default: "unattended" },
       "batch-root": {
@@ -384,6 +388,11 @@ async function batch(argv: string[]): Promise<number> {
   if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
     throw new Error("--limit must be a positive integer");
   }
+  const minRating =
+    parsed.values["min-rating"] === undefined ? undefined : Number(parsed.values["min-rating"]);
+  if (minRating !== undefined && (!Number.isInteger(minRating) || minRating < 0 || minRating > 5)) {
+    throw new Error("--min-rating must be an integer from 0 to 5");
+  }
   const result = await runUnattendedBatch({
     ...(parsed.values.root ? { root: parsed.values.root } : {}),
     ...(parsed.values.resume ? { resumeDir: parsed.values.resume } : {}),
@@ -410,6 +419,10 @@ async function batch(argv: string[]): Promise<number> {
       backend: parsed.values.backend,
     },
     ...(limit !== undefined ? { limit } : {}),
+    ...(minRating !== undefined ? { minRating } : {}),
+    onlyPicked: parsed.values["only-picked"],
+    recipes: !parsed.values["no-recipe"],
+    versionNames: !parsed.values["no-version-names"],
     onProgress: (record, index, total) => {
       console.error(
         `[${index + 1}/${total}] ${record.relative_raw_path}: ${record.state}${record.reason ? ` (${record.reason})` : ""}${record.error ? ` ${record.error}` : ""}`,
@@ -425,6 +438,8 @@ async function batch(argv: string[]): Promise<number> {
         report: result.reportPath,
         worklist: result.worklistPath,
         waiting_for_agent: result.waiting,
+        ...(result.recipes ? { recipes: result.recipes } : {}),
+        ...(result.filter ? { filter: result.filter } : {}),
         stoppedEarly: result.stoppedEarly ?? null,
         counts,
       },

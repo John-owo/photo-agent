@@ -2,7 +2,7 @@ import { join, resolve } from "node:path";
 
 import { acquireMutationLock } from "./runtime.js";
 import { PROPAGATION_OPERATIONS, requireBackendHandshake } from "./backend-handshake.js";
-import { LIGHTROOM_CHECKPOINT_KEYS, resolveLightroomSettings } from "./translator.js";
+import { checkpointKeysFor, resolveLightroomSettings } from "./translator.js";
 import type {
   AnalysisProvider,
   BackendAdapter,
@@ -141,7 +141,11 @@ export async function applyPropagationPlan(options: {
           operations: target.operations,
           warnings: [],
         });
-        await backend.createCheckpoint(asset.raw_path, checkpoint, LIGHTROOM_CHECKPOINT_KEYS);
+        await backend.createCheckpoint(
+          asset.raw_path,
+          checkpoint,
+          checkpointKeysFor(current.develop_settings, settings),
+        );
         mutationStarted = true;
         await backend.applyGlobalAdjustment(asset.raw_path, settings);
         const readBack = await backend.readCurrentEdit(asset.raw_path);

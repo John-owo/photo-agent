@@ -26,7 +26,7 @@ import {
 import { writeFixtureJpeg } from "../src/preview.js";
 import { PROMPT, EVALUATION_PROMPT } from "../src/prompts.js";
 import { SemanticIntentPlanSchema } from "../src/schemas.js";
-import { translateIntent } from "../src/translator.js";
+import { checkpointKeysFor, translateIntent } from "../src/translator.js";
 import type {
   AnalysisProvider,
   EvaluationResult,
@@ -34,7 +34,13 @@ import type {
   SemanticIntentPlan,
 } from "../src/types.js";
 import { runUnattendedBatch } from "../src/unattended.js";
-import { continueSession, recoverSession, restoreMasks, runSinglePhoto } from "../src/workflow.js";
+import {
+  continueSession,
+  recoverSession,
+  restoreMasks,
+  runSinglePhoto,
+  sameDevelopSettings,
+} from "../src/workflow.js";
 
 const USER_MASK: LightroomMaskCorrection = {
   What: "Correction",
@@ -440,6 +446,127 @@ describe("mask workflow on the mock backend", () => {
     expect(decision.reason).toMatch(/^mask_readback_absent/);
   });
 
+  it("degrades to global adjustments when the plugin cannot read masks back", async () => {
+    const { root, raw, preview } = await fixturePair();
+    const backend = new MockBackend(raw, {
+      maskSupport: "read_write",
+      maskReadbackUnreadable: "plugin_without_mask_readback",
+    });
+    const result = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: fixedProvider(intentWithMasks([FACE_MASK], EXPOSURE_UP)),
+      backend,
+      sessionRoot: join(root, "sessions"),
+      apply: true,
+      allowCloudPreview: false,
+      evaluator: new AcceptingMockEvaluator(),
+      maskPolicy: { unattended: true },
+    });
+    expect(result.state).toBe("ACCEPTED");
+    expect(backend.maskWrites).toHaveLength(0);
+    expect(backend.calls).toContain("apply_global_adjustment");
+    const report = await readJson<{ masks: { mode: string; degrade_reason: string } }>(
+      join(result.sessionDir, "iteration-report.json"),
+    );
+    expect(report.masks).toMatchObject({
+      mode: "degraded_to_global",
+      degrade_reason: "existing_masks_unreadable: plugin_without_mask_readback",
+    });
+  });
+
+  it("skips an adjustment Lightroom cannot read back and applies the rest", async () => {
+    const { root, raw, preview } = await fixturePair();
+    // Live run 2026-11-27: "As Shot" white balance came back without Temperature.
+    const backend = new MockBackend(raw, { maskSupport: "none", omitDevelopKeys: ["Temperature"] });
+    const intent = intentWithMasks(
+      [],
+      [
+        ...EXPOSURE_UP,
+        {
+          parameter: "temperature",
+          direction: "decrease",
+          strength: "slight",
+          rationale: "slightly orange",
+          confidence: 0.8,
+        },
+      ],
+    );
+    const result = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: fixedProvider(intent),
+      backend,
+      sessionRoot: join(root, "sessions"),
+      apply: true,
+      allowCloudPreview: false,
+      evaluator: new AcceptingMockEvaluator(),
+    });
+    expect(result.state).toBe("ACCEPTED");
+    expect(backend.calls).toContain("apply_global_adjustment");
+    const report = await readJson<{ skipped_operations: string[] }>(
+      join(result.sessionDir, "iteration-report.json"),
+    );
+    expect(report.skipped_operations).toHaveLength(1);
+    expect(report.skipped_operations[0]).toMatch(/^temperature_k：.*Temperature.*As Shot/);
+    // Live rerun 2026-11-27: the checkpoint must not ask for the missing key.
+    expect(backend.calls).toContain("create_checkpoint");
+  });
+
+  it("ignores Temperature/Tint that Lightroom fills in lazily under As Shot", () => {
+    // Live rerun 2026-11-27: Temperature 4850 appeared on the copy after the render.
+    const paused = { WhiteBalance: "As Shot", Shadows2012: 16 };
+    expect(sameDevelopSettings({ ...paused, Temperature: 4850, Tint: 11 }, paused)).toBe(true);
+    expect(
+      sameDevelopSettings({ WhiteBalance: "Custom", Shadows2012: 16, Temperature: 4850 }, paused),
+    ).toBe(false);
+    expect(
+      sameDevelopSettings({ ...paused, Temperature: 4850 }, { ...paused, Temperature: 5200 }),
+    ).toBe(false);
+    expect(sameDevelopSettings({ ...paused, Shadows2012: 20 }, paused)).toBe(false);
+  });
+
+  it("checkpoints only reported keys and refuses to write an uncovered one", () => {
+    const current = { WhiteBalance: "As Shot", Exposure2012: 0, Shadows2012: 0 };
+    expect(checkpointKeysFor(current, { Shadows2012: 10 })).toEqual(
+      expect.arrayContaining(["WhiteBalance", "Exposure2012", "Shadows2012"]),
+    );
+    expect(checkpointKeysFor(current, { Shadows2012: 10 })).not.toContain("Temperature");
+    expect(() => checkpointKeysFor(current, { Temperature: 4800 })).toThrow(/Temperature/);
+  });
+
+  it("still stops for review when every adjustment is unreadable", async () => {
+    const { root, raw, preview } = await fixturePair();
+    const backend = new MockBackend(raw, { maskSupport: "none", omitDevelopKeys: ["Temperature"] });
+    const intent = intentWithMasks(
+      [],
+      [
+        {
+          parameter: "temperature",
+          direction: "decrease",
+          strength: "slight",
+          rationale: "slightly orange",
+          confidence: 0.8,
+        },
+      ],
+    );
+    const result = await runSinglePhoto({
+      rawPath: raw,
+      previewPath: preview,
+      provider: fixedProvider(intent),
+      backend,
+      sessionRoot: join(root, "sessions"),
+      apply: true,
+      allowCloudPreview: false,
+      evaluator: new AcceptingMockEvaluator(),
+    });
+    expect(result.state).toBe("REVIEW_REQUIRED");
+    expect(backend.calls).not.toContain("apply_global_adjustment");
+    const log = await readFile(join(result.sessionDir, "session.log"), "utf8");
+    expect(log).toContain("no_executable_operations");
+    expect(log).toContain("temperature_k");
+  });
+
   it("refuses to merge over a foreign brush mask", async () => {
     const { root, raw, preview } = await fixturePair();
     const brush = { ...USER_MASK, CorrectionMasks: [{ What: "Mask/Paint", Dabs: ["d 0.1 0.2"] }] };
@@ -710,6 +837,7 @@ describe("unattended batch", () => {
       maskPolicy: { unattended: true, allowUnverifiedReplace: true },
       mode: "unattended" as const,
       labels: { provider: "codex", evaluator: "handoff", backend: "mock" },
+      exiftool: null,
     };
     const { CodexProvider } = await import("../src/providers.js");
     options.providerFactory = () => new CodexProvider() as never;
@@ -789,6 +917,7 @@ describe("unattended batch", () => {
       mode: "unattended",
       labels: { provider: "mock", evaluator: null, backend: "mock" },
       maxConsecutiveFailures: 2,
+      exiftool: null,
     });
     expect(result.stoppedEarly).toMatch(/2 consecutive failures/);
     expect(result.records.map((record) => record.state)).toEqual(["FAILED", "FAILED", "PENDING"]);
@@ -796,7 +925,11 @@ describe("unattended batch", () => {
 });
 
 describe("backend capability detection", () => {
-  async function lightroomWithTools(options: { maskInput: boolean; readbackMeta: boolean }) {
+  async function lightroomWithTools(options: {
+    maskInput: boolean;
+    readbackMeta: boolean;
+    metadata?: unknown;
+  }) {
     const semantics = {
       supported: true,
       side_effect: "read_only",
@@ -861,9 +994,11 @@ describe("backend capability detection", () => {
       content: [
         {
           type: "text",
-          text: JSON.stringify({
-            developSettings: { MaskGroupBasedCorrections: [], maskReadback: "absent" },
-          }),
+          text: JSON.stringify(
+            options.metadata ?? {
+              developSettings: { MaskGroupBasedCorrections: [], maskReadback: "absent" },
+            },
+          ),
         },
       ],
     }));
@@ -894,6 +1029,23 @@ describe("backend capability detection", () => {
     const oldManifest = await old.handshake();
     expect(oldManifest.capabilities).not.toContain("apply_geometric_mask");
     await old.close();
+  });
+
+  it("reports masks as unreadable when the server advertises readback but the plugin is older", async () => {
+    // Live run 2026-11-27: server from the mask branch, plugin from before readback.
+    const mismatched = await lightroomWithTools({
+      maskInput: true,
+      readbackMeta: true,
+      metadata: { developSettings: { whiteBalance: "As Shot", shadows: 0 } },
+    });
+    await mismatched.connect();
+    await mismatched.handshake();
+    expect(await mismatched.readMaskCorrections("1")).toEqual({
+      status: "unreadable",
+      corrections: [],
+      detail: "plugin_without_mask_readback",
+    });
+    await mismatched.close();
   });
 });
 

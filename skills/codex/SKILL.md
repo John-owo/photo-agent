@@ -34,9 +34,28 @@ can answer yourself; record doubts in the JSON rationale instead.
      need). Never stop a bridge owned by another session; report it instead.
    - Keep the machine awake: use a keep-awake tool if you have one, otherwise
      tell the user before they leave that Windows sleep will pause the run.
+   - Which photos: `batch` edits every RAW in the folder. If the user culled in
+     Lightroom, pass `--only-picked` (Pick flag) and/or `--min-rating <N>`;
+     rejected photos are always skipped when a filter is set. Ask only if the
+     folder is large and they did not say whether they culled.
 2. **Start**: `batch --root <FOLDER> --backend lightroom --lightroom-mcp-entry <ENTRY>`
    (defaults: `--provider codex --evaluator handoff --mode unattended
 --max-iterations 3`). Note the `batchDir` it prints.
+   - Every Workflow Copy is renamed to `v1`, `v2`, ... per Master
+     (`--no-version-names` keeps the operation marker name). Needs lightroom-mcp
+     with `rename_virtual_copy`; older servers keep the marker name.
+   - Nikon recipes: the batch reads each NEF's Picture Control with exiftool
+     and looks for a matching Look profile under
+     `%APPDATA%\Adobe\CameraRaw\Settings` (made by the
+     `nikon-recipe-acr-profile` skill). A match is wrapped in a preset
+     `photo-agent recipe <profile>` and applied to the Copy before the first
+     edit, so editing starts from the camera look (`--no-recipe` turns it off).
+   - Read the printed `recipes` block. `missing_profiles` lists recipes without
+     a profile: if the user is still here, ask whether to build one with the
+     `nikon-recipe-acr-profile` skill first (needs ≥12 RAW+JPG pairs shot with
+     that recipe, ~15–25 min); unattended, carry on and those photos start from
+     Adobe colour (the report says so). `presets_need_restart` means Lightroom
+     must be restarted before the new preset can be applied.
 3. **Loop** until `waiting_for_agent` is 0:
    - Read `<batchDir>\worklist.md`. For each item, read its `request` file and
      look at the listed image(s) yourself (and the `before` preview for
@@ -50,8 +69,9 @@ can answer yourself; record doubts in the JSON rationale instead.
    - For large folders you may hand single items to subagents (give them the
      request path, image paths and output path); only you run `batch --resume`.
 4. **Finish**: read `<batchDir>\report.md` and summarise it for the user in
-   Traditional Chinese: done / needs review / failed, and which masks were
-   halved, removed or degraded.
+   Traditional Chinese: done / needs review / failed, the copy names (`vN`),
+   which recipe profile was applied or missing, and which masks were halved,
+   removed or degraded.
 
 If the batch stops early (`stoppedEarly`), fix the cause (Lightroom closed,
 bridge lock) and run `batch --resume`; finished photos are skipped and an

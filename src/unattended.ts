@@ -5,6 +5,12 @@ import { basename, dirname, extname, join, resolve } from "node:path";
 
 import { requireBackendHandshake } from "./backend-handshake.js";
 import { indexShoot } from "./batch.js";
+import {
+  ensureRecipePreset,
+  matchRecipeProfile,
+  readPhotoRecipes,
+  scanRecipeProfiles,
+} from "./recipes.js";
 import { SessionStore } from "./runtime.js";
 import type {
   AnalysisProvider,
@@ -14,7 +20,13 @@ import type {
   MaskPolicy,
   ShootAsset,
 } from "./types.js";
-import { continueSession, recoverSession, resumeCodexSession, runSinglePhoto } from "./workflow.js";
+import {
+  continueSession,
+  recoverSession,
+  resumeCodexSession,
+  runSinglePhoto,
+  type CopySetup,
+} from "./workflow.js";
 
 /**
  * Unattended ("overnight") batch editing.
@@ -54,6 +66,29 @@ export type BatchItemRecord = {
   };
   evaluator_calls?: number;
   total_tokens?: number;
+  /** Adjustments dropped because Lightroom did not report their current value. */
+  skipped_operations?: string[];
+  /** Copy Name after the rename ("v2"), when it happened. */
+  copy_name?: string;
+  copy_name_note?: string;
+  recipe?: { result: string; profile: string; error?: string };
+};
+
+/** Per-photo recipe decision made when the batch was created. */
+export type RecipePlanEntry = {
+  status: "matched" | "no_profile" | "builtin" | "unknown";
+  recipe?: string;
+  model?: string;
+  profile?: string;
+  preset?: string;
+  reason?: string;
+};
+
+export type BatchFilter = {
+  min_rating: number | null;
+  only_picked: boolean;
+  excluded: { relative_raw_path: string; rating: number; pick: number }[];
+  unresolved: string[];
 };
 
 export type BatchManifest = {
@@ -69,8 +104,16 @@ export type BatchManifest = {
     max_iterations: number;
     max_consecutive_failures: number;
     limit: number | null;
+    recipes?: boolean;
+    version_names?: boolean;
   };
   assets: ShootAsset[];
+  /** Set when --min-rating / --only-picked narrowed the folder. */
+  filter?: BatchFilter;
+  /** asset id -> recipe decision; absent when recipes were disabled. */
+  recipe_plan?: Record<string, RecipePlanEntry>;
+  /** Presets written now; Lightroom must restart before it can apply them. */
+  recipe_presets_need_restart?: string[];
 };
 
 export type UnattendedBatchOptions = {
@@ -87,6 +130,18 @@ export type UnattendedBatchOptions = {
   labels: { provider: string; evaluator: string | null; backend: string };
   limit?: number;
   maxConsecutiveFailures?: number;
+  /** Only edit photos rated at least this many stars in Lightroom. */
+  minRating?: number;
+  /** Only edit photos flagged as Pick in Lightroom. */
+  onlyPicked?: boolean;
+  /** Detect the Nikon recipe and apply its profile first (default true). */
+  recipes?: boolean;
+  /** Rename Workflow Copies to v1, v2, ... (default true). */
+  versionNames?: boolean;
+  /** Camera Raw Settings folder holding recipe profiles (tests). */
+  cameraRawSettingsDir?: string;
+  /** exiftool path, or null to skip recipe detection (tests). */
+  exiftool?: string | null;
   /** Called after every photo; the CLI prints progress. */
   onProgress?: (record: BatchItemRecord, index: number, total: number) => void;
 };
@@ -99,6 +154,13 @@ export type UnattendedBatchResult = {
   worklistPath: string;
   /** Photos waiting for an agent-written JSON file. */
   waiting: number;
+  /** Recipe preflight, so the agent can offer to build missing profiles. */
+  recipes?: {
+    matched: number;
+    missing_profiles: { recipe: string; model: string; photos: number }[];
+    presets_need_restart: string[];
+  };
+  filter?: { kept: number; excluded: number; unresolved: number };
 };
 
 const TERMINAL: ReadonlySet<BatchItemState> = new Set([
@@ -136,6 +198,22 @@ async function lastSessionReason(sessionDir: string): Promise<string | undefined
     const event = JSON.parse(lines.at(-1) ?? "{}") as { reason?: unknown; error?: unknown };
     if (typeof event.reason === "string") return event.reason;
     if (typeof event.error === "string") return event.error;
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+/** Skipped operations recorded in session.log, for photos that stop before a loop report. */
+async function lastSkippedOperations(sessionDir: string): Promise<string[] | undefined> {
+  try {
+    const lines = (await readFile(join(sessionDir, "session.log"), "utf8")).trim().split("\n");
+    for (const line of lines.reverse()) {
+      const event = JSON.parse(line) as { skipped_operations?: unknown };
+      if (Array.isArray(event.skipped_operations)) {
+        return event.skipped_operations.filter((item): item is string => typeof item === "string");
+      }
+    }
   } catch {
     return undefined;
   }
@@ -195,13 +273,160 @@ async function summarizeSession(sessionDir: string): Promise<Partial<BatchItemRe
     evaluator_calls?: number;
     total_tokens?: number;
     masks?: BatchItemRecord["masks"];
+    skipped_operations?: string[];
   }>(join(sessionDir, "iteration-report.json"));
   const reason = (await lastSessionReason(sessionDir)) ?? report?.reason;
+  const skipped = report?.skipped_operations ?? (await lastSkippedOperations(sessionDir));
+  const setup = await readJsonFile<{
+    name?: { result?: string; copy_name?: string; reason?: string };
+    recipe?: { result: string; profile: string; error?: string };
+  }>(join(sessionDir, "workflow-copy-setup.json"));
+  const renamed = setup?.name?.result === "renamed" || setup?.name?.result === "unchanged";
   return {
     ...(reason ? { reason } : {}),
+    ...(renamed && setup?.name?.copy_name ? { copy_name: setup.name.copy_name } : {}),
+    ...(!renamed && setup?.name?.result && setup.name.result !== "disabled"
+      ? {
+          copy_name_note: `${setup.name.result}${setup.name.reason ? `: ${setup.name.reason}` : ""}`,
+        }
+      : {}),
+    ...(setup?.recipe ? { recipe: setup.recipe } : {}),
+    ...(skipped && skipped.length > 0 ? { skipped_operations: skipped } : {}),
     ...(report?.masks ? { masks: report.masks } : {}),
     ...(report?.evaluator_calls !== undefined ? { evaluator_calls: report.evaluator_calls } : {}),
     ...(report?.total_tokens !== undefined ? { total_tokens: report.total_tokens } : {}),
+  };
+}
+
+/** Keep only photos that pass the Lightroom pick/rating filter. */
+async function filterByLightroomFlags(
+  assets: ShootAsset[],
+  options: UnattendedBatchOptions,
+): Promise<{ assets: ShootAsset[]; filter: BatchFilter }> {
+  const filter: BatchFilter = {
+    min_rating: options.minRating ?? null,
+    only_picked: options.onlyPicked === true,
+    excluded: [],
+    unresolved: [],
+  };
+  if (assets.length === 0) return { assets, filter };
+  const backend = options.backendFactory(assets[0]!.raw_path);
+  if (!backend.resolvePhotoId || !backend.readOrganization) {
+    throw new Error(
+      "This backend cannot read Lightroom picks and ratings; drop --min-rating/--only-picked",
+    );
+  }
+  const kept: ShootAsset[] = [];
+  await backend.connect();
+  try {
+    await requireBackendHandshake(backend, ["read_current_edit"]);
+    for (const asset of assets) {
+      const photoId = await backend.resolvePhotoId(asset.raw_path).catch(() => undefined);
+      if (!photoId) {
+        filter.unresolved.push(asset.relative_raw_path);
+        continue;
+      }
+      const flags = await backend.readOrganization(photoId);
+      const passes =
+        flags.pick !== -1 &&
+        (!filter.only_picked || flags.pick === 1) &&
+        flags.rating >= (filter.min_rating ?? 0);
+      if (passes) kept.push(asset);
+      else filter.excluded.push({ relative_raw_path: asset.relative_raw_path, ...flags });
+    }
+  } finally {
+    await backend.close();
+  }
+  return { assets: kept, filter };
+}
+
+/** Match each photo's Nikon recipe to an installed profile and write its preset. */
+async function planRecipes(
+  assets: ShootAsset[],
+  options: UnattendedBatchOptions,
+): Promise<{ plan: Record<string, RecipePlanEntry>; needRestart: string[] }> {
+  const plan: Record<string, RecipePlanEntry> = {};
+  const needRestart = new Set<string>();
+  if (options.exiftool === null || assets.length === 0) {
+    for (const asset of assets)
+      plan[asset.id] = { status: "unknown", reason: "recipe_detection_disabled" };
+    return { plan, needRestart: [] };
+  }
+  let recipes: Awaited<ReturnType<typeof readPhotoRecipes>>;
+  try {
+    recipes = await readPhotoRecipes(
+      assets.map((asset) => asset.raw_path),
+      ...(options.exiftool ? [options.exiftool] : []),
+    );
+  } catch (error) {
+    const reason = `exiftool_failed: ${error instanceof Error ? error.message : String(error)}`;
+    for (const asset of assets) plan[asset.id] = { status: "unknown", reason };
+    return { plan, needRestart: [] };
+  }
+  const profiles = await scanRecipeProfiles(options.cameraRawSettingsDir);
+  const presets = new Map<string, string>();
+  for (const asset of assets) {
+    const recipe = recipes.get(asset.raw_path);
+    if (!recipe) {
+      plan[asset.id] = { status: "unknown", reason: "no_picture_control_in_exif" };
+      continue;
+    }
+    const match = matchRecipeProfile(recipe, profiles);
+    if (match.status !== "matched") {
+      plan[asset.id] = {
+        status: match.status,
+        recipe: recipe.recipe,
+        model: recipe.model,
+        ...(match.status === "unknown" ? { reason: match.reason } : {}),
+      };
+      continue;
+    }
+    let presetName = presets.get(match.profile.file);
+    if (!presetName) {
+      const written = await ensureRecipePreset(match.profile, options.cameraRawSettingsDir);
+      presetName = written.presetName;
+      presets.set(match.profile.file, presetName);
+      if (written.created) needRestart.add(presetName);
+    }
+    plan[asset.id] = {
+      status: "matched",
+      recipe: recipe.recipe,
+      model: recipe.model,
+      profile: match.profile.name,
+      preset: presetName,
+    };
+  }
+  return { plan, needRestart: [...needRestart] };
+}
+
+function summarizeRecipes(manifest: BatchManifest): NonNullable<UnattendedBatchResult["recipes"]> {
+  const entries = Object.values(manifest.recipe_plan ?? {});
+  const missing = new Map<string, { recipe: string; model: string; photos: number }>();
+  for (const entry of entries) {
+    if (entry.status !== "no_profile" || !entry.recipe) continue;
+    const key = `${entry.recipe}|${entry.model ?? ""}`;
+    const current = missing.get(key) ?? {
+      recipe: entry.recipe,
+      model: entry.model ?? "",
+      photos: 0,
+    };
+    current.photos += 1;
+    missing.set(key, current);
+  }
+  return {
+    matched: entries.filter((entry) => entry.status === "matched").length,
+    missing_profiles: [...missing.values()],
+    presets_need_restart: manifest.recipe_presets_need_restart ?? [],
+  };
+}
+
+function copySetupFor(manifest: BatchManifest, assetId: string): CopySetup {
+  const entry = manifest.recipe_plan?.[assetId];
+  return {
+    versionNames: manifest.options.version_names !== false,
+    ...(entry?.status === "matched" && entry.preset && entry.profile
+      ? { recipePreset: { presetName: entry.preset, profileName: entry.profile } }
+      : {}),
   };
 }
 
@@ -221,7 +446,14 @@ export async function runUnattendedBatch(
     const batchId = `batch-${new Date().toISOString().replaceAll(":", "-").replace(/\..+$/, "")}-${randomUUID().slice(0, 6)}`;
     batchDir = resolve(options.batchRoot, batchId);
     await mkdir(batchDir, { recursive: true });
-    const assets = await indexShoot(options.root);
+    const indexed = await indexShoot(options.root);
+    const filtered: { assets: ShootAsset[]; filter?: BatchFilter } =
+      options.minRating !== undefined || options.onlyPicked
+        ? await filterByLightroomFlags(indexed, options)
+        : { assets: indexed };
+    const assets =
+      options.limit !== undefined ? filtered.assets.slice(0, options.limit) : filtered.assets;
+    const recipes = options.recipes === false ? undefined : await planRecipes(assets, options);
     manifest = {
       schema_version: "0.4.0",
       batch_id: batchId,
@@ -235,8 +467,13 @@ export async function runUnattendedBatch(
         max_iterations: options.maxIterations,
         max_consecutive_failures: maxConsecutiveFailures,
         limit: options.limit ?? null,
+        recipes: options.recipes !== false,
+        version_names: options.versionNames !== false,
       },
-      assets: options.limit !== undefined ? assets.slice(0, options.limit) : assets,
+      assets,
+      ...(filtered.filter ? { filter: filtered.filter } : {}),
+      ...(recipes ? { recipe_plan: recipes.plan } : {}),
+      ...(recipes?.needRestart.length ? { recipe_presets_need_restart: recipes.needRestart } : {}),
     };
     await writeJson(join(batchDir, "batch.json"), manifest);
   }
@@ -291,6 +528,7 @@ export async function runUnattendedBatch(
                 ...(evaluator ? { evaluator } : {}),
                 maxIterations: options.maxIterations,
                 maskPolicy: options.maskPolicy,
+                copySetup: copySetupFor(manifest, asset.id),
               })
             : await continueSession({
                 sessionDir: previous.session_dir,
@@ -389,6 +627,7 @@ export async function runUnattendedBatch(
         ...(evaluator ? { evaluator } : {}),
         maxIterations: options.maxIterations,
         maskPolicy: options.maskPolicy,
+        copySetup: copySetupFor(manifest, asset.id),
       });
       record = await recordFromResult({ ...base, preview_source: previewSource }, result);
     } catch (error) {
@@ -413,6 +652,16 @@ export async function runUnattendedBatch(
   return {
     batchDir,
     records,
+    ...(manifest.recipe_plan ? { recipes: summarizeRecipes(manifest) } : {}),
+    ...(manifest.filter
+      ? {
+          filter: {
+            kept: manifest.assets.length,
+            excluded: manifest.filter.excluded.length,
+            unresolved: manifest.filter.unresolved.length,
+          },
+        }
+      : {}),
     ...(stoppedEarly ? { stoppedEarly } : {}),
     reportPath,
     worklistPath: worklist.path,
@@ -565,12 +814,51 @@ const REASON_LABEL: Record<string, string> = {
   mask_placement_requires_user_confirmation: "遮罩位置較主觀，等你確認",
   mask_readback_mismatch: "遮罩寫入後讀回不一致",
   backend_does_not_support_geometric_masks: "後端不支援遮罩，只做全域調整",
+  existing_masks_unreadable: "讀不到複本上原有的遮罩，只做全域調整",
+  workflow_copy_changed_while_waiting: "等待評分期間副本被改過",
+  mask_readback_absent: "Lightroom 沒回傳遮罩資料，改用 XMP 判斷",
   no_effective_adjustments: "沒有需要調整的地方",
   no_executable_operations: "沒有可執行的調整",
   uncertain_backend_state: "Lightroom 狀態不確定，請用 recover 檢查",
   ambiguous_raw_preview_pairing: "RAW 與預覽配對不明確",
   interrupted_before_finish: "上次執行中斷",
 };
+
+/** Recipe summary: what was applied, and recipes that have no profile yet. */
+function recipeSection(manifest: BatchManifest, records: BatchItemRecord[]): string[] {
+  const plan = manifest.recipe_plan;
+  if (!plan) return [];
+  const entries = Object.values(plan);
+  const lines: string[] = ["## 配方描述檔", ""];
+  const applied = records.filter((record) => record.recipe?.result === "applied").length;
+  const failed = records.filter((record) => record.recipe?.result === "failed");
+  const matched = entries.filter((entry) => entry.status === "matched").length;
+  lines.push(`- 對上本機描述檔：${matched} 張；已套用：${applied} 張`);
+  const missing = new Map<string, number>();
+  for (const entry of entries) {
+    if (entry.status === "no_profile" && entry.recipe) {
+      const key = `${entry.recipe}（${entry.model ?? "?"}）`;
+      missing.set(key, (missing.get(key) ?? 0) + 1);
+    }
+  }
+  for (const [recipe, count] of missing) {
+    lines.push(`- 沒有描述檔：${recipe} ${count} 張，這些照片從 Adobe 預設色彩開始修`);
+  }
+  const builtin = entries.filter((entry) => entry.status === "builtin").length;
+  if (builtin) lines.push(`- 使用相機內建 Picture Control（不需要描述檔）：${builtin} 張`);
+  const unknown = entries.filter((entry) => entry.status === "unknown").length;
+  if (unknown) lines.push(`- 讀不到配方：${unknown} 張`);
+  if (manifest.recipe_presets_need_restart?.length) {
+    lines.push(
+      `- 這次新建了預設 ${manifest.recipe_presets_need_restart.join("、")}；Lightroom 要重開才載入，重開前套用會失敗`,
+    );
+  }
+  for (const record of failed) {
+    lines.push(`- **${record.relative_raw_path}** 套用失敗：${record.recipe?.error ?? ""}`);
+  }
+  lines.push("");
+  return lines;
+}
 
 function describeReason(reason: string | undefined): string {
   if (!reason) return "";
@@ -607,6 +895,20 @@ export async function writeMorningReport(
     "所有修改都只寫在 photo-agent 建立的虛擬複本（Workflow Copy）上，原始照片（Master）沒有被改動。不滿意的照片直接刪掉那張虛擬複本即可。",
     "",
   ];
+  if (manifest.filter) {
+    const f = manifest.filter;
+    const rule = [
+      f.only_picked ? "只修標為留用的" : "",
+      f.min_rating !== null ? `${f.min_rating} 星以上` : "",
+    ]
+      .filter(Boolean)
+      .join("、");
+    lines.push(
+      `- 篩選：${rule}；排除 ${f.excluded.length} 張${f.unresolved.length ? `，${f.unresolved.length} 張不在 Lightroom 目錄裡` : ""}`,
+      "",
+    );
+  }
+  lines.push(...recipeSection(manifest, records));
   if (stoppedEarly) {
     lines.push(
       `> **批次提前停止**：${stoppedEarly}。修好原因後用 \`photo-agent batch --resume "${batchDir}"\` 接著跑，已完成的照片會略過。`,
@@ -632,17 +934,35 @@ export async function writeMorningReport(
         `- **${record.relative_raw_path}**：模式 ${record.masks?.mode ?? "?"}，最後套用 ${record.masks?.final_applied?.join(", ") || "無"}`,
       );
       if (record.masks?.degrade_reason)
-        lines.push(`  - 降級原因：${describeReason(record.masks.degrade_reason)}`);
+        lines.push(
+          `  - ${record.masks.mode === "degraded_to_global" ? "降級原因" : "說明"}：${describeReason(record.masks.degrade_reason)}`,
+        );
       if (record.masks?.pending_review?.length)
         lines.push(`  - 等你確認：${record.masks.pending_review.join(", ")}`);
       for (const note of record.masks?.notes ?? []) lines.push(`  - ${note}`);
     }
     lines.push("");
   }
-  lines.push("## 全部照片", "", "| 照片 | 狀態 | 迭代 | 遮罩 | 說明 |", "|---|---|---|---|---|");
+  const withSkipped = records.filter((record) => (record.skipped_operations?.length ?? 0) > 0);
+  if (withSkipped.length > 0) {
+    lines.push("## 略過的調整", "");
+    for (const record of withSkipped) {
+      lines.push(`- **${record.relative_raw_path}**`);
+      for (const note of record.skipped_operations ?? []) lines.push(`  - ${note}`);
+    }
+    lines.push("");
+  }
+  lines.push(
+    "## 全部照片",
+    "",
+    "| 照片 | 副本 | 狀態 | 迭代 | 配方 | 遮罩 | 說明 |",
+    "|---|---|---|---|---|---|---|",
+  );
   for (const record of records) {
+    const recipe =
+      record.recipe?.result === "applied" ? record.recipe.profile : record.recipe ? `套用失敗` : "";
     lines.push(
-      `| ${cell(record.relative_raw_path)} | ${STATE_LABEL[record.state] ?? record.state} | ${record.iterations ?? ""} | ${cell(record.masks?.final_applied?.join(", ") ?? "")} | ${cell(describeReason(record.reason) || record.error || "")} |`,
+      `| ${cell(record.relative_raw_path)} | ${cell(record.copy_name ?? "")} | ${STATE_LABEL[record.state] ?? record.state} | ${record.iterations ?? ""} | ${cell(recipe)} | ${cell(record.masks?.final_applied?.join(", ") ?? "")} | ${cell(describeReason(record.reason) || record.error || "")} |`,
     );
   }
   lines.push("");

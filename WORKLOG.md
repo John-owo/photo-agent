@@ -1969,3 +1969,139 @@ Cloud-analyzer checkpoint:
   write/readback through photo-agent, and visual quality of agent-drawn masks
   remain unverified. The Claude API provider was only tested with a fake
   client.
+
+## 2026-11-27 First live Lightroom batch (`--limit 3`) and two fixes
+
+- Run: `batch --root "D:\photo\2026\11.13~21 homestay 十合田湖and澳路賴溪" --backend lightroom --limit 3`
+  (DSC_8446-8448, indoor group shots). The bridge lock was held by another
+  Claude Code session's MCP server (PID 37992); the user asked for it to be
+  stopped. Batch dir: `.photo-agent/batches/batch-2026-11-27T02-33-57-80c328`.
+- Result: all three `REVIEW_REQUIRED`, nothing applied. Side effect: two
+  Workflow Copies (catalog 138940 for DSC_8447, 138970 for DSC_8448) with
+  inherited settings only; the run stopped before any develop write.
+- Finding 1: Lightroom returns `whiteBalance: "As Shot"` with no Temperature
+  value, so `resolveLightroomSettings` rejected the whole DSC_8446 plan.
+  Fix: `dropUnreadableOperations` (translator) removes only operations whose
+  current value is not numeric, records them in plan warnings, the session log
+  and `iteration-report.json` `skipped_operations`; the morning report lists
+  them under "略過的調整". A plan with nothing readable left still stops before
+  creating a copy. Refinement iterations use the same rule.
+- Finding 2: the server (`lightroom-mcp-masks`) advertises mask readback, but
+  the installed plugin (`%APPDATA%\Adobe\Lightroom\Modules\LightroomMCP.lrplugin`,
+  2026-11-18) predates readback and returns neither `maskReadback` nor
+  `MaskGroupBasedCorrections`. `readMaskCorrections` threw, leaving
+  `uncertain_backend_state`. Fix: that response is now
+  `{status: "unreadable", detail: "plugin_without_mask_readback"}`, so the photo
+  degrades to global adjustments with reason
+  `existing_masks_unreadable: plugin_without_mask_readback`.
+- Tests: 4 new cases in `tests/masks.test.ts` (adapter mismatch, mock
+  degrade, partial skip, all-unreadable stop); the v0.1 contract case in
+  `tests/workflow.test.ts` now covers "only unresolvable adjustments".
+  `npm.cmd run check`, `lint`, `test` (5 files / 93 tests) and `build` passed.
+- Not verified: the batch has not been rerun on live Lightroom after the fix;
+  the mask-branch plugin is still not installed in Lightroom.
+- Follow-up (same day): with the user's go-ahead, the old plugin folder was
+  sent to the Recycle Bin and `D:\work\lightroom-mcp-masks\plugin\LightroomMCP.lrplugin`
+  copied into Lightroom's Modules folder (18 files, hashes identical). After a
+  Lightroom restart, `get_photo_metadata` on DSC_8446/8447 returns
+  `maskReadback: "absent"` with `MaskGroupBasedCorrections: []`, so the plugin
+  now reports the readback field. No batch rerun yet.
+
+## 2026-11-27 Live reruns after the plugin install
+
+- Rerun 1 (`batch-2026-11-27T02-52-45-2bfcd0`): the temperature skip worked,
+  then all three stopped at the checkpoint: `create_develop_preset` was asked
+  for all 14 keys and the plugin refuses a key the photo lacks ("Source photo
+  has no develop setting: Temperature"). Nothing was applied; copies 139006,
+  139036, 139063 hold inherited settings only.
+  Fix: `checkpointKeysFor` checkpoints only keys Lightroom reported and refuses
+  if any key about to be written is not covered (both `workflow.ts` and
+  `batch-edit.ts`). MockBackend.createCheckpoint now mirrors the plugin error.
+- Rerun 2 (`batch-2026-11-27T02-54-45-e5412e`): first live end-to-end run.
+  Masks were written (`replace_unverified`, readback `absent` -> XMP had no
+  masks) and read back `verified` (Mask/Gradient for 8446, Mask/CircularGradient
+  with `Flipped: true` for 8447/8448). Agent evaluations through the handoff:
+  8446 refine (ceiling mask `unnecessary`, removed) then ACCEPTED at iteration 2;
+  8447 ACCEPTED with the face mask; 8448 REVIEW_REQUIRED
+  `workflow_copy_changed_while_waiting`. Kept copies: 139096, 139131, 139166.
+- Finding: under "As Shot", Lightroom fills Temperature/Tint lazily after a
+  render (8448's copy read 4850/11 on resume but had no Temperature when
+  paused), so the strict settings comparison saw a change nobody made.
+  Fix: `sameDevelopSettings` ignores a Temperature/Tint key present on only
+  one side when both sides are "As Shot"; a value change or a WhiteBalance
+  change still counts. Applies to every use (copy inheritance, resume,
+  recover).
+- Verification: check, lint, test (5 files / 95 tests), build passed. The
+  8448 fix has not been re-run live.
+- Report nits seen live (not fixed): `mask_readback_absent` is printed under
+  "降級原因" although masks were still applied; `workflow_copy_changed_while_waiting`
+  has no Chinese label.
+
+## 2026-11-27 Copy names, pick/rating filter and Nikon recipe profiles
+
+- Requested by the user: Workflow Copies named `v1`, `v2`, ...; only edit
+  culled photos; start editing from the Nikon recipe profile.
+- lightroom-mcp (`D:\work\lightroom-mcp-masks`, new branch
+  `feat/virtual-copy-rename` on top of `feat/mask-readback`, uncommitted): new
+  tool `rename_virtual_copy` (compare-and-set on current Copy Name, idempotent,
+  Masters rejected). Server build, lint and Jest (15 suites / 187 tests)
+  passed. Four new Lua specs in `HandlerVirtualCopy_spec.lua` were NOT run:
+  no Lua on this machine and the npm download of fengari was blocked.
+- photo-agent:
+  - `src/recipes.ts`: scan Look profiles in Camera Raw Settings, read
+    Model/PictureControlName with exiftool (UTF-8 argfile), match recipe +
+    camera, wrap the profile in a Normal preset that only sets `crs:Look`
+    (`Settings\photo-agent\photo-agent recipe <profile>.xmp`).
+  - Workflow: after the Copy is verified, `prepareWorkflowCopy` renames it to
+    the next free `vN` and applies the recipe preset; failures are recorded in
+    `workflow-copy-setup.json` and never stop the photo. Readability is then
+    re-checked on the Copy (the recipe made Lightroom stop reporting "As Shot"
+    Temperature on 8446's Copy while the Master reported it, and the checkpoint
+    guard refused; fixed and re-run live).
+  - Batch: `--only-picked`, `--min-rating`, `--no-recipe`,
+    `--no-version-names`; recipe preflight in `batch.json` (`recipe_plan`),
+    CLI prints `recipes.missing_profiles` / `presets_need_restart`; report adds
+    filter line, "配方描述檔" section, copy-name and recipe columns, and labels
+    `mask_readback_absent` as 說明 instead of 降級原因.
+  - Tests: new `tests/copy-setup.test.ts`; 6 files / 102 tests, check, lint,
+    build passed.
+- Live (Lightroom restarted with the new plugin; the server had to be started
+  by hand in Plug-in Manager this time):
+  - Preset approach verified on junk copy 138940 (renamed `rename-test`): mean
+    abs RGB difference to the camera JPG 19.2 before, 2.8 after.
+  - `batch-2026-11-27T03-38-47-bf3ac1`: copies renamed v1, recipe applied on
+    all three; 8447/8448 ACCEPTED; 8446 hit the Temperature case above.
+  - `batch-2026-11-27T03-41-30-30fe27`: 8446 copy `v2`, recipe applied,
+    temperature skipped, ACCEPTED.
+- Found, not fixed: this shoot keeps RAW in `raw\` and JPG in `jpg\`, so
+  `indexShoot` does not pair them and the analysis/"before" preview is a
+  Lightroom baseline render (Adobe colour, no recipe) instead of the camera JPG.
+- Leftover copies in the catalog from these runs: 138940 (`rename-test`),
+  138970, 139006, 139036, 139063 (marker names, inherited settings only) and
+  earlier kept edits 139096/139131/139166; the new `v1`/`v2` copies hold the
+  current edits.
+
+## 2026-11-27 RAW/JPEG pairing across folders
+
+- Problem seen live: shoots keep `raw\` and `jpg\` side by side, so
+  `indexShoot` (same folder + same stem only) paired nothing and every
+  preview was a Lightroom baseline render (Adobe colour, no recipe). The user
+  organizes folders differently on each computer, so no folder name is
+  hard-coded.
+- `indexShoot` now: same folder first; otherwise the nearest ancestor of the
+  RAW's folder whose subtree holds exactly one unclaimed same-name JPEG.
+  Several candidates at that level, or one JPEG claimed by two RAWs, stay
+  `ambiguous`. JPEGs whose EXIF/XMP names an editor (Adobe Photoshop,
+  Lightroom, Camera Raw, Capture One, darktable, RawTherapee, Luminar,
+  DxO PhotoLab/PureRAW, Affinity Photo, GIMP, Snapseed, NX Studio;
+  case-sensitive) are never candidates. New optional asset field
+  `preview_match: same_folder | nearby_folder`.
+- The first editor check was case-insensitive and matched "dxo"/"DXO" inside
+  Z5II maker notes (DSC_8516, DSC_7807), dropping real camera JPEGs; fixed by
+  matching full product names case-sensitively.
+- Read-only check on D:\photo\2026 (RAW / paired / ambiguous / no JPEG):
+  11.10 390/218/0/172, 11.11 98/92/0/6 (修好的\ Lightroom exports excluded;
+  was 4 ambiguous), 11.12 42/42/0/0, 11.13~21 104/104/0/0, 11.8~9 141/135/0/6.
+  The unpaired RAWs have no camera JPEG of that name.
+- Tests: 3 new cases in `tests/milestones.test.ts`; 6 files / 105 tests,
+  check, lint, build passed. No Lightroom batch rerun after this change.
