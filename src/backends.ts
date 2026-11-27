@@ -1,5 +1,5 @@
 import { mkdir, readdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -18,15 +18,42 @@ import {
   WORKFLOW_COPY_RECONCILIATION_OPERATION,
   type BackendHandshakeRequirements,
 } from "./backend-handshake.js";
+import { MASK_READ_OPERATION, MASK_WRITE_OPERATION } from "./masks.js";
 import { writeFixtureJpeg } from "./preview.js";
 import type {
   BackendAdapter,
   BackendCapabilityManifest,
   BackendPhotoState,
   CheckpointResult,
+  CopyRenameResult,
+  LightroomMaskCorrection,
+  MaskReadback,
+  PhotoOrganization,
   RenderResult,
   WorkflowCopyResult,
 } from "./types.js";
+
+export const RENAME_COPY_OPERATION = "rename_workflow_copy" as const;
+export const APPLY_PRESET_OPERATION = "apply_develop_preset" as const;
+
+/** The Copy Name lightroom-mcp gives a Workflow Copy at creation. */
+export function workflowCopyMarker(operationId: string): string {
+  return `Lightroom MCP VC [${operationId}]`;
+}
+
+/** Next free "vN" among a Master's Virtual Copy names. */
+export function nextCopyVersionName(existing: readonly string[]): string {
+  let highest = 0;
+  for (const name of existing) {
+    const match = /^v(\d+)$/.exec(name.trim());
+    if (match) highest = Math.max(highest, Number(match[1]));
+  }
+  return `v${highest + 1}`;
+}
+
+function pickFromStatus(value: unknown): -1 | 0 | 1 {
+  return value === 1 || value === -1 ? value : 0;
+}
 
 const SUPPORTED_DEVELOP_KEYS = [
   "WhiteBalance",
@@ -48,8 +75,15 @@ const SUPPORTED_DEVELOP_KEYS = [
 const PLUGIN_READY_TIMEOUT_MS = 10_000;
 const PLUGIN_READY_RETRY_MS = 250;
 export const LIGHTROOM_MCP_SERVER_NAME = "lightroom-mcp-server";
-export const OPERATION_SEMANTICS_META_KEY =
-  "io.github.john-owo.lightroom-mcp/operation-semantics";
+export const OPERATION_SEMANTICS_META_KEY = "io.github.john-owo.lightroom-mcp/operation-semantics";
+
+export const RESOLVE_PHOTO_ID_OPERATION = "resolve_photo_id" as const;
+export const MASK_READBACK_META_KEY = "io.github.john-owo.lightroom-mcp/mask-readback";
+
+function toolAcceptsMaskCorrections(inputSchema: unknown): boolean {
+  const settings = asRecord(asRecord(asRecord(inputSchema).properties).settings);
+  return "MaskGroupBasedCorrections" in asRecord(settings.properties);
+}
 
 export const LIGHTROOM_TRUST_BOUNDARY = {
   transport: "localhost stdio -> Lightroom MCP local TCP bridge",
@@ -70,6 +104,9 @@ const LIGHTROOM_TOOL_OPERATIONS = {
   export_photos: "render_preview",
   create_virtual_copy: "create_workflow_copy",
   reconcile_virtual_copy: WORKFLOW_COPY_RECONCILIATION_OPERATION,
+  search_photos: RESOLVE_PHOTO_ID_OPERATION,
+  rename_virtual_copy: RENAME_COPY_OPERATION,
+  apply_develop_preset: APPLY_PRESET_OPERATION,
 } as const;
 
 const LIGHTROOM_HANDSHAKE_REQUIREMENTS: BackendHandshakeRequirements = {
@@ -187,6 +224,35 @@ export const MOCK_CAPABILITIES = BackendCapabilityManifestSchema.parse({
   operations: LIGHTROOM_CAPABILITIES.operations,
 });
 
+function mockManifestWithMasks(support: "read_write" | "write_only"): BackendCapabilityManifest {
+  const extra =
+    support === "read_write" ? [MASK_WRITE_OPERATION, MASK_READ_OPERATION] : [MASK_WRITE_OPERATION];
+  return BackendCapabilityManifestSchema.parse({
+    ...MOCK_CAPABILITIES,
+    capabilities: [...MOCK_CAPABILITIES.capabilities, ...extra],
+    operations: {
+      ...MOCK_CAPABILITIES.operations,
+      [MASK_WRITE_OPERATION]: MOCK_CAPABILITIES.operations.apply_global_adjustment,
+      ...(support === "read_write"
+        ? { [MASK_READ_OPERATION]: MOCK_CAPABILITIES.operations.read_current_edit }
+        : {}),
+    },
+  });
+}
+
+function withOrganizerOperations(manifest: unknown): BackendCapabilityManifest {
+  const parsed = BackendCapabilityManifestSchema.parse(manifest);
+  return BackendCapabilityManifestSchema.parse({
+    ...parsed,
+    capabilities: [...parsed.capabilities, RENAME_COPY_OPERATION, APPLY_PRESET_OPERATION],
+    operations: {
+      ...parsed.operations,
+      [RENAME_COPY_OPERATION]: parsed.operations.apply_global_adjustment,
+      [APPLY_PRESET_OPERATION]: parsed.operations.apply_global_adjustment,
+    },
+  });
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
@@ -288,17 +354,160 @@ export class MockBackend implements BackendAdapter {
     Saturation: 0,
   };
 
-  constructor(private readonly photoPath: string, manifestOrOptions?: unknown) {
+  /** Mask sets per photo id; the Master key is "master". */
+  private readonly masks = new Map<string, LightroomMaskCorrection[]>();
+  readonly maskWrites: { photoId: string; corrections: LightroomMaskCorrection[] }[] = [];
+  private readonly failMaskWrite: boolean;
+  private readonly readbackAbsentWhenEmpty: boolean;
+  private readonly readbackUnreadableDetail: string | undefined;
+  private readonly existingCopyNames: string[];
+  private readonly knownPresets: Set<string>;
+  private readonly organization: PhotoOrganization;
+  private readonly presetDropsKeys: string[];
+  readonly copyNames = new Map<string, string>();
+  readonly appliedPresets: { photoId: string; preset: string }[] = [];
+
+  constructor(
+    private readonly photoPath: string,
+    manifestOrOptions?: unknown,
+  ) {
     const options = asRecord(manifestOrOptions);
     const requestedIdentity = options.sourceIdentity;
     this.sourceIdentityMode =
       requestedIdentity === "virtual_copy" || requestedIdentity === "uncertain"
         ? requestedIdentity
         : "master";
+    const optionMode =
+      "manifest" in options ||
+      "sourceIdentity" in options ||
+      "maskSupport" in options ||
+      "existingMasks" in options ||
+      "omitDevelopKeys" in options ||
+      "maskReadbackUnreadable" in options ||
+      "organizer" in options;
+    const maskSupport = options.maskSupport;
+    const baseManifest = optionMode
+      ? (options.manifest ??
+        (maskSupport === "read_write" || maskSupport === "write_only"
+          ? mockManifestWithMasks(maskSupport)
+          : MOCK_CAPABILITIES))
+      : (manifestOrOptions ?? MOCK_CAPABILITIES);
+    // organizer: copy rename, develop presets and pick/rating like lightroom-mcp
+    // with rename_virtual_copy. Values: existing copy names, known presets, etc.
+    const organizer = asRecord(options.organizer);
     this.advertisedManifest =
-      "manifest" in options || "sourceIdentity" in options
-        ? (options.manifest ?? MOCK_CAPABILITIES)
-        : (manifestOrOptions ?? MOCK_CAPABILITIES);
+      options.organizer === undefined ? baseManifest : withOrganizerOperations(baseManifest);
+    this.existingCopyNames = Array.isArray(organizer.existingCopyNames)
+      ? organizer.existingCopyNames.filter((name): name is string => typeof name === "string")
+      : [];
+    this.knownPresets = new Set(
+      Array.isArray(organizer.presets)
+        ? organizer.presets.filter((name): name is string => typeof name === "string")
+        : [],
+    );
+    this.organization = {
+      rating: typeof organizer.rating === "number" ? organizer.rating : 0,
+      pick: pickFromStatus(organizer.pick),
+    };
+    this.presetDropsKeys = Array.isArray(organizer.presetDropsKeys)
+      ? organizer.presetDropsKeys.filter((key): key is string => typeof key === "string")
+      : [];
+    this.failMaskWrite = options.failMaskWrite === true;
+    this.readbackAbsentWhenEmpty = options.maskReadbackAbsentWhenEmpty === true;
+    if (typeof options.maskReadbackUnreadable === "string") {
+      this.readbackUnreadableDetail = options.maskReadbackUnreadable;
+    }
+    // Simulate Lightroom read-backs that omit a value, e.g. Temperature under "As Shot".
+    if (Array.isArray(options.omitDevelopKeys)) {
+      for (const key of options.omitDevelopKeys) {
+        if (typeof key === "string") delete this.masterSettings[key];
+      }
+    }
+    if (Array.isArray(options.existingMasks)) {
+      this.masks.set("master", structuredClone(options.existingMasks) as LightroomMaskCorrection[]);
+    }
+  }
+
+  private maskKey(photoId: string): string {
+    return this.copies.has(photoId) ? photoId : "master";
+  }
+
+  async listCopyNames(_masterPhotoId: string): Promise<string[]> {
+    this.requireOperation("read_current_edit");
+    void _masterPhotoId;
+    return [...this.existingCopyNames, ...this.copyNames.values()];
+  }
+
+  async renameWorkflowCopy(
+    copyPhotoId: string,
+    expectedUuid: string,
+    expectedCopyName: string,
+    copyName: string,
+  ): Promise<CopyRenameResult> {
+    this.requireOperation(RENAME_COPY_OPERATION);
+    this.calls.push(RENAME_COPY_OPERATION);
+    const copy = this.copies.get(copyPhotoId);
+    if (!copy || copy.uuid !== expectedUuid) throw new Error("Mock rename target mismatch");
+    const current = this.copyNames.get(copyPhotoId) ?? workflowCopyMarker(copy.operationId);
+    if (current === copyName) return { result: "unchanged", copy_name: current };
+    if (current !== expectedCopyName) {
+      return { result: "REVIEW_REQUIRED", copy_name: current, reason: "name changed" };
+    }
+    this.copyNames.set(copyPhotoId, copyName);
+    return { result: "renamed", copy_name: copyName };
+  }
+
+  async applyDevelopPreset(photoId: string, presetName: string): Promise<unknown> {
+    this.requireOperation(APPLY_PRESET_OPERATION);
+    this.calls.push(APPLY_PRESET_OPERATION);
+    if (!this.knownPresets.has(presetName)) throw new Error(`Preset not found: ${presetName}`);
+    this.appliedPresets.push({ photoId, preset: presetName });
+    // Live Lightroom: a profile change can make "As Shot" Temperature unreported again.
+    const copy = this.copies.get(photoId);
+    if (copy) for (const key of this.presetDropsKeys) delete copy.settings[key];
+    return { applied: 1, success: true };
+  }
+
+  async readOrganization(_photoId: string): Promise<PhotoOrganization> {
+    this.requireOperation("read_current_edit");
+    void _photoId;
+    return this.organization;
+  }
+
+  async resolvePhotoId(rawPath: string): Promise<string | undefined> {
+    // Real paths stay the mock's photo id, matching how the workflow uses it.
+    return rawPath;
+  }
+
+  /** Test helper: the mask set Lightroom would hold for this photo. */
+  masksFor(photoId: string): LightroomMaskCorrection[] {
+    return structuredClone(this.masks.get(this.maskKey(photoId)) ?? []);
+  }
+
+  async applyMaskCorrections(
+    photoId: string,
+    corrections: LightroomMaskCorrection[],
+  ): Promise<unknown> {
+    this.requireOperation(MASK_WRITE_OPERATION);
+    this.calls.push(MASK_WRITE_OPERATION);
+    this.operationTargets.push(photoId);
+    if (this.failMaskWrite) throw new Error("Mock mask write response lost");
+    this.masks.set(this.maskKey(photoId), structuredClone(corrections));
+    this.maskWrites.push({ photoId, corrections: structuredClone(corrections) });
+    return { applied: corrections.length };
+  }
+
+  async readMaskCorrections(photoId: string): Promise<MaskReadback> {
+    this.requireOperation(MASK_READ_OPERATION);
+    this.calls.push(MASK_READ_OPERATION);
+    if (this.readbackUnreadableDetail !== undefined) {
+      return { status: "unreadable", corrections: [], detail: this.readbackUnreadableDetail };
+    }
+    const corrections = this.masksFor(photoId);
+    return {
+      status: corrections.length === 0 && this.readbackAbsentWhenEmpty ? "absent" : "ok",
+      corrections,
+    };
   }
 
   get capabilities(): BackendCapabilityManifest {
@@ -317,7 +526,10 @@ export class MockBackend implements BackendAdapter {
   async handshake(): Promise<BackendCapabilityManifest> {
     if (!this.connected) throw new Error("Mock backend must connect before handshake");
     this.calls.push("handshake");
-    const manifest = validateBackendCapabilityManifest(this.advertisedManifest, MOCK_HANDSHAKE_REQUIREMENTS);
+    const manifest = validateBackendCapabilityManifest(
+      this.advertisedManifest,
+      MOCK_HANDSHAKE_REQUIREMENTS,
+    );
     this.negotiatedManifest = manifest;
     return manifest;
   }
@@ -458,6 +670,8 @@ export class MockBackend implements BackendAdapter {
         settings: { ...this.masterSettings },
       });
       this.copyByOperation.set(operationId, copyId);
+      // A Virtual Copy inherits the Master's masks, exactly like Lightroom.
+      this.masks.set(copyId, structuredClone(this.masks.get("master") ?? []));
     }
     return this.buildWorkflowCopyResult(
       operationId,
@@ -475,8 +689,10 @@ export class MockBackend implements BackendAdapter {
     this.requireOperation("create_checkpoint");
     this.calls.push("create_checkpoint");
     this.operationTargets.push(photoId);
-    void _settings;
     const settings = this.copies.get(photoId)?.settings ?? this.masterSettings;
+    // Mirror the plugin: a preset cannot capture a key the photo does not have.
+    const missing = _settings.find((key) => settings[key] === undefined);
+    if (missing) throw new Error(`Source photo has no develop setting: ${missing}`);
     return { name, raw: { name, settings } };
   }
 
@@ -541,7 +757,8 @@ export class LightroomMcpAdapter implements BackendAdapter {
         args: [this.entryPath],
         stderr: "pipe",
       });
-    this.client = this.injectedClient ?? new Client({ name: "photo-agent", version: "0.3.0-alpha.0" });
+    this.client =
+      this.injectedClient ?? new Client({ name: "photo-agent", version: "0.3.0-alpha.0" });
     await this.client.connect(this.transport);
     this.negotiatedManifest = undefined;
     this.availableToolNames = new Set<string>();
@@ -583,6 +800,22 @@ export class LightroomMcpAdapter implements BackendAdapter {
       operations[operationName] = semantics.data;
       capabilities.push(operationName);
     }
+    // Geometric masks ride on set_develop_settings: the tool advertises them by
+    // accepting MaskGroupBasedCorrections in its input schema (lightroom-mcp
+    // feat/set-develop-masks). Readback is advertised separately via _meta.
+    const developTool = tools.get("set_develop_settings");
+    const developSemantics = operations.apply_global_adjustment;
+    if (developTool && developSemantics && toolAcceptsMaskCorrections(developTool.inputSchema)) {
+      operations[MASK_WRITE_OPERATION] = developSemantics;
+      capabilities.push(MASK_WRITE_OPERATION);
+      const metadataTool = tools.get("get_photo_metadata");
+      const readSemantics = operations.read_current_edit;
+      const readback = asRecord(asRecord(metadataTool?._meta)[MASK_READBACK_META_KEY]);
+      if (metadataTool && readSemantics && readback.version === 1) {
+        operations[MASK_READ_OPERATION] = readSemantics;
+        capabilities.push(MASK_READ_OPERATION);
+      }
+    }
     const selectedTool = tools.get("get_selected_photos");
     if (selectedTool) {
       const selectedSemantics = OperationSemanticsSchema.safeParse(
@@ -606,10 +839,7 @@ export class LightroomMcpAdapter implements BackendAdapter {
       capabilities,
       operations,
     });
-    const validated = validateBackendCapabilityManifest(
-      manifest,
-      LIGHTROOM_HANDSHAKE_REQUIREMENTS,
-    );
+    const validated = validateBackendCapabilityManifest(manifest, LIGHTROOM_HANDSHAKE_REQUIREMENTS);
     this.availableToolNames = new Set(tools.keys());
     this.negotiatedManifest = validated;
     this.pluginReady = false;
@@ -719,10 +949,8 @@ export class LightroomMcpAdapter implements BackendAdapter {
         ? {
             catalog_id: source.catalog_id,
             uuid: source.uuid,
-            master_id:
-              typeof source.master_id === "string" ? source.master_id : masterId,
-            master_uuid:
-              typeof source.master_uuid === "string" ? source.master_uuid : masterUuid,
+            master_id: typeof source.master_id === "string" ? source.master_id : masterId,
+            master_uuid: typeof source.master_uuid === "string" ? source.master_uuid : masterUuid,
             is_virtual_copy: source.is_virtual_copy,
           }
         : undefined;
@@ -734,15 +962,12 @@ export class LightroomMcpAdapter implements BackendAdapter {
             catalog_id: masterId,
             uuid: masterUuid,
             master_id: typeof master.master_id === "string" ? master.master_id : masterId,
-            master_uuid:
-              typeof master.master_uuid === "string" ? master.master_uuid : masterUuid,
+            master_uuid: typeof master.master_uuid === "string" ? master.master_uuid : masterUuid,
             is_virtual_copy: master.is_virtual_copy,
           }
         : undefined;
-    const copyMasterId =
-      typeof copy.master_id === "string" ? copy.master_id : masterId;
-    const copyMasterUuid =
-      typeof copy.master_uuid === "string" ? copy.master_uuid : masterUuid;
+    const copyMasterId = typeof copy.master_id === "string" ? copy.master_id : masterId;
+    const copyMasterUuid = typeof copy.master_uuid === "string" ? copy.master_uuid : masterUuid;
     const copyIdentity =
       typeof copy.catalog_id === "string" &&
       typeof copy.uuid === "string" &&
@@ -824,6 +1049,144 @@ export class LightroomMcpAdapter implements BackendAdapter {
   ): Promise<unknown> {
     this.requireOperation("apply_global_adjustment");
     return this.call("set_develop_settings", { photo_id: photoId, settings });
+  }
+
+  /**
+   * Resolve a RAW path to its single Lightroom Master catalog id. Lightroom
+   * MCP mutations accept catalog ids only, so unattended runs need this.
+   * Returns undefined when the backend cannot search; throws when the match
+   * is missing or ambiguous.
+   */
+  async resolvePhotoId(rawPath: string): Promise<string | undefined> {
+    const manifest = this.requireHandshake();
+    if (!manifest.capabilities.includes(RESOLVE_PHOTO_ID_OPERATION)) return undefined;
+    await this.ensurePluginReady();
+    const name = basename(rawPath);
+    const raw = asRecord(
+      await this.call<unknown>("search_photos", { filename: name, limit: 200, offset: 0 }),
+    );
+    const photos = Array.isArray(raw.photos) ? raw.photos : [];
+    const target = resolve(rawPath).toLowerCase();
+    const matches = photos
+      .map((photo) => asRecord(photo))
+      .filter(
+        (photo) =>
+          typeof photo.path === "string" &&
+          resolve(photo.path).toLowerCase() === target &&
+          photo.is_virtual_copy !== true,
+      );
+    if (matches.length !== 1) {
+      throw new Error(
+        `Lightroom catalog has ${matches.length} Master photos at ${rawPath}; refusing to guess`,
+      );
+    }
+    const id = matches[0]!.id ?? matches[0]!.catalog_id;
+    if (typeof id !== "string" && typeof id !== "number") {
+      throw new Error(`Lightroom search result for ${rawPath} has no catalog id`);
+    }
+    return String(id);
+  }
+
+  async applyMaskCorrections(
+    photoId: string,
+    corrections: LightroomMaskCorrection[],
+  ): Promise<unknown> {
+    this.requireOperation(MASK_WRITE_OPERATION);
+    await this.ensurePluginReady();
+    return this.call("set_develop_settings", {
+      photo_id: photoId,
+      settings: { MaskGroupBasedCorrections: corrections },
+    });
+  }
+
+  async listCopyNames(masterPhotoId: string): Promise<string[]> {
+    this.requireOperation("read_current_edit");
+    await this.ensurePluginReady();
+    const raw = asRecord(
+      await this.call<unknown>("get_photo_metadata", { photo_id: masterPhotoId }),
+    );
+    const copies = Array.isArray(raw.virtual_copies) ? raw.virtual_copies : [];
+    return copies
+      .map((copy) => asRecord(copy).copy_name)
+      .filter((name): name is string => typeof name === "string");
+  }
+
+  async renameWorkflowCopy(
+    copyPhotoId: string,
+    expectedUuid: string,
+    expectedCopyName: string,
+    copyName: string,
+  ): Promise<CopyRenameResult> {
+    this.requireOperation(RENAME_COPY_OPERATION);
+    await this.ensurePluginReady();
+    const raw = asRecord(
+      await this.call<unknown>("rename_virtual_copy", {
+        photo_id: copyPhotoId,
+        expected_uuid: expectedUuid,
+        expected_copy_name: expectedCopyName,
+        copy_name: copyName,
+      }),
+    );
+    const result =
+      raw.result === "renamed" || raw.result === "unchanged" ? raw.result : "REVIEW_REQUIRED";
+    const name = asRecord(raw.copy).copy_name;
+    return {
+      result,
+      ...(typeof name === "string" ? { copy_name: name } : {}),
+      ...(typeof raw.reason === "string" ? { reason: raw.reason } : {}),
+    };
+  }
+
+  async applyDevelopPreset(photoId: string, presetName: string): Promise<unknown> {
+    this.requireOperation(APPLY_PRESET_OPERATION);
+    await this.ensurePluginReady();
+    const raw = asRecord(
+      await this.call<unknown>("apply_develop_preset", {
+        photo_ids: [photoId],
+        preset_name: presetName,
+      }),
+    );
+    if (raw.success !== true || raw.applied !== 1) {
+      throw new Error(`Lightroom did not apply preset ${presetName}: ${JSON.stringify(raw)}`);
+    }
+    return raw;
+  }
+
+  async readOrganization(photoId: string): Promise<PhotoOrganization> {
+    this.requireOperation("read_current_edit");
+    await this.ensurePluginReady();
+    const raw = asRecord(await this.call<unknown>("get_photo_metadata", { photo_id: photoId }));
+    const rating = typeof raw.rating === "number" ? raw.rating : 0;
+    return { rating, pick: pickFromStatus(raw.pickStatus) };
+  }
+
+  async readMaskCorrections(photoId: string): Promise<MaskReadback> {
+    this.requireOperation(MASK_READ_OPERATION);
+    await this.ensurePluginReady();
+    const raw = asRecord(await this.call<unknown>("get_photo_metadata", { photo_id: photoId }));
+    const nested = asRecord(raw.developSettings ?? raw.develop_settings);
+    const status = nested.maskReadback;
+    if (status === "absent") return { status: "absent", corrections: [] };
+    if (status !== undefined && status !== "ok") return { status: "unreadable", corrections: [] };
+    const value = nested.MaskGroupBasedCorrections;
+    if (status === undefined && value === undefined) {
+      // The server advertises readback, but the Lightroom plugin answered without
+      // any mask field: an older plugin is installed. Treat masks as unreadable
+      // so the photo degrades to global adjustments instead of stopping.
+      return { status: "unreadable", corrections: [], detail: "plugin_without_mask_readback" };
+    }
+    if (!Array.isArray(value)) {
+      throw new Error(
+        "Lightroom MCP did not return MaskGroupBasedCorrections; mask readback unavailable",
+      );
+    }
+    const corrections = value.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        throw new Error("Lightroom MCP returned a malformed mask correction");
+      }
+      return item as LightroomMaskCorrection;
+    });
+    return { status: "ok", corrections };
   }
 
   async renderPreview(photoId: string, destination: string): Promise<RenderResult> {

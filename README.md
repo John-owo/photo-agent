@@ -36,6 +36,7 @@ an API key, or your own photos, then share a reproducible issue or workflow ques
 - [CLI flags](#cli-flags)
 - [Editing and shoot commands](#editing-and-shoot-commands)
 - [Codex-local run](#codex-local-run-default)
+- [Local masks and overnight batches](#local-masks-and-overnight-batches)
 - [Recover an interrupted session](#recover-an-interrupted-session)
 - [XMP fallback](#xmp-fallback)
 - [References](#references)
@@ -212,6 +213,8 @@ These four variables are the values documented by `.env.example`:
 | `PHOTO_AGENT_OPENAI_MODEL`        | Model name used by OpenAI analysis and evaluation paths.                                                           | `gpt-5.6-terra`                                    |
 | `PHOTO_AGENT_LIGHTROOM_MCP_ENTRY` | Executable entry for the local `lightroom-mcp-john` MCP server.                                                    | `D:\photo\lightroom-mcp-john\server\dist\index.js` |
 | `PHOTO_AGENT_SESSION_ROOT`        | Root directory for generated session state and renders.                                                            | `.photo-agent\sessions`                            |
+| `PHOTO_AGENT_BATCH_ROOT`          | Root directory for `batch` runs (worklist, morning report, per-photo sessions).                                    | `.photo-agent\batches`                             |
+| `PHOTO_AGENT_CLAUDE_MODEL`        | Model for the optional Claude API provider/evaluator (credentials come from the Anthropic SDK defaults).           | `claude-opus-5-5`                                  |
 
 ## CLI flags
 
@@ -225,6 +228,10 @@ These four variables are the values documented by `.env.example`:
 | `--max-iterations 1-10`          | Bounds closed-loop iterations                                  | Used by edit/resume flows                            |
 | `--analysis-file <JSON>`         | Supplies schema-validated culling and lighting decisions       | Mutually exclusive with `--analyzer openai`          |
 | `--analyzer openai`              | Uses the opt-in cloud shoot analyzer                           | Requires `--allow-cloud-preview`                     |
+| `--evaluator handoff`            | Pauses after each render for an agent-written evaluation       | Resume with `continue` or `batch --resume`           |
+| `--mode interactive\|unattended` | Mask policy: hold subjective masks or apply them (capped)      | `batch` defaults to `unattended`                     |
+| `--approve-masks <ids\|all>`     | Approves held subjective masks                                 | Interactive mode only                                |
+| `--allow-mask-replace`           | Writes masks when existing masks cannot be read back           | Workflow Copy only; implied by `unattended`          |
 
 ## Editing and shoot commands
 
@@ -287,6 +294,22 @@ node dist/src/cli.js resume `
 
 Use `--backend lightroom` only with a confirmed local MCP connection and a
 non-critical test photo. The handoff never uploads the RAW or EXIF/GPS data.
+
+## Local masks and overnight batches
+
+photo-agent can add up to three radial or linear local masks per photo. The
+model only describes intent; the deterministic translator writes Lightroom
+`MaskGroupBasedCorrections`, merges with existing masks on the Workflow Copy,
+caps strength, and degrades to global adjustments (with a recorded reason)
+when the backend cannot draw or read masks. `restore-masks` rolls masks back.
+
+`batch --root <DIR>` runs a whole folder overnight. By default Claude Code or
+Codex is the visual judge: it reads `worklist.md`, looks at each preview or
+render, writes the requested JSON, and runs `batch --resume` until nothing
+waits; `report.md` is the morning report. Requires lightroom-mcp PR #15 and the
+stacked mask-readback PR. See [docs/masks-and-overnight.md](docs/masks-and-overnight.md)
+and the full Traditional Chinese guide
+[docs/masks-and-overnight.zh-TW.md](docs/masks-and-overnight.zh-TW.md).
 
 ## Mock run
 

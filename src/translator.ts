@@ -1,3 +1,4 @@
+import { translateMasks } from "./masks.js";
 import { NormalizedEditPlanSchema } from "./schemas.js";
 import type { NormalizedEditPlan, SemanticIntentPlan } from "./types.js";
 
@@ -58,10 +59,17 @@ export function translateIntent(intent: SemanticIntentPlan): NormalizedEditPlan 
     })
     .filter((operation): operation is NonNullable<typeof operation> => operation !== null);
 
-  if (operations.length === 0) {
+  const maskTranslation = translateMasks(intent.masks);
+  warnings.push(...maskTranslation.warnings);
+  if (operations.length === 0 && maskTranslation.masks.length === 0) {
     warnings.push("No executable adjustment met the confidence threshold; manual review required");
   }
-  return NormalizedEditPlanSchema.parse({ schema_version: "0.1.0", operations, warnings });
+  return NormalizedEditPlanSchema.parse({
+    schema_version: "0.1.0",
+    operations,
+    warnings,
+    ...(maskTranslation.masks.length > 0 ? { masks: maskTranslation.masks } : {}),
+  });
 }
 
 const LIGHTROOM_PARAMETER: Record<string, string> = {
@@ -96,6 +104,38 @@ const RANGE: Record<string, readonly [number, number]> = {
   Saturation: [-100, 100],
 };
 
+/**
+ * Remove operations whose current Lightroom value was not read back as a number
+ * (for example Temperature while White Balance is "As Shot"). The rest of the
+ * plan still applies; each skipped operation is returned and added to warnings.
+ */
+export function dropUnreadableOperations(
+  current: Record<string, number | string | boolean>,
+  plan: NormalizedEditPlan,
+): { plan: NormalizedEditPlan; skipped: string[] } {
+  const kept: NormalizedEditPlan["operations"] = [];
+  const skipped: string[] = [];
+  for (const operation of plan.operations) {
+    const key = LIGHTROOM_PARAMETER[operation.parameter];
+    if (key && typeof current[key] !== "number") {
+      const whiteBalance =
+        key === "Temperature" || key === "Tint"
+          ? `；白平衡是 ${String(current.WhiteBalance ?? "未知")}`
+          : "";
+      skipped.push(
+        `${operation.parameter}：Lightroom 沒有回報 ${key} 的數值${whiteBalance}，這項調整略過`,
+      );
+      continue;
+    }
+    kept.push(operation);
+  }
+  if (skipped.length === 0) return { plan, skipped };
+  return {
+    plan: { ...plan, operations: kept, warnings: [...plan.warnings, ...skipped] },
+    skipped,
+  };
+}
+
 export function resolveLightroomSettings(
   current: Record<string, number | string | boolean>,
   plan: NormalizedEditPlan,
@@ -120,3 +160,22 @@ export function resolveLightroomSettings(
 }
 
 export const LIGHTROOM_CHECKPOINT_KEYS = Object.values(LIGHTROOM_PARAMETER).concat("WhiteBalance");
+
+/**
+ * Checkpoint only the keys Lightroom reported: the plugin refuses a preset for a
+ * key the photo does not have (Temperature/Tint under "As Shot"). Every key about
+ * to be written must still be covered, otherwise the mutation is refused.
+ */
+export function checkpointKeysFor(
+  current: Record<string, number | string | boolean>,
+  settingsToWrite: Record<string, number | string | boolean>,
+): string[] {
+  const keys = LIGHTROOM_CHECKPOINT_KEYS.filter((key) => current[key] !== undefined);
+  const uncovered = Object.keys(settingsToWrite).filter((key) => !keys.includes(key));
+  if (uncovered.length > 0) {
+    throw new Error(
+      `Cannot checkpoint ${uncovered.join(", ")}: Lightroom did not report the current value; refusing mutation`,
+    );
+  }
+  return keys;
+}

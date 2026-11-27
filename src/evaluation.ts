@@ -4,6 +4,8 @@ import { readFile } from "node:fs/promises";
 import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 
+import { describeEvaluationInput } from "./claude.js";
+import { EVALUATION_PROMPT } from "./prompts.js";
 import { EvaluationResultSchema } from "./schemas.js";
 import type { EditEvaluator, EvaluationInput, EvaluationResult } from "./types.js";
 
@@ -20,6 +22,29 @@ export async function renderFingerprint(path: string): Promise<string> {
   return createHash("sha256")
     .update(await readFile(path))
     .digest("hex");
+}
+
+export class EvaluationInputRequiredError extends Error {
+  constructor() {
+    super(
+      "An agent-written evaluation is required; write the evaluation JSON and continue the session",
+    );
+    this.name = "EvaluationInputRequiredError";
+  }
+}
+
+/**
+ * Evaluator for agent-driven runs (Claude Code / Codex): the loop pauses after
+ * every render in EVALUATION_INPUT_REQUIRED; the agent inspects the render
+ * locally, writes an EvaluationResult JSON, and runs `continue`.
+ */
+export class HandoffEvaluator implements EditEvaluator {
+  readonly name = "handoff";
+  readonly requiresCloudPreview = false;
+
+  async evaluate(): Promise<EvaluationResult> {
+    throw new EvaluationInputRequiredError();
+  }
 }
 
 export class ScriptedEvaluator implements EditEvaluator {
@@ -55,8 +80,6 @@ export class AcceptingMockEvaluator implements EditEvaluator {
   }
 }
 
-const EVALUATION_PROMPT = `Inspect the sanitized edited-photo render and evaluate technical quality conservatively. Return accept only when no material issue remains. Return review for subjective, skin-tone, mixed-lighting, or low-confidence decisions. Return refine only with a small normalized global-delta plan; never request crop, masks, metadata, ratings, deletion, or export. Explain every verdict in rationale and issues.`;
-
 export class OpenAIEditEvaluator implements EditEvaluator {
   readonly name = "openai-visual";
   readonly requiresCloudPreview = true;
@@ -82,7 +105,7 @@ export class OpenAIEditEvaluator implements EditEvaluator {
           content: [
             {
               type: "input_text",
-              text: `Evaluate closed-loop iteration ${input.iteration}.`,
+              text: describeEvaluationInput(input),
             },
             {
               type: "input_image",

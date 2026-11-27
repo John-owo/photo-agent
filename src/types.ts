@@ -25,9 +25,29 @@ import type {
   WorkflowCopyIntentSchema,
   WorkflowCopyResultSchema,
   WorkflowCopyVerificationSchema,
+  SemanticMaskIntentSchema,
+  NormalizedMaskSchema,
+  MaskFeedbackSchema,
+  MaskDecisionSchema,
+  MaskWriteIntentSchema,
+  MaskWriteResultSchema,
 } from "./schemas.js";
 
 export type SourceAssetPair = z.infer<typeof SourceAssetPairSchema>;
+export type SemanticMaskIntent = z.infer<typeof SemanticMaskIntentSchema>;
+export type NormalizedMask = z.infer<typeof NormalizedMaskSchema>;
+export type MaskFeedback = z.infer<typeof MaskFeedbackSchema>;
+export type MaskDecision = z.infer<typeof MaskDecisionSchema>;
+export type MaskWriteIntent = z.infer<typeof MaskWriteIntentSchema>;
+export type MaskWriteResult = z.infer<typeof MaskWriteResultSchema>;
+export type LightroomMaskCorrection = Record<string, unknown>;
+export type MaskReadback = {
+  /** unreadable: the backend could not serialize the photo's masks. */
+  status: "ok" | "absent" | "unreadable";
+  corrections: LightroomMaskCorrection[];
+  /** Why the masks could not be read, when status is "unreadable". */
+  detail?: string;
+};
 export type SemanticIntentPlan = z.infer<typeof SemanticIntentPlanSchema>;
 export type NormalizedEditPlan = z.infer<typeof NormalizedEditPlanSchema>;
 export type SessionManifest = z.infer<typeof SessionManifestSchema>;
@@ -59,6 +79,7 @@ export type JobState =
   | "APPLYING"
   | "RENDERING"
   | "EVALUATING"
+  | "EVALUATION_INPUT_REQUIRED"
   | "REFINING"
   | "ACCEPTED"
   | "REVIEW_REQUIRED"
@@ -66,7 +87,7 @@ export type JobState =
   | "CANCELLED";
 
 export type ProviderMetadata = {
-  provider: "mock" | "codex" | "openai";
+  provider: "mock" | "codex" | "openai" | "claude";
   model: string;
   responseId?: string;
   promptVersion: string;
@@ -123,13 +144,61 @@ export type BackendAdapter = {
     settings: Record<string, number | string | boolean>,
   ): Promise<unknown>;
   renderPreview(photoId: string, destination: string): Promise<RenderResult>;
+  /** Resolve a RAW path to its Master catalog id (undefined when unsupported). */
+  resolvePhotoId?(rawPath: string): Promise<string | undefined>;
+  /** Replace the photo's whole MaskGroupBasedCorrections set (callers merge first). */
+  applyMaskCorrections?(photoId: string, corrections: LightroomMaskCorrection[]): Promise<unknown>;
+  /**
+   * Read the photo's full MaskGroupBasedCorrections set. `absent` means the
+   * backend reported no mask key at all, which cannot distinguish "no masks"
+   * from "not exposed by this Lightroom version" and is never trusted as empty.
+   */
+  readMaskCorrections?(photoId: string): Promise<MaskReadback>;
+  /** Copy Names of a Master's Virtual Copies (to pick the next "vN"). */
+  listCopyNames?(masterPhotoId: string): Promise<string[]>;
+  /** Compare-and-set rename of a Workflow Copy (lightroom-mcp rename_virtual_copy). */
+  renameWorkflowCopy?(
+    copyPhotoId: string,
+    expectedUuid: string,
+    expectedCopyName: string,
+    copyName: string,
+  ): Promise<CopyRenameResult>;
+  /** Apply a Lightroom develop preset by name (used for recipe profiles). */
+  applyDevelopPreset?(photoId: string, presetName: string): Promise<unknown>;
+  /** Star rating (0-5) and pick flag (1 picked, 0 none, -1 rejected) of a photo. */
+  readOrganization?(photoId: string): Promise<PhotoOrganization>;
 };
+
+export type CopyRenameResult = {
+  result: "renamed" | "unchanged" | "REVIEW_REQUIRED";
+  copy_name?: string;
+  reason?: string;
+};
+
+export type PhotoOrganization = { rating: number; pick: -1 | 0 | 1 };
 
 export type EvaluationInput = {
   renderPath: string;
   iteration: number;
   normalizedPlan: NormalizedEditPlan;
   readBack: BackendPhotoState;
+  /** Masks currently applied by this session (evaluators judge strength and placement). */
+  masks?: NormalizedMask[];
+};
+
+export type MaskPolicy = {
+  /**
+   * Unattended runs apply subjective masks too (strength is capped and the
+   * evaluator can halve or remove them); interactive runs hold them for review.
+   */
+  unattended?: boolean;
+  /** Mask ids (or "all") the user approved after review. */
+  approvedMaskIds?: string[] | "all";
+  /**
+   * Allow writing masks when the backend cannot read existing masks. Only the
+   * photo-agent Workflow Copy is written; the Master keeps its masks.
+   */
+  allowUnverifiedReplace?: boolean;
 };
 
 export type EditEvaluator = {
@@ -155,6 +224,12 @@ export type WorkflowOptions = {
   allowCloudPreview: boolean;
   evaluator?: EditEvaluator;
   maxIterations?: number;
+  maskPolicy?: MaskPolicy;
+  /** Copy naming and recipe preset; see CopySetup in workflow.ts. */
+  copySetup?: {
+    versionNames?: boolean;
+    recipePreset?: { presetName: string; profileName: string };
+  };
 };
 
 export type WorkflowResult = {
@@ -165,4 +240,5 @@ export type WorkflowResult = {
   renderPath?: string;
   handoffPath?: string;
   iterations?: number;
+  evaluationRequestPath?: string;
 };

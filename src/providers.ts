@@ -1,25 +1,29 @@
-import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 
-import { SemanticIntentPlanSchema } from "./schemas.js";
+import {
+  CODEX_PROMPT,
+  CODEX_PROMPT_HASH,
+  CODEX_PROMPT_VERSION,
+  PROMPT,
+  PROMPT_HASH,
+  PROMPT_VERSION,
+} from "./prompts.js";
+import { ProviderSemanticIntentPlanSchema, SemanticIntentPlanSchema } from "./schemas.js";
 import type { AnalysisProvider, ProviderResult } from "./types.js";
 
-export const PROMPT_VERSION = "semantic-intent-v0.1.0";
-export const PROMPT = `You are a photography editing assistant. Inspect the supplied sanitized preview and return a conservative semantic edit intent.
+export {
+  CODEX_PROMPT,
+  CODEX_PROMPT_HASH,
+  CODEX_PROMPT_VERSION,
+  PROMPT,
+  PROMPT_VERSION,
+} from "./prompts.js";
 
-Return only the schema. Use no more than one adjustment per parameter. Choose unchanged when no correction is justified. Do not invent local masks, crops, presets, ratings, or delivery actions. Confidence below 0.65 will be ignored by the deterministic translator.`;
-
-const promptHash = createHash("sha256").update(PROMPT).digest("hex");
-
-export const CODEX_PROMPT_VERSION = "codex-local-v0.1.0";
-export const CODEX_PROMPT = `Use the raw-photo-lightroom-preset skill to inspect one explicit RAW/preview pair and return a conservative SemanticIntentPlan JSON object.
-
-Use the sanitized preview only for composition, focus, and expression triage. For color and tonal decisions, prefer a Lightroom or Camera Raw render of the RAW when the local Lightroom workflow is available. Do not mutate Lightroom during analysis. Never invent masks, crops, ratings, presets, delivery actions, or metadata changes. Keep confidence honest; the deterministic translator ignores confidence below 0.65.`;
-export const CODEX_PROMPT_HASH = createHash("sha256").update(CODEX_PROMPT).digest("hex");
+const promptHash = PROMPT_HASH;
 
 export class CodexInputRequiredError extends Error {
   constructor() {
@@ -61,9 +65,16 @@ export async function writeCodexAnalysisRequest(
     "## JSON contract",
     'The object must contain `schema_version: "0.1.0"`, a non-empty `creative_goal`, an `adjustments` array with at most one entry per parameter, and `overall_confidence` from 0 to 1. Each adjustment uses `parameter`, `direction`, `strength`, `rationale`, and `confidence`.',
     "",
+    'Optional `masks` (at most 3) add radial or linear local adjustments. Each mask has `id`, `target`, `region` (`{type: "radial", center_x, center_y, width, height, angle_deg, feather, invert}` or `{type: "linear", full_x, full_y, zero_x, zero_y}`, all coordinates as fractions of the frame, y down), `adjustments` (1-4 of `{parameter, direction, strength}`), `placement_certainty` (`clear` or `subjective`), `rationale`, and `confidence`. Subjective masks are held for review unless the session runs with `--mode unattended` or `--approve-masks`.',
+    "",
+    "## Analysis rules",
+    "",
+    CODEX_PROMPT,
+    "",
     "## Resume",
     `After writing the file, run: \`node dist/src/cli.js resume --session "${request.sessionDir}" --intent-file "${request.intentFilePath}" --backend mock --apply\``,
     "Use `--backend lightroom` only after confirming the local Lightroom/MCP connection and use a non-critical test photo.",
+    "In a `photo-agent batch`, do not run resume yourself: write the file and run `batch --resume <BATCH_DIR>`; it applies every photo whose JSON is ready.",
     "",
   ].join("\n");
   await mkdir(dirname(requestPath), { recursive: true });
@@ -164,7 +175,7 @@ export class OpenAIProvider implements AnalysisProvider {
           ],
         },
       ],
-      text: { format: zodTextFormat(SemanticIntentPlanSchema, "semantic_intent") },
+      text: { format: zodTextFormat(ProviderSemanticIntentPlanSchema, "semantic_intent") },
     });
 
     const parsed = response.output_parsed;
